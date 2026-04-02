@@ -1,25 +1,29 @@
-# Contributing to create-bhvr
+# 贡献指南
 
-First off, thank you for considering contributing to `bhvr`! This is a true open source project and we welcome community ideas and contributions. In order to keep things clean please follow the contributing guidelines below.
+感谢你考虑为本项目做出贡献！欢迎社区的想法和代码贡献。为保持代码库整洁，请遵循以下贡献准则。
 
-## How Can I Contribute?
+## 如何贡献
 
-### Reporting Bugs
+### 报告 Bug
 
-If you find a bug, please make sure the bug has not already been reported by searching on GitHub under [Issues](https://github.com/stevedylandev/bhvr/issues). If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/stevedylandev/bhvr/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
+如果你发现了 Bug，请先在 GitHub [Issues](https://github.com/your-repo/issues) 中搜索是否已有相关报告。如果没有，请[创建新 Issue](https://github.com/your-repo/issues/new)，并提供：
 
-### Suggesting Enhancements
+- 清晰的标题和描述
+- 尽可能多的相关信息
+- 可复现的代码示例或测试用例
 
-If you have an idea for an enhancement, please make sure the enhancement has not already been suggested by searching on GitHub under [Issues](https://github.com/stevedylandev/bhvr/issues). If you're unable to find an open issue addressing the suggestion, [open a new one](https://github.com/stevedylandev/bhvr/issues/new). Be sure to include a **title and clear description** of the enhancement you're suggesting.
+### 建议改进
 
-### Submitting a Pull Request
+如果你有改进建议，同样请先搜索已有 Issue，若没有则创建新的，说明你的想法。
 
-1.  Fork the repository and create your branch from `main`.
-2.  Run `bun install` to install the dependencies.
-3.  Make your changes.
-4.  Run `bun run build` to make sure your changes build correctly.
-5.  Issue that pull request!
+### 提交 Pull Request
 
-## License
+1. Fork 仓库并从 `main` 分支创建你的开发分支。
+2. 运行 `npm install` 安装依赖。
+3. 进行你的修改。
+4. 运行 `npm run build` 确保构建通过。
+5. 提交 Pull Request。
 
-By contributing, you agree that your contributions will be licensed under its MIT License.
+## 许可证
+
+贡献的代码将遵循 MIT 许可证。

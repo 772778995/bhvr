@@ -1,290 +1,115 @@
-# bhvr 🦫
+# NotebookLM 自动化研究引擎
 
-![cover](https://cdn.stevedylan.dev/ipfs/bafybeievx27ar5qfqyqyud7kemnb5n2p4rzt2matogi6qttwkpxonqhra4)
+基于 Google NotebookLM 的自动化深度研究工具。用户手动将文档上传到 NotebookLM，然后本系统自动生成研究问题，通过 API 逐一提问，收集回答，最终汇编完整的研究报告。
 
-A full-stack TypeScript monorepo starter with shared types, using Bun, Hono, Vite, and React.
+## 功能特性
 
-## Why bhvr?
+- **零幻觉研究**：所有回答均由 NotebookLM 基于上传文档生成，自带来源引用
+- **自动化流程**：提交一个主题，系统自动生成问题、逐一提问、汇编报告
+- **全栈 TypeScript**：客户端与服务端之间端到端类型安全
+- **共享类型**：通用类型定义在 `shared/` 包中，客户端与服务端共享
+- **Monorepo 结构**：基于 npm workspaces 的 Monorepo，使用 Turborepo 进行构建编排
 
-While there are plenty of existing app building stacks out there, many of them are either bloated, outdated, or have too much of a vendor lock-in. bhvr is built with the opinion that you should be able to deploy your client or server in any environment while also keeping type safety.
+## 技术栈
 
-## Quickstart
+- [Node.js](https://nodejs.org) 作为 JavaScript 运行时
+- [tsx](https://github.com/privatenumber/tsx) 作为 TypeScript 执行器
+- [npm workspaces](https://docs.npmjs.com/cli/using-npm/workspaces) 作为包管理器 + Monorepo 方案
+- [Hono](https://hono.dev) 作为后端框架
+- [@hono/node-server](https://github.com/honojs/node-server) 作为 Node.js HTTP 适配器
+- [Drizzle ORM](https://orm.drizzle.team) + [@libsql/client](https://github.com/tursodatabase/libsql-client-ts) 作为数据库层（SQLite）
+- [notebooklm-kit](https://github.com/nicepkg/notebooklm-kit) 作为 NotebookLM SDK
+- [Vue 3](https://vuejs.org) + [Vite](https://vitejs.dev) 作为前端（后续开发）
+- [Turborepo](https://turbo.build) 作为 Monorepo 构建编排工具
+- [Zod](https://zod.dev) 作为数据验证库
 
-Make sure [bun](https://bun.sh) is installed
-
-```bash
-bun --version
-```
-
-Run the command below to make a new bhvr project
-
-```bash
-bun create bhvr@latest my-app
-```
-
-Once complete run the dev server
-
-```bash
-cd my-app
-bun dev
-```
-
-> [!NOTE]
-> Visit [bhvr.dev](https://bhvr.dev) for the full documentation!
-
-## Features
-
-- **Full-Stack TypeScript**: End-to-end type safety between client and server
-- **Shared Types**: Common type definitions shared between client and server
-- **Monorepo Structure**: Organized as a workspaces-based monorepo with Turbo for build orchestration
-- **Modern Stack**:
-  - [Bun](https://bun.sh) as the JavaScript runtime and package manager
-  - [Hono](https://hono.dev) as the backend framework
-  - [Vite](https://vitejs.dev) for frontend bundling
-  - [React](https://react.dev) for the frontend UI
-  - [Turbo](https://turbo.build) for monorepo build orchestration and caching
-
-## Project Structure
+## 项目结构
 
 ```
 .
-├── client/               # React frontend
-├── server/               # Hono backend
-├── shared/               # Shared TypeScript definitions
-│   └── src/types/        # Type definitions used by both client and server
-├── package.json          # Root package.json with workspaces
-└── turbo.json            # Turbo configuration for build orchestration
+├── client/               # Vue 3 前端（后续开发）
+├── server/               # Hono 后端
+│   └── src/
+│       ├── db/           # Drizzle schema + 数据库连接
+│       ├── routes/       # API 路由（auth、research、health）
+│       ├── notebooklm/   # NotebookLM SDK 客户端封装
+│       └── worker/       # 任务队列 + 研究编排逻辑
+├── shared/               # 共享 TypeScript 类型定义
+│   └── src/types/
+├── package.json          # 根 package.json（含 workspaces 配置）
+└── turbo.json            # Turborepo 配置
 ```
 
-### Server
+## 快速开始
 
-bhvr uses Hono as a backend API for its simplicity and massive ecosystem of plugins. If you have ever used Express then it might feel familiar. Declaring routes and returning data is easy.
+### 前置条件
 
-```
-server
-├── bun.lock
-├── package.json
-├── README.md
-├── src
-│   └── index.ts
-└── tsconfig.json
-```
-
-```typescript src/index.ts
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
-import type { ApiResponse } from 'shared'
-
-const app = new Hono()
-
-app.use(cors())
-
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
-
-app.get('/hello', async (c) => {
-
-  const data: ApiResponse = {
-    message: "Hello BHVR!",
-    success: true
-  }
-
-  return c.json(data, { status: 200 })
-})
-
-export default app
-```
-
-If you wanted to add a database to Hono you can do so with a multitude of Typescript libraries like [Supabase](https://supabase.com), or ORMs like [Drizzle](https://orm.drizzle.team/docs/get-started) or [Prisma](https://www.prisma.io/orm)
-
-### Client
-
-bhvr uses Vite + React Typescript template, which means you can build your frontend just as you would with any other React app. This makes it flexible to add UI components like [shadcn/ui](https://ui.shadcn.com) or routing using [React Router](https://reactrouter.com/start/declarative/installation).
-
-```
-client
-├── eslint.config.js
-├── index.html
-├── package.json
-├── public
-│   └── vite.svg
-├── README.md
-├── src
-│   ├── App.css
-│   ├── App.tsx
-│   ├── assets
-│   ├── index.css
-│   ├── main.tsx
-│   └── vite-env.d.ts
-├── tsconfig.app.json
-├── tsconfig.json
-├── tsconfig.node.json
-└── vite.config.ts
-```
-
-```typescript src/App.tsx
-import { useState } from 'react'
-import beaver from './assets/beaver.svg'
-import { ApiResponse } from 'shared'
-import './App.css'
-
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:3000"
-
-function App() {
-  const [data, setData] = useState<ApiResponse | undefined>()
-
-  async function sendRequest() {
-    try {
-      const req = await fetch(`${SERVER_URL}/hello`)
-      const res: ApiResponse = await req.json()
-      setData(res)
-    } catch (error) {
-      console.log(error)
-    }
-  }
-
-  return (
-    <>
-      <div>
-        <a href="https://github.com/stevedylandev/bhvr" target="_blank">
-          <img src={beaver} className="logo" alt="beaver logo" />
-        </a>
-      </div>
-      <h1>bhvr</h1>
-      <h2>Bun + Hono + Vite + React</h2>
-      <p>A typesafe fullstack monorepo</p>
-      <div className="card">
-        <button onClick={sendRequest}>
-          Call API
-        </button>
-        {data && (
-          <pre className='response'>
-            <code>
-            Message: {data.message} <br />
-            Success: {data.success.toString()}
-            </code>
-          </pre>
-        )}
-      </div>
-      <p className="read-the-docs">
-        Click the beaver to learn more
-      </p>
-    </>
-  )
-}
-
-export default App
-```
-
-### Shared
-
-The Shared package is used for anything you want to share between the Server and Client. This could be types or libraries that you use in both environments.
-
-```
-shared
-├── package.json
-├── src
-│   ├── index.ts
-│   └── types
-│       └── index.ts
-└── tsconfig.json
-```
-
-Inside the `src/index.ts` we export any of our code from the folders so it's usable in other parts of the monorepo
-
-```typescript
-export * from "./types"
-```
-
-By running `bun run dev` or `bun run build` it will compile and export the packages from `shared` so it can be used in either `client` or `server`
-
-```typescript
-import { ApiResponse } from 'shared'
-```
-
-## Getting Started
-
-### Quick Start
-
-You can start a new bhvr project using the [CLI](https://github.com/stevedylandev/create-bhvr)
+确保已安装 [Node.js](https://nodejs.org)（v18+）：
 
 ```bash
-bun create bhvr
+node --version
+npm --version
 ```
 
-### Installation
+### 安装依赖
 
 ```bash
-# Install dependencies for all workspaces
-bun install
+npm install
 ```
 
-### Development
+### 首次认证
+
+NotebookLM 没有公开 API，需要首次手动登录获取会话凭证：
 
 ```bash
-# Run all workspaces in development mode with Turbo
-bun run dev
-
-# Or run individual workspaces directly
-bun run dev:client    # Run the Vite dev server for React
-bun run dev:server    # Run the Hono backend
+npx notebooklm login
 ```
 
-### Building
+此命令会打开浏览器窗口，登录你的 Google 账号后，会话信息保存到 `~/.notebooklm/storage-state.json`。之后所有操作均为纯 HTTP，无需浏览器。
+
+### 初始化数据库
 
 ```bash
-# Build all workspaces with Turbo
-bun run build
-
-# Or build individual workspaces directly
-bun run build:client  # Build the React frontend
-bun run build:server  # Build the Hono backend
+npx tsx server/src/db/migrate.ts
 ```
 
-### Additional Commands
+### 启动开发服务器
 
 ```bash
-# Lint all workspaces
-bun run lint
-
-# Type check all workspaces
-bun run type-check
-
-# Run tests across all workspaces
-bun run test
+# 启动后端服务（端口 3000）
+npm run dev:server
 ```
 
-### Deployment
+### API 接口
 
-Deplying each piece is very versatile and can be done numerous ways, and exploration into automating these will happen at a later date. Here are some references in the meantime.
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/` | 服务器信息 |
+| `GET` | `/api/health` | 健康检查（含队列状态） |
+| `GET` | `/api/auth/status` | 检查 NotebookLM 认证状态 |
+| `POST` | `/api/research` | 创建研究任务 |
+| `GET` | `/api/research` | 列出所有任务 |
+| `GET` | `/api/research/:id` | 任务详情（含问题和回答） |
+| `GET` | `/api/research/:id/status` | 轻量级进度查询 |
 
-**Client**
-- [Orbiter](https://bhvr.dev/deployment/client/orbiter)
-- [GitHub Pages](https://bhvr.dev/deployment/client/github-pages)
-- [Netlify](https://bhvr.dev/deployment/client/netlify)
-- [Cloudflare Pages](https://bhvr.dev/deployment/client/cloudflare-pages)
+### 创建研究任务示例
 
-**Server**
-- [Orbiter](https://bhvr.dev/deployment/server/orbiter)
-- [Cloudflare Worker](https://bhvr.dev/deployment/server/cloudflare-workers)
-- [Bun](https://bhvr.dev/deployment/server/railway)
-- [Node.js](https://bhvr.dev/deployment/server/railway)
-
-## Type Sharing
-
-Types are automatically shared between the client and server thanks to the shared package and TypeScript path aliases. You can import them in your code using:
-
-```typescript
-import { ApiResponse } from 'shared/types';
+```bash
+curl -X POST http://localhost:3000/api/research \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notebookUrl": "https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID",
+    "topic": "你的研究主题",
+    "numQuestions": 5
+  }'
 ```
 
-## Learn More
+## 重要说明
 
-- [bhvr Documentation](https://bhvr.dev)
-- [Bun Documentation](https://bun.sh/docs)
-- [Vite Documentation](https://vitejs.dev/guide/)
-- [React Documentation](https://react.dev/learn)
-- [Hono Documentation](https://hono.dev/docs)
-- [Turbo Documentation](https://turbo.build/docs)
-- [TypeScript Documentation](https://www.typescriptlang.org/docs/)
+- **Google 免费层级**：每日限制 50 次查询。
+- **API 稳定性**：notebooklm-kit SDK 逆向了 Google 的内部 RPC 协议，Google 更新时可能失效。
+- `data/`、`.env`、`~/.notebooklm/` 不应提交到版本控制。
+
+## 许可证
+
+MIT

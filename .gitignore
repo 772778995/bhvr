@@ -1,4 +1,4 @@
-# bhvr/.gitignore
+# notebooklm/.gitignore
 # dependencies
 node_modules
 .pnp
@@ -36,9 +36,6 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
-
-# Bun
-bun.lockb
 
 # Turbo
 .turbo

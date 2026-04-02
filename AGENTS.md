@@ -1,64 +1,63 @@
-# AGENTS.md — NotebookLM Research Engine
+# AGENTS.md — NotebookLM 自动化研究引擎
 
-## Project Overview
+## 项目概述
 
-A wrapper around Google NotebookLM that automates deep research. Users upload documents to NotebookLM manually, then this system auto-generates research questions, asks them one-by-one via the NotebookLM API, collects answers, and compiles a full research report. Leverages NotebookLM's zero-hallucination + source-citation capabilities.
+基于 Google NotebookLM 的自动化深度研究工具。用户手动将文档上传到 NotebookLM，然后本系统自动生成研究问题，通过 NotebookLM API 逐一提问，收集回答，最终汇编完整的研究报告。充分利用 NotebookLM 零幻觉 + 来源引用的能力。
 
-## Tech Stack
+## 技术栈
 
-- **Runtime**: Node.js + tsx (TypeScript execution)
-- **Monorepo**: npm workspaces + Turborepo (`client/`, `server/`, `shared/`)
-- **Backend**: Hono.js + @hono/node-server + TypeScript
-- **Database**: SQLite via Drizzle ORM + @libsql/client
-- **NotebookLM API**: `notebooklm-kit` SDK (pure HTTP RPC, no browser needed for API calls)
-- **Frontend** (later): Vue 3 + Vite + TailwindCSS + shadcn-vue
-- **Validation**: Zod
+- **运行时**: Node.js + tsx（TypeScript 执行器）
+- **Monorepo**: npm workspaces + Turborepo（`client/`、`server/`、`shared/`）
+- **后端**: Hono.js + @hono/node-server + TypeScript
+- **数据库**: SQLite，通过 Drizzle ORM + @libsql/client 操作
+- **NotebookLM API**: `notebooklm-kit` SDK（纯 HTTP RPC，API 调用无需浏览器）
+- **前端**（后续开发）: Vue 3 + Vite + TailwindCSS + shadcn-vue
+- **数据验证**: Zod
 
-## Architecture
+## 架构
 
 ```
 POST /api/research {notebook_url, topic, num_questions}
-  → research_task created (status: pending)
-  → FIFO queue picks it up
-  → [Step 1] Ask NotebookLM to "generate N research questions" → parse list
-  → [Step 2] Ask each question via SDK chat API → store answers
-  → [Step 3] Ask "compile full research report" → store report
+  → 创建 research_task（status: pending）
+  → FIFO 队列取出任务
+  → [步骤 1] 让 NotebookLM "生成 N 个研究问题" → 解析问题列表
+  → [步骤 2] 通过 SDK chat API 逐一提问 → 存储回答
+  → [步骤 3] 让 NotebookLM "汇编完整研究报告" → 存储报告
   → task.status = done
 ```
 
-Single worker, single Google account, FIFO task queue. All NotebookLM interaction is via HTTP RPC (notebooklm-kit SDK). No browser automation in the loop. No external LLM for MVP — all intelligence comes from NotebookLM itself.
+单 Worker、单 Google 账号、FIFO 任务队列。所有 NotebookLM 交互均通过 HTTP RPC（notebooklm-kit SDK）完成。流程中无浏览器自动化。MVP 阶段不使用外部 LLM——所有智能能力来自 NotebookLM 本身。
 
-## Key Directories
+## 核心目录
 
 ```
 server/src/
-├── db/            # Drizzle schema + connection (@libsql/client SQLite)
-├── routes/        # API route handlers (auth, research, health)
-├── notebooklm/    # NotebookLM SDK client (auth, ask, list notebooks)
-└── worker/        # Task queue + research orchestration logic
+├── db/            # Drizzle schema + 数据库连接（@libsql/client SQLite）
+├── routes/        # API 路由处理（auth、research、health）
+├── notebooklm/    # NotebookLM SDK 客户端（认证、提问、列出笔记本）
+└── worker/        # 任务队列 + 研究编排逻辑
 ```
 
-## NotebookLM API Notes
+## NotebookLM API 说明
 
-- **notebooklm-kit** SDK communicates via Google's internal batchexecute RPC protocol (pure HTTP POST, no browser).
-- Auth requires one-time manual login via `npx notebooklm login` (launches a browser). Session saved to `~/.notebooklm/storage-state.json`.
-- After login, the server reads cookies from storage-state.json and fetches an auth token (SNlM0e) from the NotebookLM homepage.
-- The SDK sends cookies as `Cookie` header + auth token in POST body on every request.
-- The SDK supports: listing/creating notebooks, adding sources, chat (with streaming), and generating artifacts (audio, video, slides, quiz, flashcards).
-- 50 queries/day rate limit on Google's free tier.
+- **notebooklm-kit** SDK 通过 Google 内部的 batchexecute RPC 协议通信（纯 HTTP POST，无需浏览器）。
+- 认证需要首次通过 `npx notebooklm login` 手动登录（会启动浏览器）。会话保存在 `~/.notebooklm/storage-state.json`。
+- 登录后，服务端从 storage-state.json 读取 cookies，并请求 NotebookLM 首页提取认证令牌（SNlM0e）。
+- SDK 在每次请求中发送 `Cookie` 请求头 + POST body 中的认证令牌。
+- SDK 支持：列出/创建笔记本、添加来源、聊天（支持流式）、生成制品（音频、视频、幻灯片、测验、闪卡）。
+- Google 免费层级限制每日 50 次查询。
 
-## Coding Conventions
+## 编码规范
 
-- Use TypeScript strict mode.
-- Follow hono-open-api-starter patterns for route organization.
-- Database: Drizzle ORM with `drizzle-orm/libsql`. Use `snake_case` for DB columns.
-- IDs: Use `crypto.randomUUID()` for text primary keys.
-- No `console.log` in production code — use structured logging if needed.
+- 使用 TypeScript 严格模式。
+- 路由组织参考 hono-open-api-starter 模式。
+- 数据库：使用 Drizzle ORM + `drizzle-orm/libsql`。数据库列名使用 `snake_case`。
+- ID：使用 `crypto.randomUUID()` 生成文本主键。
+- 生产代码禁止使用 `console.log`——如需日志请使用结构化日志。
 
-## Important Constraints
+## 重要约束
 
-- NotebookLM has NO public API. The notebooklm-kit SDK reverse-engineers Google's internal RPC protocol — it may break when Google updates.
-- First-time auth requires running `npx notebooklm login` which opens a visible browser window. After that, all operations are pure HTTP.
-- IMPORTANT: Bun's fetch() is incompatible with Google's cookie validation (returns CookieMismatch). The server MUST run under Node.js.
-- The `data/` directory (SQLite DB) is gitignored.
-- Never commit `.env`, `data/`, or `~/.notebooklm/` files.
+- NotebookLM 没有公开 API。notebooklm-kit SDK 逆向了 Google 的内部 RPC 协议——Google 更新时可能失效。
+- 首次认证需要运行 `npx notebooklm login`（会打开浏览器窗口）。之后所有操作均为纯 HTTP。
+- `data/` 目录（SQLite 数据库）已被 gitignore。
+- 永远不要提交 `.env`、`data/` 或 `~/.notebooklm/` 文件。
