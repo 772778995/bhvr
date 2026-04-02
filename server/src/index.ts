@@ -5,6 +5,7 @@ import logger from "./lib/logger.js";
 import auth from "./routes/auth/index.js";
 import research from "./routes/research/index.js";
 import health from "./routes/health/index.js";
+import notebooks from "./routes/notebooks/index.js";
 import { recoverInterruptedTasks } from "./worker/recovery.js";
 
 // Ensure DB is initialized on import
@@ -18,6 +19,7 @@ app.use(cors());
 app.route("/api/auth", auth);
 app.route("/api/research", research);
 app.route("/api/health", health);
+app.route("/api/notebooks", notebooks);
 
 // Root
 app.get("/", (c) => {
@@ -28,6 +30,8 @@ app.get("/", (c) => {
       auth: "/api/auth/status",
       research: "/api/research (POST/GET), /api/research/:id",
       health: "/api/health",
+      notebooks:
+        "/api/notebooks/:id, /api/notebooks/:id/sources, /api/notebooks/:id/chat/messages, /api/notebooks/:id/studio/tools, /api/notebooks/:id/research",
     },
   });
 });
