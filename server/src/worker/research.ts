@@ -13,6 +13,7 @@ import db from "../db/index.js";
 import { researchTasks, questions } from "../db/schema.js";
 import { askNotebook, extractNotebookId } from "../notebooklm/index.js";
 import logger from "../lib/logger.js";
+import { retryAsync, isRetryableError, getErrorMessage } from "../lib/retry.js";
 import { taskQueue } from "./queue.js";
 
 /**
@@ -41,6 +42,49 @@ function parseQuestionList(text: string): string[] {
   return parsed;
 }
 
+async function askNotebookWithRetry(
+  taskId: string,
+  notebookId: string,
+  prompt: string,
+  context: { step: "generate_questions" | "ask_question" | "summary"; questionId?: string; orderNum?: number }
+): Promise<{ success: true; answer: string; citations?: unknown[] }> {
+  return retryAsync(
+    async () => {
+      const result = await askNotebook(notebookId, prompt);
+      if (!result.success || !result.answer) {
+        throw new Error(result.error || "No answer received");
+      }
+      return {
+        success: true,
+        answer: result.answer,
+        citations: result.citations,
+      };
+    },
+    {
+      maxAttempts: 3,
+      baseDelay: 3000,
+      backoffFactor: 2,
+      isRetryable: (error) => isRetryableError(getErrorMessage(error)),
+      onRetry: ({ attempt, nextAttempt, delayMs, error }) => {
+        const reason = getErrorMessage(error);
+        logger.warn(
+          {
+            taskId,
+            step: context.step,
+            questionId: context.questionId,
+            orderNum: context.orderNum,
+            attempt,
+            nextAttempt,
+            delayMs,
+            reason,
+          },
+          "NotebookLM request failed, retrying"
+        );
+      },
+    }
+  );
+}
+
 /**
  * Ask a list of questions sequentially, skipping those already answered.
  * Updates the task's completedQuestions counter after each successful answer.
@@ -63,9 +107,13 @@ async function askQuestions(
       .set({ status: "asking" })
       .where(eq(questions.id, qRow.id));
 
-    const result = await askNotebook(notebookId, qRow.questionText);
+    try {
+      const result = await askNotebookWithRetry(taskId, notebookId, qRow.questionText, {
+        step: "ask_question",
+        questionId: qRow.id,
+        orderNum: qRow.orderNum,
+      });
 
-    if (result.success && result.answer) {
       logger.debug({ taskId, questionId: qRow.id, order: qRow.orderNum }, "Question answered");
       await db
         .update(questions)
@@ -80,13 +128,14 @@ async function askQuestions(
         .update(researchTasks)
         .set({ completedQuestions: (currentTask?.completedQuestions ?? 0) + 1 })
         .where(eq(researchTasks.id, taskId));
-    } else {
-      logger.error({ taskId, questionId: qRow.id, reason: result.error }, "Failed to get answer for question");
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.error({ taskId, questionId: qRow.id, reason: message }, "Failed to get answer for question");
       await db
         .update(questions)
         .set({
           status: "error",
-          errorMessage: result.error || "No answer received",
+          errorMessage: message,
         })
         .where(eq(questions.id, qRow.id));
     }
@@ -119,9 +168,11 @@ async function compileSummary(
 
 Please be thorough and cite specific information from the sources where possible.`;
 
-  const summaryResult = await askNotebook(notebookId, summaryPrompt);
+  try {
+    const summaryResult = await askNotebookWithRetry(taskId, notebookId, summaryPrompt, {
+      step: "summary",
+    });
 
-  if (summaryResult.success && summaryResult.answer) {
     logger.info({ taskId }, "Research task completed successfully");
     await db
       .update(researchTasks)
@@ -131,14 +182,14 @@ Please be thorough and cite specific information from the sources where possible
         completedAt: new Date(),
       })
       .where(eq(researchTasks.id, taskId));
-  } else {
-    logger.error({ taskId, reason: summaryResult.error }, "Failed to generate research report");
+  } catch (error) {
+    const message = getErrorMessage(error);
+    logger.error({ taskId, reason: message }, "Failed to generate research report");
     await db
       .update(researchTasks)
       .set({
         status: "error",
-        errorMessage:
-          summaryResult.error || "Failed to generate research report",
+        errorMessage: message,
       })
       .where(eq(researchTasks.id, taskId));
   }
@@ -198,16 +249,19 @@ async function runResearch(taskId: string): Promise<void> {
       const topicContext = topic ? `about "${topic}"` : "";
       const generatePrompt = `Based on the uploaded documents/sources in this notebook, please generate exactly ${numQuestions} in-depth research questions ${topicContext}. These questions should cover different aspects and angles of the material. Format your response as a numbered list (1. Question one, 2. Question two, etc). Only output the numbered list, nothing else.`;
 
-      const generateResult = await askNotebook(notebookId, generatePrompt);
-
-      if (!generateResult.success || !generateResult.answer) {
-        logger.error({ taskId, reason: generateResult.error }, "Failed to generate research questions");
+      let generateResult: Awaited<ReturnType<typeof askNotebookWithRetry>>;
+      try {
+        generateResult = await askNotebookWithRetry(taskId, notebookId, generatePrompt, {
+          step: "generate_questions",
+        });
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.error({ taskId, reason: message }, "Failed to generate research questions");
         await db
           .update(researchTasks)
           .set({
             status: "error",
-            errorMessage:
-              generateResult.error || "Failed to generate research questions",
+            errorMessage: message,
           })
           .where(eq(researchTasks.id, taskId));
         return;
