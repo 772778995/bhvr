@@ -30,9 +30,22 @@ export function isRetryableError(message: string): boolean {
   const nonRetryableMarkers = [
     "401",
     "unauthorized",
+    "forbidden",
     "expired",
+    "session expired",
+    "invalid session",
+    "invalid token",
+    "auth",
     "re-authenticate",
     "authentication",
+    "400",
+    "bad request",
+    "404",
+    "not found",
+    "422",
+    "unprocessable",
+    "validation error",
+    "invalid argument",
   ];
   if (nonRetryableMarkers.some((marker) => normalized.includes(marker))) {
     return false;
@@ -40,16 +53,21 @@ export function isRetryableError(message: string): boolean {
 
   const retryableMarkers = [
     "network",
+    "connection",
     "fetch failed",
     "timeout",
     "timed out",
     "socket hang up",
     "connection reset",
+    "dns",
+    "temporary failure",
     "econnreset",
     "etimedout",
     "eai_again",
     "429",
+    "too many requests",
     "500",
+    "internal server error",
     "502",
     "503",
     "504",
@@ -60,7 +78,12 @@ export function isRetryableError(message: string): boolean {
     "rate limit",
   ];
 
-  return retryableMarkers.some((marker) => normalized.includes(marker));
+  if (retryableMarkers.some((marker) => normalized.includes(marker))) {
+    return true;
+  }
+
+  // For unknown errors, default to retryable unless explicitly classified otherwise.
+  return true;
 }
 
 export async function retry<T>(
@@ -75,11 +98,25 @@ export async function retry<T>(
     onRetry,
   } = options;
 
+  if (maxAttempts < 1) {
+    throw new Error(`Invalid retry options: maxAttempts must be >= 1 (received ${maxAttempts})`);
+  }
+  if (baseDelay < 0) {
+    throw new Error(`Invalid retry options: baseDelay must be >= 0 (received ${baseDelay})`);
+  }
+  if (backoffFactor < 1) {
+    throw new Error(
+      `Invalid retry options: backoffFactor must be >= 1 (received ${backoffFactor})`
+    );
+  }
+
   let attempt = 1;
+  let lastError: unknown;
   while (attempt <= maxAttempts) {
     try {
       return await fn();
     } catch (error) {
+      lastError = error;
       const shouldRetry = attempt < maxAttempts && isRetryable(error);
       if (!shouldRetry) {
         throw error;
@@ -100,7 +137,14 @@ export async function retry<T>(
     }
   }
 
-  throw new Error("Retry failed");
+  if (lastError instanceof Error) {
+    throw new Error(
+      `Retry exhausted after ${maxAttempts} attempts: ${lastError.message}`,
+      { cause: lastError }
+    );
+  }
+
+  throw new Error(`Retry exhausted after ${maxAttempts} attempts`, { cause: lastError });
 }
 
 export const retryAsync = retry;
