@@ -37,6 +37,12 @@ research.post("/", async (c) => {
     return c.json(
       {
         error: `Daily NotebookLM quota exceeded (${quota.limit}/day). Try again tomorrow.`,
+        quota: {
+          date: quota.date,
+          used: quota.used,
+          limit: quota.limit,
+          remaining: quota.remaining,
+        },
       },
       429
     );
