@@ -1,6 +1,7 @@
 {
   "name": "server",
   "version": "0.0.1",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -11,18 +12,22 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "bun --watch run src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.8",
     "@hono/zod-openapi": "^1.2.4",
+    "@libsql/client": "^0.17.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.9",
-    "patchright": "^1.59.1",
-    "shared": "workspace:*",
+    "notebooklm-kit": "^2.2.0",
+    "shared": "*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "drizzle-kit": "^0.31.10"
+    "@types/node": "^22.15.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.0"
   }
 }

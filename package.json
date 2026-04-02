@@ -1,13 +1,12 @@
 {
 	"name": "notebooklm",
 	"version": "0.1.0",
-	"description": "NotebookLM wrapper with better UI/UX",
+	"description": "NotebookLM Research Engine — automated deep research via Google NotebookLM",
 	"private": true,
-	"packageManager": "bun@1.2.4",
 	"workspaces": [
-		"./server",
-		"./client",
-		"./shared"
+		"server",
+		"client",
+		"shared"
 	],
 	"scripts": {
 		"dev": "turbo dev",
@@ -18,14 +17,10 @@
 		"build:server": "turbo build --filter=server",
 		"lint": "turbo lint",
 		"type-check": "turbo type-check",
-		"test": "turbo test",
-		"postinstall": "turbo build --filter=shared --filter=server"
+		"test": "turbo test"
 	},
 	"devDependencies": {
-		"bun-types": "latest",
-		"turbo": "^2.6.3"
-	},
-	"peerDependencies": {
+		"turbo": "^2.6.3",
 		"typescript": "^5.8.3"
 	}
 }

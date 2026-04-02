@@ -1,12 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { zValidator } from "@hono/zod-openapi";
 import { eq, desc } from "drizzle-orm";
-import db from "../../db";
-import { researchTasks, questions } from "../../db/schema";
-import { enqueueResearch } from "../../worker/research";
-import { getAuthStatus } from "../../browser/auth";
-import { taskQueue } from "../../worker/queue";
+import db from "../../db/index.js";
+import { researchTasks, questions } from "../../db/schema.js";
+import { enqueueResearch } from "../../worker/research.js";
+import { getAuthStatus } from "../../notebooklm/index.js";
+import { taskQueue } from "../../worker/queue.js";
 
 const research = new Hono();
 
@@ -27,7 +26,7 @@ research.post("/", async (c) => {
   const authStatus = getAuthStatus();
   if (!authStatus.authenticated) {
     return c.json(
-      { error: "Not authenticated. Call POST /api/auth/setup first." },
+      { error: 'Not authenticated. Run "npx notebooklm login" first.' },
       401
     );
   }

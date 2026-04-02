@@ -1,14 +1,20 @@
-import { Database } from "bun:sqlite";
+import { createClient } from "@libsql/client";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DB_PATH = resolve(process.env.DATABASE_PATH || "../data/notebooklm.db");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DB_PATH = resolve(
+  __dirname,
+  process.env.DATABASE_PATH || "../../../data/notebooklm.db"
+);
 mkdirSync(dirname(DB_PATH), { recursive: true });
-const sqlite = new Database(DB_PATH, { create: true });
 
-sqlite.exec("PRAGMA journal_mode = WAL;");
+const client = createClient({ url: `file:${DB_PATH}` });
 
-sqlite.exec(`
+await client.execute("PRAGMA journal_mode = WAL;");
+
+await client.executeMultiple(`
   CREATE TABLE IF NOT EXISTS research_tasks (
     id TEXT PRIMARY KEY,
     notebook_url TEXT NOT NULL,
@@ -35,4 +41,4 @@ sqlite.exec(`
 `);
 
 console.log("Database migrated successfully at", DB_PATH);
-sqlite.close();
+client.close();

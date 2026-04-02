@@ -3,13 +3,15 @@
  * 1. Ask NotebookLM to generate research questions
  * 2. Ask each question one-by-one
  * 3. Ask NotebookLM to compile a research report
+ *
+ * Uses notebooklm-kit SDK (pure HTTP — no browser automation).
  */
 
 import { eq } from "drizzle-orm";
-import db from "../db";
-import { researchTasks, questions } from "../db/schema";
-import { askNotebookLM } from "../browser/notebooklm";
-import { taskQueue } from "./queue";
+import db from "../db/index.js";
+import { researchTasks, questions } from "../db/schema.js";
+import { askNotebook, extractNotebookId } from "../notebooklm/index.js";
+import { taskQueue } from "./queue.js";
 
 /**
  * Parse a numbered list of questions from NotebookLM's response.
@@ -21,9 +23,11 @@ function parseQuestionList(text: string): string[] {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    // Match: "1. text", "1) text", "- text", "• text"
-    const match = trimmed.match(/^(?:\d+[\.\)]\s*|[-•]\s*)(.+)/);
-    if (match && match[1]) {
+    // Match: "1. text", "1) text", "- text", "• text", "**1.** text"
+    const match = trimmed.match(
+      /^(?:\*{0,2}\d+[\.\)]\*{0,2}\s*|[-•]\s*)(.+)/
+    );
+    if (match?.[1]) {
       const q = match[1].trim();
       if (q.length > 10) {
         // Skip very short lines (likely not real questions)
@@ -48,6 +52,19 @@ async function runResearch(taskId: string): Promise<void> {
 
   const { notebookUrl, topic, numQuestions } = task;
 
+  // Extract notebook ID from URL
+  let notebookId: string;
+  try {
+    notebookId = extractNotebookId(notebookUrl);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db
+      .update(researchTasks)
+      .set({ status: "error", errorMessage: message })
+      .where(eq(researchTasks.id, taskId));
+    return;
+  }
+
   try {
     // === Step 1: Generate research questions ===
     await db
@@ -58,7 +75,7 @@ async function runResearch(taskId: string): Promise<void> {
     const topicContext = topic ? `about "${topic}"` : "";
     const generatePrompt = `Based on the uploaded documents/sources in this notebook, please generate exactly ${numQuestions} in-depth research questions ${topicContext}. These questions should cover different aspects and angles of the material. Format your response as a numbered list (1. Question one, 2. Question two, etc). Only output the numbered list, nothing else.`;
 
-    const generateResult = await askNotebookLM(notebookUrl, generatePrompt);
+    const generateResult = await askNotebook(notebookId, generatePrompt);
 
     if (!generateResult.success || !generateResult.answer) {
       await db
@@ -114,7 +131,7 @@ async function runResearch(taskId: string): Promise<void> {
         .set({ status: "asking" })
         .where(eq(questions.id, qRow.id));
 
-      const result = await askNotebookLM(notebookUrl, qRow.questionText);
+      const result = await askNotebook(notebookId, qRow.questionText);
 
       if (result.success && result.answer) {
         await db
@@ -162,7 +179,7 @@ async function runResearch(taskId: string): Promise<void> {
 
 Please be thorough and cite specific information from the sources where possible.`;
 
-    const summaryResult = await askNotebookLM(notebookUrl, summaryPrompt);
+    const summaryResult = await askNotebook(notebookId, summaryPrompt);
 
     if (summaryResult.success && summaryResult.answer) {
       await db

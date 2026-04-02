@@ -1,17 +1,21 @@
-import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import * as schema from "./schema";
+import { fileURLToPath } from "node:url";
+import * as schema from "./schema.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DB_PATH = resolve(
-  import.meta.dir,
+  __dirname,
   process.env.DATABASE_PATH || "../../../data/notebooklm.db"
 );
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
-const sqlite = new Database(DB_PATH, { create: true });
-sqlite.exec("PRAGMA journal_mode = WAL;");
+const client = createClient({
+  url: `file:${DB_PATH}`,
+});
 
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(client, { schema });
 export default db;

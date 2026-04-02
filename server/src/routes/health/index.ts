@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { taskQueue } from "../../worker/queue";
+import { taskQueue } from "../../worker/queue.js";
 
 const health = new Hono();
 
