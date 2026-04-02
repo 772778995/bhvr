@@ -63,7 +63,7 @@ export function isRetryableError(message: string): boolean {
   return retryableMarkers.some((marker) => normalized.includes(marker));
 }
 
-export async function retryAsync<T>(
+export async function retry<T>(
   fn: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<T> {
@@ -102,5 +102,7 @@ export async function retryAsync<T>(
 
   throw new Error("Retry failed");
 }
+
+export const retryAsync = retry;
 
 export { getErrorMessage };

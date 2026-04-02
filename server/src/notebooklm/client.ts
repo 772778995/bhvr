@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { NotebookLMClient } from "notebooklm-kit";
+import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 
 // Path to storage state saved by `notebooklm login` CLI
 const STORAGE_STATE_PATH = resolve(homedir(), ".notebooklm", "storage-state.json");
@@ -206,7 +207,16 @@ export async function askNotebook(
   question: string
 ): Promise<AskResult> {
   try {
+    const quota = getQuotaStatus();
+    if (quota.remaining <= 0) {
+      return {
+        success: false,
+        error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`,
+      };
+    }
+
     const client = await getClient();
+    consumeQuota();
     const result = await client.generation.chat(notebookId, question);
 
     if (!result?.text) {

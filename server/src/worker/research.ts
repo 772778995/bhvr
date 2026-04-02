@@ -13,7 +13,7 @@ import db from "../db/index.js";
 import { researchTasks, questions } from "../db/schema.js";
 import { askNotebook, extractNotebookId } from "../notebooklm/index.js";
 import logger from "../lib/logger.js";
-import { retryAsync, isRetryableError, getErrorMessage } from "../lib/retry.js";
+import { retry, isRetryableError, getErrorMessage } from "../lib/retry.js";
 import { taskQueue } from "./queue.js";
 
 /**
@@ -48,7 +48,7 @@ async function askNotebookWithRetry(
   prompt: string,
   context: { step: "generate_questions" | "ask_question" | "summary"; questionId?: string; orderNum?: number }
 ): Promise<{ success: true; answer: string; citations?: unknown[] }> {
-  return retryAsync(
+  return retry(
     async () => {
       const result = await askNotebook(notebookId, prompt);
       if (!result.success || !result.answer) {

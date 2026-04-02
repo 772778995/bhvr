@@ -6,6 +6,7 @@ import { researchTasks, questions } from "../../db/schema.js";
 import { enqueueResearch } from "../../worker/research.js";
 import { getAuthStatus } from "../../notebooklm/index.js";
 import { taskQueue } from "../../worker/queue.js";
+import { getQuotaStatus } from "../../lib/quota.js";
 
 const research = new Hono();
 
@@ -28,6 +29,16 @@ research.post("/", async (c) => {
     return c.json(
       { error: 'Not authenticated. Run "npx notebooklm login" first.' },
       401
+    );
+  }
+
+  const quota = getQuotaStatus();
+  if (quota.remaining <= 0) {
+    return c.json(
+      {
+        error: `Daily NotebookLM quota exceeded (${quota.limit}/day). Try again tomorrow.`,
+      },
+      429
     );
   }
 
