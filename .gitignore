@@ -42,3 +42,8 @@ bun.lockb
 
 # Turbo
 .turbo
+
+# App data (browser state, SQLite DB)
+data/
+*.db
+*.sqlite

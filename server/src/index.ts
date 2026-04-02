@@ -1,23 +1,32 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
-import type { ApiResponse } from 'shared'
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import auth from "./routes/auth";
+import research from "./routes/research";
+import health from "./routes/health";
 
-const app = new Hono()
+// Ensure DB is initialized on import
+import "./db";
 
-app.use(cors())
+const app = new Hono();
 
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
+app.use(cors());
 
-app.get('/hello', async (c) => {
+// Mount routes
+app.route("/api/auth", auth);
+app.route("/api/research", research);
+app.route("/api/health", health);
 
-  const data: ApiResponse = {
-    message: "Hello BHVR!",
-    success: true
-  }
+// Root
+app.get("/", (c) => {
+  return c.json({
+    name: "notebooklm-research-engine",
+    version: "0.1.0",
+    endpoints: {
+      auth: "/api/auth/status, /api/auth/setup",
+      research: "/api/research (POST/GET), /api/research/:id",
+      health: "/api/health",
+    },
+  });
+});
 
-  return c.json(data, { status: 200 })
-})
-
-export default app
+export default app;
