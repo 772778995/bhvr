@@ -21,6 +21,18 @@ class TaskQueue {
     this.process();
   }
 
+  /**
+   * Enqueue a task only if it is not already in the queue.
+   * Returns true if the task was enqueued, false if it was already present.
+   */
+  enqueueIfNotPresent(id: string, fn: TaskFn): boolean {
+    if (this.queue.some((item) => item.id === id)) {
+      return false;
+    }
+    this.enqueue(id, fn);
+    return true;
+  }
+
   get length(): number {
     return this.queue.length;
   }

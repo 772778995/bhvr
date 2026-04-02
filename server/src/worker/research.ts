@@ -4,10 +4,11 @@
  * 2. Ask each question one-by-one
  * 3. Ask NotebookLM to compile a research report
  *
+ * Supports resuming from the middle on recovery (skips completed steps/questions).
  * Uses notebooklm-kit SDK (pure HTTP — no browser automation).
  */
 
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import db from "../db/index.js";
 import { researchTasks, questions } from "../db/schema.js";
 import { askNotebook, extractNotebookId } from "../notebooklm/index.js";
@@ -41,7 +42,116 @@ function parseQuestionList(text: string): string[] {
 }
 
 /**
- * Run a full research task.
+ * Ask a list of questions sequentially, skipping those already answered.
+ * Updates the task's completedQuestions counter after each successful answer.
+ */
+async function askQuestions(
+  taskId: string,
+  notebookId: string,
+  questionRows: Array<{ id: string; orderNum: number; questionText: string; status: string }>
+): Promise<void> {
+  for (const qRow of questionRows) {
+    // Skip already-completed questions
+    if (qRow.status === "done") {
+      logger.debug({ taskId, questionId: qRow.id, order: qRow.orderNum }, "Skipping already-answered question");
+      continue;
+    }
+
+    // Mark question as in-progress
+    await db
+      .update(questions)
+      .set({ status: "asking" })
+      .where(eq(questions.id, qRow.id));
+
+    const result = await askNotebook(notebookId, qRow.questionText);
+
+    if (result.success && result.answer) {
+      logger.debug({ taskId, questionId: qRow.id, order: qRow.orderNum }, "Question answered");
+      await db
+        .update(questions)
+        .set({ status: "done", answerText: result.answer })
+        .where(eq(questions.id, qRow.id));
+
+      // Only increment progress counter on success
+      const currentTask = await db.query.researchTasks.findFirst({
+        where: eq(researchTasks.id, taskId),
+      });
+      await db
+        .update(researchTasks)
+        .set({ completedQuestions: (currentTask?.completedQuestions ?? 0) + 1 })
+        .where(eq(researchTasks.id, taskId));
+    } else {
+      logger.error({ taskId, questionId: qRow.id, reason: result.error }, "Failed to get answer for question");
+      await db
+        .update(questions)
+        .set({
+          status: "error",
+          errorMessage: result.error || "No answer received",
+        })
+        .where(eq(questions.id, qRow.id));
+    }
+
+    // Small delay between questions to be gentle on NotebookLM
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
+/**
+ * Compile the final research report (Step 3).
+ */
+async function compileSummary(
+  taskId: string,
+  notebookId: string,
+  topic: string | null
+): Promise<void> {
+  logger.info({ taskId }, "Step 3: Compiling research report");
+  await db
+    .update(researchTasks)
+    .set({ status: "summarizing" })
+    .where(eq(researchTasks.id, taskId));
+
+  const topicContext = topic ? `about "${topic}"` : "";
+  const summaryPrompt = `Based on all the sources and documents in this notebook, please compile a comprehensive research report ${topicContext}. The report should include:
+1. Executive Summary
+2. Key Findings (organized by theme)
+3. Detailed Analysis
+4. Conclusions and Recommendations
+
+Please be thorough and cite specific information from the sources where possible.`;
+
+  const summaryResult = await askNotebook(notebookId, summaryPrompt);
+
+  if (summaryResult.success && summaryResult.answer) {
+    logger.info({ taskId }, "Research task completed successfully");
+    await db
+      .update(researchTasks)
+      .set({
+        status: "done",
+        report: summaryResult.answer,
+        completedAt: new Date(),
+      })
+      .where(eq(researchTasks.id, taskId));
+  } else {
+    logger.error({ taskId, reason: summaryResult.error }, "Failed to generate research report");
+    await db
+      .update(researchTasks)
+      .set({
+        status: "error",
+        errorMessage:
+          summaryResult.error || "Failed to generate research report",
+      })
+      .where(eq(researchTasks.id, taskId));
+  }
+}
+
+/**
+ * Run a research task, supporting resume from any stage.
+ *
+ * Recovery strategy:
+ * - pending / generating_questions → start from Step 1 (generate questions)
+ * - asking → skip to Step 2, resume from first unanswered question
+ * - summarizing → skip to Step 3 (compile report)
+ *
  * Called by the task queue — should not throw (handles errors internally).
  */
 async function runResearch(taskId: string): Promise<void> {
@@ -54,8 +164,8 @@ async function runResearch(taskId: string): Promise<void> {
     return;
   }
 
-  const { notebookUrl, topic, numQuestions } = task;
-  logger.info({ taskId, topic, numQuestions }, "Starting research task");
+  const { notebookUrl, topic, numQuestions, status } = task;
+  logger.info({ taskId, topic, numQuestions, status }, "Starting research task");
 
   // Extract notebook ID from URL
   let notebookId: string;
@@ -72,150 +182,144 @@ async function runResearch(taskId: string): Promise<void> {
   }
 
   try {
-    // === Step 1: Generate research questions ===
-    logger.info({ taskId }, "Step 1: Generating research questions");
-    await db
-      .update(researchTasks)
-      .set({ status: "generating_questions" })
-      .where(eq(researchTasks.id, taskId));
+    // Determine where to resume based on current status
+    const shouldGenerateQuestions = status === "pending" || status === "generating_questions";
+    const shouldAskQuestions = shouldGenerateQuestions || status === "asking";
+    // summarizing → skip straight to Step 3
 
-    const topicContext = topic ? `about "${topic}"` : "";
-    const generatePrompt = `Based on the uploaded documents/sources in this notebook, please generate exactly ${numQuestions} in-depth research questions ${topicContext}. These questions should cover different aspects and angles of the material. Format your response as a numbered list (1. Question one, 2. Question two, etc). Only output the numbered list, nothing else.`;
-
-    const generateResult = await askNotebook(notebookId, generatePrompt);
-
-    if (!generateResult.success || !generateResult.answer) {
-      logger.error({ taskId, reason: generateResult.error }, "Failed to generate research questions");
+    // === Step 1: Generate research questions (skip if resuming from asking/summarizing) ===
+    if (shouldGenerateQuestions) {
+      logger.info({ taskId }, "Step 1: Generating research questions");
       await db
         .update(researchTasks)
-        .set({
-          status: "error",
-          errorMessage:
-            generateResult.error || "Failed to generate research questions",
-        })
+        .set({ status: "generating_questions" })
         .where(eq(researchTasks.id, taskId));
-      return;
-    }
 
-    // Parse the question list
-    const questionList = parseQuestionList(generateResult.answer);
-    if (questionList.length === 0) {
-      logger.error({ taskId }, "Could not parse any questions from response");
-      await db
-        .update(researchTasks)
-        .set({
-          status: "error",
-          errorMessage: `Could not parse questions from response. Raw response: ${generateResult.answer.substring(0, 500)}`,
-        })
-        .where(eq(researchTasks.id, taskId));
-      return;
-    }
+      const topicContext = topic ? `about "${topic}"` : "";
+      const generatePrompt = `Based on the uploaded documents/sources in this notebook, please generate exactly ${numQuestions} in-depth research questions ${topicContext}. These questions should cover different aspects and angles of the material. Format your response as a numbered list (1. Question one, 2. Question two, etc). Only output the numbered list, nothing else.`;
 
-    // Insert questions into DB
-    const questionRows = questionList.map((q, i) => ({
-      id: crypto.randomUUID(),
-      taskId,
-      orderNum: i + 1,
-      questionText: q,
-      status: "pending" as const,
-      createdAt: new Date(),
-    }));
+      const generateResult = await askNotebook(notebookId, generatePrompt);
 
-    await db.insert(questions).values(questionRows);
-    logger.info({ taskId, questionCount: questionList.length }, "Questions generated and stored");
-
-    // Update task with actual question count
-    await db
-      .update(researchTasks)
-      .set({
-        status: "asking",
-        numQuestions: questionList.length,
-      })
-      .where(eq(researchTasks.id, taskId));
-
-    // === Step 2: Ask each question one-by-one ===
-    logger.info({ taskId, questionCount: questionRows.length }, "Step 2: Asking questions");
-    for (const qRow of questionRows) {
-      // Mark question as in-progress
-      await db
-        .update(questions)
-        .set({ status: "asking" })
-        .where(eq(questions.id, qRow.id));
-
-      const result = await askNotebook(notebookId, qRow.questionText);
-
-      if (result.success && result.answer) {
-        logger.debug({ taskId, questionId: qRow.id, order: qRow.orderNum }, "Question answered");
+      if (!generateResult.success || !generateResult.answer) {
+        logger.error({ taskId, reason: generateResult.error }, "Failed to generate research questions");
         await db
-          .update(questions)
-          .set({ status: "done", answerText: result.answer })
-          .where(eq(questions.id, qRow.id));
-      } else {
-        logger.error({ taskId, questionId: qRow.id, reason: result.error }, "Failed to get answer for question");
-        await db
-          .update(questions)
+          .update(researchTasks)
           .set({
             status: "error",
-            errorMessage: result.error || "No answer received",
+            errorMessage:
+              generateResult.error || "Failed to generate research questions",
           })
-          .where(eq(questions.id, qRow.id));
+          .where(eq(researchTasks.id, taskId));
+        return;
       }
 
-      // Update progress counter
+      // Parse the question list
+      const questionList = parseQuestionList(generateResult.answer);
+      if (questionList.length === 0) {
+        logger.error({ taskId }, "Could not parse any questions from response");
+        await db
+          .update(researchTasks)
+          .set({
+            status: "error",
+            errorMessage: `Could not parse questions from response. Raw response: ${generateResult.answer.substring(0, 500)}`,
+          })
+          .where(eq(researchTasks.id, taskId));
+        return;
+      }
+
+      // If recovering from generating_questions, clean up any partial questions from previous attempt
+      if (status === "generating_questions") {
+        const existingQuestions = await db.query.questions.findMany({
+          where: eq(questions.taskId, taskId),
+        });
+        if (existingQuestions.length > 0) {
+          logger.info({ taskId, count: existingQuestions.length }, "Cleaning up partial questions from previous attempt");
+          await db.delete(questions).where(eq(questions.taskId, taskId));
+        }
+      }
+
+      // Insert questions into DB
+      const questionRows = questionList.map((q, i) => ({
+        id: crypto.randomUUID(),
+        taskId,
+        orderNum: i + 1,
+        questionText: q,
+        status: "pending" as const,
+        createdAt: new Date(),
+      }));
+
+      await db.insert(questions).values(questionRows);
+      logger.info({ taskId, questionCount: questionList.length }, "Questions generated and stored");
+
+      // Update task with actual question count and advance status
       await db
         .update(researchTasks)
         .set({
-          completedQuestions:
-            (
-              await db.query.researchTasks.findFirst({
-                where: eq(researchTasks.id, taskId),
-              })
-            )?.completedQuestions! + 1,
+          status: "asking",
+          numQuestions: questionList.length,
+          completedQuestions: 0,
         })
         .where(eq(researchTasks.id, taskId));
+    }
 
-      // Small delay between questions to be gentle on NotebookLM
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+    // === Step 2: Ask each question one-by-one ===
+    if (shouldAskQuestions) {
+      // Load questions from DB (supports both fresh and resumed runs)
+      const existingQuestions = await db.query.questions.findMany({
+        where: eq(questions.taskId, taskId),
+        orderBy: [asc(questions.orderNum)],
+      });
+
+      if (existingQuestions.length === 0) {
+        logger.error({ taskId }, "No questions found for asking step");
+        await db
+          .update(researchTasks)
+          .set({ status: "error", errorMessage: "No questions found in DB for asking step" })
+          .where(eq(researchTasks.id, taskId));
+        return;
+      }
+
+      const doneCount = existingQuestions.filter((q) => q.status === "done").length;
+      const remainingCount = existingQuestions.length - doneCount;
+      logger.info(
+        { taskId, total: existingQuestions.length, done: doneCount, remaining: remainingCount },
+        "Step 2: Asking questions"
+      );
+
+      // Recalculate completedQuestions from actual done count (fixes drift on resume)
+      await db
+        .update(researchTasks)
+        .set({ status: "asking", completedQuestions: doneCount })
+        .where(eq(researchTasks.id, taskId));
+
+      await askQuestions(taskId, notebookId, existingQuestions);
+
+      // Check how many questions actually succeeded before compiling
+      const answeredQuestions = await db.query.questions.findMany({
+        where: eq(questions.taskId, taskId),
+      });
+      const successCount = answeredQuestions.filter((q) => q.status === "done").length;
+      const failedCount = answeredQuestions.filter((q) => q.status === "error").length;
+
+      if (successCount === 0) {
+        logger.error({ taskId, failedCount }, "All questions failed — cannot compile report");
+        await db
+          .update(researchTasks)
+          .set({ status: "error", errorMessage: `All ${failedCount} questions failed, no answers to compile` })
+          .where(eq(researchTasks.id, taskId));
+        return;
+      }
+
+      if (failedCount > 0) {
+        logger.warn(
+          { taskId, successCount, failedCount },
+          "Some questions failed — proceeding with partial report"
+        );
+      }
     }
 
     // === Step 3: Compile research report ===
-    logger.info({ taskId }, "Step 3: Compiling research report");
-    await db
-      .update(researchTasks)
-      .set({ status: "summarizing" })
-      .where(eq(researchTasks.id, taskId));
-
-    const summaryPrompt = `Based on all the sources and documents in this notebook, please compile a comprehensive research report ${topicContext}. The report should include:
-1. Executive Summary
-2. Key Findings (organized by theme)
-3. Detailed Analysis
-4. Conclusions and Recommendations
-
-Please be thorough and cite specific information from the sources where possible.`;
-
-    const summaryResult = await askNotebook(notebookId, summaryPrompt);
-
-    if (summaryResult.success && summaryResult.answer) {
-      logger.info({ taskId }, "Research task completed successfully");
-      await db
-        .update(researchTasks)
-        .set({
-          status: "done",
-          report: summaryResult.answer,
-          completedAt: new Date(),
-        })
-        .where(eq(researchTasks.id, taskId));
-    } else {
-      logger.error({ taskId, reason: summaryResult.error }, "Failed to generate research report");
-      await db
-        .update(researchTasks)
-        .set({
-          status: "error",
-          errorMessage:
-            summaryResult.error || "Failed to generate research report",
-        })
-        .where(eq(researchTasks.id, taskId));
-    }
+    await compileSummary(taskId, notebookId, topic);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ taskId, err }, "Research task failed with unexpected error");
@@ -228,8 +332,17 @@ Please be thorough and cite specific information from the sources where possible
 
 /**
  * Enqueue a research task for processing.
+ * If `deduplicate` is true, skips enqueuing when the task ID is already in the queue.
  */
-export function enqueueResearch(taskId: string): void {
+export function enqueueResearch(taskId: string, { deduplicate = false } = {}): void {
+  if (deduplicate) {
+    const enqueued = taskQueue.enqueueIfNotPresent(taskId, () => runResearch(taskId));
+    if (!enqueued) {
+      logger.info({ taskId }, "Task already in queue, skipping");
+      return;
+    }
+  } else {
+    taskQueue.enqueue(taskId, () => runResearch(taskId));
+  }
   logger.info({ taskId }, "Enqueuing research task");
-  taskQueue.enqueue(taskId, () => runResearch(taskId));
 }

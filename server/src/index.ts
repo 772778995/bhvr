@@ -5,6 +5,7 @@ import logger from "./lib/logger.js";
 import auth from "./routes/auth/index.js";
 import research from "./routes/research/index.js";
 import health from "./routes/health/index.js";
+import { recoverInterruptedTasks } from "./worker/recovery.js";
 
 // Ensure DB is initialized on import
 import "./db/index.js";
@@ -35,6 +36,9 @@ const port = parseInt(process.env.PORT || "3000", 10);
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Server running");
+  recoverInterruptedTasks().catch((err) => {
+    logger.error({ err }, "Failed to recover interrupted tasks");
+  });
 });
 
 export default app;
