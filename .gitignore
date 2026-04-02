@@ -39,6 +39,7 @@ pnpm-debug.log*
 
 # Turbo
 .turbo
+.worktrees/
 
 # App data (browser state, SQLite DB)
 data/
