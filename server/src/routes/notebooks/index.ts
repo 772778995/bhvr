@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { getAuthStatus } from "../../notebooklm/index.js";
 import {
   buildChatMessagesStub,
   buildNotebookSourcesStub,
@@ -22,89 +23,63 @@ function getNotebookId(rawId: string | undefined): string | null {
   return id;
 }
 
-function requireNotebookId(rawId: string | undefined): string | null {
-  return getNotebookId(rawId);
-}
-
-notebooks.get("/:id", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
+function withNotebookId(c: Context, handler: (id: string) => Response): Response {
+  const id = getNotebookId(c.req.param("id"));
   if (!id) {
     return c.json(invalidNotebookIdResponse(), 400);
   }
+  return handler(id);
+}
 
-  return c.json(successResponse(buildNotebookStub(id)));
+notebooks.use("*", async (c, next) => {
+  const authStatus = getAuthStatus();
+  if (!authStatus.authenticated) {
+    return c.json(
+      {
+        success: false,
+        message: 'Not authenticated. Run "npx notebooklm login" first.',
+        errorCode: "UNAUTHORIZED",
+      },
+      401
+    );
+  }
+  await next();
+});
+
+notebooks.get("/:id", (c) => {
+  return withNotebookId(c, (id) => c.json(successResponse(buildNotebookStub(id))));
 });
 
 notebooks.get("/:id/sources", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(successResponse(buildNotebookSourcesStub(id)));
+  return withNotebookId(c, (id) => c.json(successResponse(buildNotebookSourcesStub(id))));
 });
 
 notebooks.get("/:id/chat/messages", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(successResponse(buildChatMessagesStub(id)));
+  return withNotebookId(c, (id) => c.json(successResponse(buildChatMessagesStub(id))));
 });
 
 notebooks.get("/:id/studio/tools", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(successResponse(buildStudioToolsStub(id)));
+  return withNotebookId(c, (id) => c.json(successResponse(buildStudioToolsStub(id))));
 });
 
 notebooks.get("/:id/research", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(successResponse(buildResearchStub(id)));
+  return withNotebookId(c, (id) => c.json(successResponse(buildResearchStub(id))));
 });
 
 notebooks.post("/:id/sources", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(notImplementedResponse(), 501);
+  return withNotebookId(c, () => c.json(notImplementedResponse(), 501));
 });
 
 notebooks.post("/:id/chat/messages", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(notImplementedResponse(), 501);
+  return withNotebookId(c, () => c.json(notImplementedResponse(), 501));
 });
 
 notebooks.post("/:id/studio/:tool", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(notImplementedResponse(), 501);
+  return withNotebookId(c, () => c.json(notImplementedResponse(), 501));
 });
 
 notebooks.post("/:id/research", (c) => {
-  const id = requireNotebookId(c.req.param("id"));
-  if (!id) {
-    return c.json(invalidNotebookIdResponse(), 400);
-  }
-
-  return c.json(notImplementedResponse(), 501);
+  return withNotebookId(c, () => c.json(notImplementedResponse(), 501));
 });
 
 export default notebooks;

@@ -1,39 +1,38 @@
 export type NotebookStub = {
   id: string;
   title: string;
-  topic: string;
-  sourceCount: number;
-  messageCount: number;
+  description: string;
   updatedAt: string;
 };
 
 export type NotebookSourceStub = {
   id: string;
-  notebookId: string;
   title: string;
   type: "pdf" | "web" | "text";
   status: "ready" | "processing";
+  summary: string;
 };
 
 export type ChatMessageStub = {
   id: string;
-  notebookId: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  status: "sent" | "streaming" | "done";
 };
 
 export type StudioToolStub = {
   id: string;
-  label: string;
-  enabled: boolean;
+  name: string;
+  description: string;
+  available: boolean;
 };
 
-export type NotebookResearchStub = {
-  notebookId: string;
+export type ResearchEntryStub = {
+  id: string;
+  name: string;
   status: "idle" | "running" | "done";
-  totalQuestions: number;
-  answeredQuestions: number;
+  message: string;
 };
 
 function hashText(value: string): number {
@@ -53,9 +52,7 @@ export function buildNotebookStub(id: string): NotebookStub {
   return {
     id,
     title: `Notebook ${id.slice(0, 8) || "unknown"}`,
-    topic: `Topic-${h % 97}`,
-    sourceCount: (h % 6) + 1,
-    messageCount: (h % 21) + 3,
+    description: `Stub notebook workspace for ${id.slice(0, 8) || "unknown"} (${(h % 97) + 1})`,
     updatedAt: isoFromOffsetMinutes((h % 1440) + 60),
   };
 }
@@ -67,10 +64,10 @@ export function buildNotebookSourcesStub(id: string): NotebookSourceStub[] {
 
   return Array.from({ length: count }, (_, index) => ({
     id: `${id}-source-${index + 1}`,
-    notebookId: id,
     title: `Source ${index + 1} for ${id.slice(0, 6) || "notebook"}`,
     type: types[(h + index) % types.length] ?? "text",
     status: (h + index) % 2 === 0 ? "ready" : "processing",
+    summary: `Summary ${index + 1}: deterministic source snippet for ${id.slice(0, 6) || "notebook"}`,
   }));
 }
 
@@ -82,42 +79,75 @@ export function buildChatMessagesStub(id: string): ChatMessageStub[] {
     const isUser = index % 2 === 0;
     return {
       id: `${id}-message-${index + 1}`,
-      notebookId: id,
       role: isUser ? "user" : "assistant",
       content: isUser
         ? `Question ${index + 1} about notebook ${id.slice(0, 6) || "n/a"}`
         : `Stub answer ${index + 1} generated for notebook ${id.slice(0, 6) || "n/a"}`,
       createdAt: isoFromOffsetMinutes((h % 720) + index * 5 + 120),
+      status: isUser ? "sent" : index === count - 1 ? "streaming" : "done",
     };
   });
 }
 
 export function buildStudioToolsStub(id: string): StudioToolStub[] {
   const h = hashText(id);
-  const toolIds = ["audio-overview", "mindmap", "timeline", "quiz"];
+  const tools: Array<Pick<StudioToolStub, "id" | "name" | "description">> = [
+    {
+      id: "audio-overview",
+      name: "Audio Overview",
+      description: "Generate a podcast-style conversation from your sources.",
+    },
+    {
+      id: "study-guide",
+      name: "Study Guide",
+      description: "Create a concise study guide with key takeaways.",
+    },
+    {
+      id: "faq",
+      name: "FAQ",
+      description: "Produce frequently asked questions and direct answers.",
+    },
+    {
+      id: "timeline",
+      name: "Timeline",
+      description: "Organize major events and milestones chronologically.",
+    },
+    {
+      id: "briefing-doc",
+      name: "Briefing Doc",
+      description: "Summarize the topic into an executive briefing format.",
+    },
+    {
+      id: "mind-map",
+      name: "Mind Map",
+      description: "Map concepts and relationships into a visual structure.",
+    },
+  ];
 
-  return toolIds.map((toolId, index) => ({
-    id: toolId,
-    label: toolId,
-    enabled: (h + index) % 2 === 0,
+  return tools.map((tool, index) => ({
+    ...tool,
+    available: (h + index) % 2 === 0,
   }));
 }
 
-export function buildResearchStub(id: string): NotebookResearchStub {
+export function buildResearchStub(id: string): ResearchEntryStub {
   const h = hashText(id);
-  const totalQuestions = (h % 8) + 3;
-  const answeredQuestions = h % (totalQuestions + 1);
-  const status: NotebookResearchStub["status"] =
-    answeredQuestions === 0
-      ? "idle"
-      : answeredQuestions === totalQuestions
-        ? "done"
-        : "running";
+  const totalSteps = (h % 6) + 2;
+  const completedSteps = h % (totalSteps + 1);
+  const status: ResearchEntryStub["status"] =
+    completedSteps === 0 ? "idle" : completedSteps === totalSteps ? "done" : "running";
+
+  const message =
+    status === "idle"
+      ? "Research has not started."
+      : status === "running"
+        ? `Research in progress (${completedSteps}/${totalSteps}).`
+        : `Research complete (${completedSteps}/${totalSteps}).`;
 
   return {
-    notebookId: id,
+    id: `${id}-research`,
+    name: `Research ${id.slice(0, 8) || "notebook"}`,
     status,
-    totalQuestions,
-    answeredQuestions,
+    message,
   };
 }
