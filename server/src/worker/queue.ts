@@ -3,6 +3,8 @@
  * State is persisted in SQLite; the in-memory queue drives execution.
  */
 
+import logger from "../lib/logger.js";
+
 type TaskFn = () => Promise<void>;
 
 interface QueueItem {
@@ -36,7 +38,7 @@ class TaskQueue {
       try {
         await item.fn();
       } catch (err) {
-        console.error(`[queue] Task ${item.id} failed:`, err);
+        logger.error({ taskId: item.id, err }, "Task failed");
       }
     }
 

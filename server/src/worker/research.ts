@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import db from "../db/index.js";
 import { researchTasks, questions } from "../db/schema.js";
 import { askNotebook, extractNotebookId } from "../notebooklm/index.js";
+import logger from "../lib/logger.js";
 import { taskQueue } from "./queue.js";
 
 /**
@@ -48,9 +49,13 @@ async function runResearch(taskId: string): Promise<void> {
     where: eq(researchTasks.id, taskId),
   });
 
-  if (!task) return;
+  if (!task) {
+    logger.warn({ taskId }, "Research task not found, skipping");
+    return;
+  }
 
   const { notebookUrl, topic, numQuestions } = task;
+  logger.info({ taskId, topic, numQuestions }, "Starting research task");
 
   // Extract notebook ID from URL
   let notebookId: string;
@@ -58,6 +63,7 @@ async function runResearch(taskId: string): Promise<void> {
     notebookId = extractNotebookId(notebookUrl);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    logger.error({ taskId, err }, "Failed to extract notebook ID");
     await db
       .update(researchTasks)
       .set({ status: "error", errorMessage: message })
@@ -67,6 +73,7 @@ async function runResearch(taskId: string): Promise<void> {
 
   try {
     // === Step 1: Generate research questions ===
+    logger.info({ taskId }, "Step 1: Generating research questions");
     await db
       .update(researchTasks)
       .set({ status: "generating_questions" })
@@ -78,6 +85,7 @@ async function runResearch(taskId: string): Promise<void> {
     const generateResult = await askNotebook(notebookId, generatePrompt);
 
     if (!generateResult.success || !generateResult.answer) {
+      logger.error({ taskId, reason: generateResult.error }, "Failed to generate research questions");
       await db
         .update(researchTasks)
         .set({
@@ -92,6 +100,7 @@ async function runResearch(taskId: string): Promise<void> {
     // Parse the question list
     const questionList = parseQuestionList(generateResult.answer);
     if (questionList.length === 0) {
+      logger.error({ taskId }, "Could not parse any questions from response");
       await db
         .update(researchTasks)
         .set({
@@ -113,6 +122,7 @@ async function runResearch(taskId: string): Promise<void> {
     }));
 
     await db.insert(questions).values(questionRows);
+    logger.info({ taskId, questionCount: questionList.length }, "Questions generated and stored");
 
     // Update task with actual question count
     await db
@@ -124,6 +134,7 @@ async function runResearch(taskId: string): Promise<void> {
       .where(eq(researchTasks.id, taskId));
 
     // === Step 2: Ask each question one-by-one ===
+    logger.info({ taskId, questionCount: questionRows.length }, "Step 2: Asking questions");
     for (const qRow of questionRows) {
       // Mark question as in-progress
       await db
@@ -134,11 +145,13 @@ async function runResearch(taskId: string): Promise<void> {
       const result = await askNotebook(notebookId, qRow.questionText);
 
       if (result.success && result.answer) {
+        logger.debug({ taskId, questionId: qRow.id, order: qRow.orderNum }, "Question answered");
         await db
           .update(questions)
           .set({ status: "done", answerText: result.answer })
           .where(eq(questions.id, qRow.id));
       } else {
+        logger.error({ taskId, questionId: qRow.id, reason: result.error }, "Failed to get answer for question");
         await db
           .update(questions)
           .set({
@@ -166,6 +179,7 @@ async function runResearch(taskId: string): Promise<void> {
     }
 
     // === Step 3: Compile research report ===
+    logger.info({ taskId }, "Step 3: Compiling research report");
     await db
       .update(researchTasks)
       .set({ status: "summarizing" })
@@ -182,6 +196,7 @@ Please be thorough and cite specific information from the sources where possible
     const summaryResult = await askNotebook(notebookId, summaryPrompt);
 
     if (summaryResult.success && summaryResult.answer) {
+      logger.info({ taskId }, "Research task completed successfully");
       await db
         .update(researchTasks)
         .set({
@@ -191,6 +206,7 @@ Please be thorough and cite specific information from the sources where possible
         })
         .where(eq(researchTasks.id, taskId));
     } else {
+      logger.error({ taskId, reason: summaryResult.error }, "Failed to generate research report");
       await db
         .update(researchTasks)
         .set({
@@ -202,6 +218,7 @@ Please be thorough and cite specific information from the sources where possible
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    logger.error({ taskId, err }, "Research task failed with unexpected error");
     await db
       .update(researchTasks)
       .set({ status: "error", errorMessage: message })
@@ -213,5 +230,6 @@ Please be thorough and cite specific information from the sources where possible
  * Enqueue a research task for processing.
  */
 export function enqueueResearch(taskId: string): void {
+  logger.info({ taskId }, "Enqueuing research task");
   taskQueue.enqueue(taskId, () => runResearch(taskId));
 }

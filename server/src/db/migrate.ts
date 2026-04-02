@@ -2,6 +2,7 @@ import { createClient } from "@libsql/client";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import logger from "../lib/logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = resolve(
@@ -40,5 +41,5 @@ await client.executeMultiple(`
   );
 `);
 
-console.log("Database migrated successfully at", DB_PATH);
+logger.info({ path: DB_PATH }, "Database migrated successfully");
 client.close();

@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import logger from "./lib/logger.js";
 import auth from "./routes/auth/index.js";
 import research from "./routes/research/index.js";
 import health from "./routes/health/index.js";
@@ -33,7 +34,7 @@ app.get("/", (c) => {
 const port = parseInt(process.env.PORT || "3000", 10);
 
 serve({ fetch: app.fetch, port }, () => {
-  console.log(`Server running on http://localhost:${port}`);
+  logger.info({ port }, "Server running");
 });
 
 export default app;
