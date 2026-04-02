@@ -27,63 +27,77 @@ function getErrorMessage(error: unknown): string {
 export function isRetryableError(message: string): boolean {
   const normalized = message.toLowerCase();
 
+  const httpStatusCodes = Array.from(
+    normalized.matchAll(/(?:http|status|response)\D{0,24}(\d{3})/g),
+    (match) => Number(match[1])
+  ).filter((code) => Number.isInteger(code));
+
   const nonRetryableMarkers = [
-    "401",
     "unauthorized",
     "forbidden",
-    "expired",
+    "authentication failed",
     "session expired",
     "invalid session",
     "invalid token",
-    "auth",
     "re-authenticate",
-    "authentication",
-    "400",
     "bad request",
-    "404",
     "not found",
-    "422",
     "unprocessable",
+    "unprocessable entity",
     "validation error",
     "invalid argument",
+    "missing required",
+    "malformed",
   ];
   if (nonRetryableMarkers.some((marker) => normalized.includes(marker))) {
     return false;
   }
 
+  if (httpStatusCodes.some((statusCode) => statusCode === 401 || statusCode === 403)) {
+    return false;
+  }
+
+  if (httpStatusCodes.some((statusCode) => statusCode === 408 || statusCode === 429 || statusCode >= 500)) {
+    return true;
+  }
+
+  if (httpStatusCodes.some((statusCode) => statusCode >= 400 && statusCode < 500)) {
+    return false;
+  }
+
   const retryableMarkers = [
     "network",
+    "network error",
     "connection",
     "fetch failed",
+    "failed to fetch",
     "timeout",
     "timed out",
     "socket hang up",
     "connection reset",
+    "connection refused",
     "dns",
+    "dns lookup",
     "temporary failure",
+    "temporary network",
+    "temporarily unavailable",
     "econnreset",
+    "econnrefused",
     "etimedout",
     "eai_again",
-    "429",
     "too many requests",
-    "500",
+    "rate limit exceeded",
     "internal server error",
-    "502",
-    "503",
-    "504",
     "bad gateway",
     "service unavailable",
     "gateway timeout",
-    "temporarily unavailable",
-    "rate limit",
   ];
 
   if (retryableMarkers.some((marker) => normalized.includes(marker))) {
     return true;
   }
 
-  // For unknown errors, default to retryable unless explicitly classified otherwise.
-  return true;
+  return false;
 }
 
 export async function retry<T>(
@@ -94,7 +108,7 @@ export async function retry<T>(
     maxAttempts = DEFAULT_MAX_ATTEMPTS,
     baseDelay = DEFAULT_BASE_DELAY_MS,
     backoffFactor = DEFAULT_BACKOFF_FACTOR,
-    isRetryable = () => true,
+    isRetryable = (error) => isRetryableError(getErrorMessage(error)),
     onRetry,
   } = options;
 
