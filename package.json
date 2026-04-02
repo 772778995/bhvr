@@ -3,6 +3,7 @@
 	"version": "0.1.0",
 	"description": "NotebookLM Research Engine — automated deep research via Google NotebookLM",
 	"private": true,
+	"packageManager": "npm@10.0.0",
 	"workspaces": [
 		"server",
 		"client",
