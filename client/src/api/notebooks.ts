@@ -48,12 +48,15 @@ async function request<T>(url: string): Promise<T> {
     throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
   }
 
-  const body = (await res.json()) as ApiResponse<T>;
-  if (!body.success) {
-    throw new Error(body.message ?? "请求失败");
+  const body = await res.json() as ApiResponse<T> | T;
+  if (typeof body === "object" && body !== null && "success" in body) {
+    if (!body.success) {
+      throw new Error(body.message ?? "请求失败");
+    }
+    return body.data;
   }
 
-  return body.data;
+  return body as T;
 }
 
 export const notebooksApi = {

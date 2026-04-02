@@ -31,6 +31,11 @@ defineProps<Props>();
       />
     </div>
 
+    <div class="mb-3 rounded-md border border-gray-200 bg-gray-50 p-2.5">
+      <p class="text-xs font-medium text-gray-700">筛选条件</p>
+      <p class="text-xs text-gray-500 mt-1">按来源类型与状态筛选（即将支持）</p>
+    </div>
+
     <div v-if="sources.length === 0" class="text-sm text-gray-500 bg-gray-50 border border-dashed border-gray-300 rounded-md p-4">
       暂无来源，请添加后开始对话。
     </div>

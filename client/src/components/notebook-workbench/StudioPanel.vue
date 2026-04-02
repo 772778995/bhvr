@@ -4,7 +4,7 @@ import type { ResearchEntry, StudioTool } from "@/api/notebooks";
 interface Props {
   tools: StudioTool[];
   researchEntry: ResearchEntry | null;
-  onOpenTool: (toolName: string) => void;
+  onOpenTool: (tool: StudioTool) => void;
   onOpenResearch: () => void;
 }
 
@@ -25,7 +25,7 @@ defineProps<Props>();
         :key="tool.id"
         type="button"
         class="text-left border border-gray-200 rounded-md p-2 hover:bg-gray-50"
-        @click="onOpenTool(tool.name)"
+        @click="onOpenTool(tool)"
       >
         <p class="text-sm font-medium text-gray-900">{{ tool.name }}</p>
         <p class="text-xs text-gray-500 mt-1">{{ tool.description }}</p>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   notebooksApi,
@@ -9,7 +9,7 @@ import {
   type Source,
   type StudioTool,
 } from "@/api/notebooks";
-import { showNotImplemented } from "@/utils/not-implemented";
+import { getNotImplementedMessage } from "@/utils/not-implemented";
 import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
@@ -19,6 +19,8 @@ const route = useRoute();
 
 const loading = ref(true);
 const error = ref("");
+const notice = ref("");
+
 const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
 const messages = ref<ChatMessage[]>([]);
@@ -43,28 +45,44 @@ const hasData = computed(() => {
   );
 });
 
+function resetPanelData() {
+  sources.value = [];
+  messages.value = [];
+  studioTools.value = [];
+  researchEntry.value = null;
+}
+
+function pushNotice(message: string) {
+  notice.value = message;
+}
+
 function onTopAction() {
-  showNotImplemented();
+  pushNotice(getNotImplementedMessage());
 }
 
 function onAddSource() {
-  showNotImplemented();
+  pushNotice(getNotImplementedMessage("添加来源"));
 }
 
 function onSendMessage() {
-  showNotImplemented();
+  pushNotice(getNotImplementedMessage("发送消息"));
 }
 
-function onOpenTool() {
-  showNotImplemented();
+function onOpenTool(tool: StudioTool) {
+  const label = tool.name || tool.id;
+  pushNotice(getNotImplementedMessage(label));
 }
 
 function onOpenResearch() {
-  showNotImplemented();
+  pushNotice(getNotImplementedMessage("自动课题研究"));
 }
 
 async function loadWorkbenchData() {
+  notice.value = "";
+
   if (!notebookId.value) {
+    notebook.value = null;
+    resetPanelData();
     loading.value = false;
     error.value = "Notebook ID 缺失，请检查路由参数。";
     return;
@@ -73,35 +91,64 @@ async function loadWorkbenchData() {
   loading.value = true;
   error.value = "";
 
-  try {
-    const [notebookData, sourcesData, messagesData, toolsData, researchData] = await Promise.all([
-      notebooksApi.getNotebook(notebookId.value),
-      notebooksApi.getSources(notebookId.value),
-      notebooksApi.getMessages(notebookId.value),
-      notebooksApi.getStudioTools(notebookId.value),
-      notebooksApi.getResearchEntry(notebookId.value),
-    ]);
+  const [
+    notebookResult,
+    sourcesResult,
+    messagesResult,
+    toolsResult,
+    researchResult,
+  ] = await Promise.allSettled([
+    notebooksApi.getNotebook(notebookId.value),
+    notebooksApi.getSources(notebookId.value),
+    notebooksApi.getMessages(notebookId.value),
+    notebooksApi.getStudioTools(notebookId.value),
+    notebooksApi.getResearchEntry(notebookId.value),
+  ]);
 
-    notebook.value = notebookData;
-    sources.value = sourcesData;
-    messages.value = messagesData;
-    studioTools.value = toolsData;
-    researchEntry.value = researchData;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : "加载失败，请稍后重试。";
-  } finally {
+  if (notebookResult.status === "rejected") {
+    notebook.value = null;
+    resetPanelData();
+    error.value = notebookResult.reason instanceof Error
+      ? notebookResult.reason.message
+      : "Notebook 信息加载失败，请稍后重试。";
     loading.value = false;
+    return;
   }
+
+  notebook.value = notebookResult.value;
+  sources.value = sourcesResult.status === "fulfilled" ? sourcesResult.value : [];
+  messages.value = messagesResult.status === "fulfilled" ? messagesResult.value : [];
+  studioTools.value = toolsResult.status === "fulfilled" ? toolsResult.value : [];
+  researchEntry.value = researchResult.status === "fulfilled" ? researchResult.value : null;
+
+  const partialFailure =
+    sourcesResult.status === "rejected"
+    || messagesResult.status === "rejected"
+    || toolsResult.status === "rejected"
+    || researchResult.status === "rejected";
+
+  if (partialFailure) {
+    pushNotice("部分区域加载失败，已展示可用内容。");
+  }
+
+  loading.value = false;
 }
 
-onMounted(() => {
-  loadWorkbenchData();
-});
+watch(
+  notebookId,
+  () => {
+    void loadWorkbenchData();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <div class="min-h-screen bg-gray-100">
-    <div v-if="loading" class="min-h-screen flex items-center justify-center text-sm text-gray-600">
+    <div
+      v-if="loading"
+      class="min-h-screen flex items-center justify-center text-sm text-gray-600"
+    >
       正在加载工作台...
     </div>
 
@@ -129,6 +176,12 @@ onMounted(() => {
         :on-share="onTopAction"
         :on-more="onTopAction"
       />
+
+      <div v-if="notice" class="px-3 sm:px-4 pt-3">
+        <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {{ notice }}
+        </div>
+      </div>
 
       <div class="flex-1 p-3 sm:p-4">
         <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-[calc(100vh-88px)]">
