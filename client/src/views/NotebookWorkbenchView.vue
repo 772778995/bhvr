@@ -20,6 +20,7 @@ const route = useRoute();
 const loading = ref(true);
 const error = ref("");
 const notice = ref("");
+const activeRequestId = ref(0);
 
 const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
@@ -78,6 +79,9 @@ function onOpenResearch() {
 }
 
 async function loadWorkbenchData() {
+  const requestId = ++activeRequestId.value;
+  const isStale = () => requestId !== activeRequestId.value;
+
   notice.value = "";
 
   if (!notebookId.value) {
@@ -104,6 +108,10 @@ async function loadWorkbenchData() {
     notebooksApi.getStudioTools(notebookId.value),
     notebooksApi.getResearchEntry(notebookId.value),
   ]);
+
+  if (isStale()) {
+    return;
+  }
 
   if (notebookResult.status === "rejected") {
     notebook.value = null;
