@@ -7,8 +7,20 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { NotebookLMClient, SourceType, SourceStatus } from "notebooklm-kit";
+import {
+  NotebookLMClient,
+  ResearchMode,
+  SearchSourceType,
+  SourceType,
+  SourceStatus,
+} from "notebooklm-kit";
 import type { Notebook, Source } from "notebooklm-kit";
+import type {
+  AddDiscoveredSourcesOptions,
+  AddSourceResult,
+  SourceProcessingStatus,
+  WebSearchResult,
+} from "notebooklm-kit";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
 
@@ -70,6 +82,17 @@ export type ResearchAskResult = AskResult;
 export interface AccessCheckResult {
   accessible: boolean;
   error?: string;
+}
+
+export interface SourceAddResponse {
+  sourceIds: string[];
+  wasChunked: boolean;
+}
+
+export interface SourceSearchInput {
+  query: string;
+  sourceType: "web" | "drive";
+  mode: "fast" | "deep";
 }
 
 let sdkInstance: NotebookLMClient | null = null;
@@ -351,4 +374,68 @@ export async function ensureNotebookAccessible(notebookId: string): Promise<Acce
     logger.warn({ notebookId, err }, "ensureNotebookAccessible: notebook.get failed");
     return { accessible: false, error: message };
   }
+}
+
+function normalizeAddSourceResult(result: string | AddSourceResult): SourceAddResponse {
+  if (typeof result === "string") {
+    return { sourceIds: [result], wasChunked: false };
+  }
+
+  return {
+    sourceIds: result.allSourceIds ?? result.sourceIds ?? [],
+    wasChunked: Boolean(result.wasChunked),
+  };
+}
+
+export async function addSourceFromUrl(
+  notebookId: string,
+  input: { url: string; title?: string }
+): Promise<SourceAddResponse> {
+  const client = await getClient();
+  const sourceId = await client.sources.addFromURL(notebookId, input);
+  return { sourceIds: [sourceId], wasChunked: false };
+}
+
+export async function addSourceFromText(
+  notebookId: string,
+  input: { title: string; content: string }
+): Promise<SourceAddResponse> {
+  const client = await getClient();
+  const result = await client.sources.addFromText(notebookId, input);
+  return normalizeAddSourceResult(result);
+}
+
+export async function addSourceFromFile(
+  notebookId: string,
+  input: { fileName: string; content: Buffer; mimeType?: string }
+): Promise<SourceAddResponse> {
+  const client = await getClient();
+  const result = await client.sources.addFromFile(notebookId, input);
+  return normalizeAddSourceResult(result);
+}
+
+export async function searchWebSources(
+  notebookId: string,
+  input: SourceSearchInput
+): Promise<WebSearchResult> {
+  const client = await getClient();
+  return await client.sources.searchWebAndWait(notebookId, {
+    query: input.query,
+    mode: input.mode === "deep" ? ResearchMode.DEEP : ResearchMode.FAST,
+    sourceType: input.sourceType === "drive" ? SearchSourceType.GOOGLE_DRIVE : SearchSourceType.WEB,
+  });
+}
+
+export async function addDiscoveredSources(
+  notebookId: string,
+  input: AddDiscoveredSourcesOptions
+): Promise<{ sourceIds: string[] }> {
+  const client = await getClient();
+  const sourceIds = await client.sources.addDiscovered(notebookId, input);
+  return { sourceIds };
+}
+
+export async function getSourceProcessingStatus(notebookId: string): Promise<SourceProcessingStatus> {
+  const client = await getClient();
+  return await client.sources.status(notebookId);
 }

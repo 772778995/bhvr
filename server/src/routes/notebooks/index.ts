@@ -1,12 +1,18 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
+  addDiscoveredSources,
+  addSourceFromFile,
+  addSourceFromText,
+  addSourceFromUrl,
   askNotebookForResearch,
   ensureNotebookAccessible,
   getAuthStatus,
   getNotebookDetail,
   getNotebookMessages,
   getNotebookSources,
+  getSourceProcessingStatus,
+  searchWebSources,
 } from "../../notebooklm/index.js";
 import {
   attachRegistrySubscription,
@@ -31,6 +37,11 @@ import {
   mergeSourceStates,
   setSourceEnabled,
 } from "../../source-state/service.js";
+import {
+  parseSearchBody,
+  parseTextBody,
+  parseUrlBody,
+} from "./source-add-validate.js";
 
 const notebooks = new Hono();
 
@@ -110,6 +121,84 @@ notebooks.post("/:id/sources/:sourceId/toggle", async (c) => {
 
     await setSourceEnabled(id, sourceId, enabled);
     return c.json(successResponse({ sourceId, enabled }));
+  });
+});
+
+notebooks.post("/:id/sources/add/url", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const parsed = parseUrlBody(await c.req.json().catch(() => ({})));
+    if (!parsed.ok) {
+      return c.json({ success: false, message: parsed.message }, 400);
+    }
+
+    const result = await addSourceFromUrl(id, parsed.value);
+    return c.json(successResponse(result));
+  });
+});
+
+notebooks.post("/:id/sources/add/text", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const parsed = parseTextBody(await c.req.json().catch(() => ({})));
+    if (!parsed.ok) {
+      return c.json({ success: false, message: parsed.message }, 400);
+    }
+
+    const result = await addSourceFromText(id, parsed.value);
+    return c.json(successResponse(result));
+  });
+});
+
+notebooks.post("/:id/sources/add/search", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const parsed = parseSearchBody(await c.req.json().catch(() => ({})));
+    if (!parsed.ok) {
+      return c.json({ success: false, message: parsed.message }, 400);
+    }
+
+    const result = await searchWebSources(id, parsed.value);
+    return c.json(successResponse(result));
+  });
+});
+
+notebooks.post("/:id/sources/add/discovered", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return c.json({ success: false, message: "Invalid request body" }, 400);
+    }
+
+    const result = await addDiscoveredSources(id, body as any);
+    return c.json(successResponse(result));
+  });
+});
+
+notebooks.post("/:id/sources/add/file", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const formData = await c.req.formData().catch(() => null);
+    if (!formData) {
+      return c.json({ success: false, message: "Invalid multipart form data" }, 400);
+    }
+
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      return c.json({ success: false, message: "file is required" }, 400);
+    }
+
+    const content = Buffer.from(await file.arrayBuffer());
+    const result = await addSourceFromFile(id, {
+      fileName: file.name,
+      mimeType: file.type || undefined,
+      content,
+    });
+
+    return c.json(successResponse(result));
+  });
+});
+
+notebooks.get("/:id/sources/status", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const result = await getSourceProcessingStatus(id);
+    return c.json(successResponse(result));
   });
 });
 

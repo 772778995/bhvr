@@ -19,6 +19,7 @@ import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
 import StudioPanel from "@/components/notebook-workbench/StudioPanel.vue";
+import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue";
 
 const route = useRoute();
 
@@ -40,6 +41,8 @@ const researchState = ref<ResearchState>({
 
 const report = ref<NotebookReport | null>(null);
 const togglingSourceIds = ref<string[]>([]);
+const addSourceOpen = ref(false);
+const addSourceBusy = ref(false);
 
 let sseCleanup: (() => void) | null = null;
 
@@ -80,7 +83,138 @@ function onTopAction() {
 }
 
 function onAddSource() {
-  showNotImplemented("添加来源");
+  addSourceOpen.value = true;
+}
+
+function onCloseAddSourceDialog() {
+  addSourceOpen.value = false;
+}
+
+async function refreshSources() {
+  if (!notebookId.value) {
+    return;
+  }
+  sources.value = await notebooksApi.getSources(notebookId.value);
+}
+
+async function waitForSourcesReady(timeoutMs = 60000): Promise<boolean> {
+  if (!notebookId.value) {
+    return false;
+  }
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const status = await notebooksApi.getSourceProcessingStatus(notebookId.value);
+    if (status.allReady) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  return false;
+}
+
+async function handleSourceAdded(closeDialog = true) {
+  const ready = await waitForSourcesReady();
+  await refreshSources();
+  if (closeDialog) {
+    addSourceOpen.value = false;
+  }
+  if (!ready) {
+    pushNotice("来源已提交，仍在处理中。列表已刷新。请稍后重试查看完整状态。");
+  }
+}
+
+async function onAddSourceUrl(payload: { url: string; title?: string }) {
+  if (!notebookId.value) {
+    return;
+  }
+
+  addSourceBusy.value = true;
+  notice.value = "";
+  try {
+    await notebooksApi.addSourceFromUrl(notebookId.value, payload);
+    await handleSourceAdded();
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "添加网站来源失败");
+  } finally {
+    addSourceBusy.value = false;
+  }
+}
+
+async function onAddSourceText(payload: { title: string; content: string }) {
+  if (!notebookId.value) {
+    return;
+  }
+
+  addSourceBusy.value = true;
+  notice.value = "";
+  try {
+    await notebooksApi.addSourceFromText(notebookId.value, payload);
+    await handleSourceAdded();
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "添加文本来源失败");
+  } finally {
+    addSourceBusy.value = false;
+  }
+}
+
+async function onAddSourceFile(file: File) {
+  if (!notebookId.value) {
+    return;
+  }
+
+  addSourceBusy.value = true;
+  notice.value = "";
+  try {
+    await notebooksApi.addSourceFromFile(notebookId.value, file);
+    await handleSourceAdded();
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "上传文件来源失败");
+  } finally {
+    addSourceBusy.value = false;
+  }
+}
+
+async function onSearchAndAddSources(payload: {
+  query: string;
+  sourceType: "web" | "drive";
+  mode: "fast" | "deep";
+}) {
+  if (!notebookId.value) {
+    return;
+  }
+
+  addSourceBusy.value = true;
+  notice.value = "";
+
+  try {
+    const searchResult = await notebooksApi.searchSources(notebookId.value, payload);
+
+    const webSources = searchResult.web.map((item) => ({ title: item.title, url: item.url }));
+    const driveSources = searchResult.drive.map((item) => ({
+      fileId: item.fileId,
+      title: item.title,
+      mimeType: item.mimeType,
+    }));
+
+    if (webSources.length === 0 && driveSources.length === 0) {
+      pushNotice("未找到可添加来源，请调整搜索词后重试。");
+      return;
+    }
+
+    await notebooksApi.addDiscoveredSources(notebookId.value, {
+      sessionId: searchResult.sessionId,
+      ...(webSources.length ? { webSources } : {}),
+      ...(driveSources.length ? { driveSources } : {}),
+    });
+
+    await handleSourceAdded();
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "搜索并添加来源失败");
+  } finally {
+    addSourceBusy.value = false;
+  }
 }
 
 async function onToggleSource(source: Source, enabled: boolean) {
@@ -318,6 +452,16 @@ onUnmounted(() => {
           />
         </div>
       </div>
+
+      <AddSourceDialog
+        :open="addSourceOpen"
+        :busy="addSourceBusy"
+        :on-close="onCloseAddSourceDialog"
+        :on-add-url="onAddSourceUrl"
+        :on-add-text="onAddSourceText"
+        :on-search="onSearchAndAddSources"
+        :on-pick-file="onAddSourceFile"
+      />
     </div>
   </div>
 </template>

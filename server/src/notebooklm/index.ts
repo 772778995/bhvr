@@ -10,6 +10,12 @@ export {
   getNotebookMessages,
   askNotebookForResearch,
   ensureNotebookAccessible,
+  addSourceFromUrl,
+  addSourceFromText,
+  addSourceFromFile,
+  searchWebSources,
+  addDiscoveredSources,
+  getSourceProcessingStatus,
   // Types
   type AuthStatus,
   type AskResult,
@@ -19,4 +25,6 @@ export {
   type NotebookMessagesResult,
   type ResearchAskResult,
   type AccessCheckResult,
+  type SourceAddResponse,
+  type SourceSearchInput,
 } from "./client.js";
