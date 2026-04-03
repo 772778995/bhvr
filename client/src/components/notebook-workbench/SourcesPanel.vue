@@ -10,7 +10,7 @@ defineProps<Props>();
 </script>
 
 <template>
-  <section class="h-full bg-white border border-gray-200 rounded-lg p-4 flex flex-col">
+  <section class="h-full min-h-0 bg-white border border-gray-200 rounded-lg p-4 flex flex-col overflow-hidden">
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-sm font-semibold text-gray-900">来源</h2>
       <button
@@ -40,7 +40,7 @@ defineProps<Props>();
       暂无来源，请添加后开始对话。
     </div>
 
-    <ul v-else class="space-y-2 overflow-auto pr-1">
+    <ul v-else class="space-y-2 overflow-y-auto min-h-0 flex-1 pr-1">
       <li
         v-for="source in sources"
         :key="source.id"

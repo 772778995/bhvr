@@ -7,15 +7,15 @@ const isNotebookWorkbenchRoute = computed(() => route.name === "notebook-workben
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div :class="isNotebookWorkbenchRoute ? 'h-screen overflow-hidden bg-gray-50' : 'min-h-screen bg-gray-50'">
     <header v-if="!isNotebookWorkbenchRoute" class="bg-white border-b border-gray-200">
       <div class="max-w-4xl mx-auto px-4 py-4">
         <router-link to="/" class="text-lg font-bold text-gray-900 hover:text-blue-600 transition-colors">
-          NotebookLM Research Engine
+          NotebookLM 自动化研究引擎
         </router-link>
       </div>
     </header>
-    <main :class="isNotebookWorkbenchRoute ? 'min-h-screen' : 'max-w-4xl mx-auto px-4 py-6'">
+    <main :class="isNotebookWorkbenchRoute ? 'h-full overflow-hidden' : 'max-w-4xl mx-auto px-4 py-6'">
       <RouterView />
     </main>
   </div>

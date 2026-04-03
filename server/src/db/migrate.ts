@@ -1,14 +1,10 @@
 import { createClient } from "@libsql/client";
 import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import logger from "../lib/logger.js";
+import { resolveDatabasePath } from "./path.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = resolve(
-  __dirname,
-  process.env.DATABASE_PATH || "../../../data/notebooklm.db"
-);
+const DB_PATH = resolveDatabasePath();
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
 const client = createClient({ url: `file:${DB_PATH}` });

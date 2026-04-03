@@ -1,16 +1,11 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import * as schema from "./schema.js";
+import { dirname } from "node:path";
+import { resolveDatabasePath } from "./path.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const DB_PATH = resolve(
-  __dirname,
-  process.env.DATABASE_PATH || "../../../data/notebooklm.db"
-);
+const DB_PATH = resolveDatabasePath();
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
 const client = createClient({

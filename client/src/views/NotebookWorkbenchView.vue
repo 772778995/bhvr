@@ -9,8 +9,12 @@ import {
   type ResearchState,
   type Source,
 } from "@/api/notebooks";
-import { subscribeResearchStream, payloadToState, type ResearchRuntimeEvent } from "@/api/sse";
-import { getNotImplementedMessage } from "@/utils/not-implemented";
+import {
+  payloadToState,
+  subscribeResearchStream,
+  type ResearchRuntimeEvent,
+} from "@/api/sse";
+import { showNotImplemented } from "@/utils/not-implemented";
 import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
@@ -27,7 +31,6 @@ const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
 const messages = ref<ChatMessage[]>([]);
 
-// Research runtime state — populated via SSE events; initialised to idle
 const researchState = ref<ResearchState>({
   status: "idle",
   step: "idle",
@@ -35,10 +38,8 @@ const researchState = ref<ResearchState>({
   targetCount: 0,
 });
 
-// Stored report
 const report = ref<NotebookReport | null>(null);
 
-// SSE cleanup handle
 let sseCleanup: (() => void) | null = null;
 
 const notebookId = computed(() => {
@@ -50,14 +51,9 @@ const notebookId = computed(() => {
 });
 
 const hasData = computed(() => {
-  return (
-    notebook.value !== null
-    || sources.value.length > 0
-    || messages.value.length > 0
-  );
+  return notebook.value !== null || sources.value.length > 0 || messages.value.length > 0;
 });
 
-/** Whether there are Q&A assets that can be used to generate a report. */
 const hasResearchAssets = computed(() => {
   return messages.value.length > 0 || researchState.value.completedCount > 0;
 });
@@ -65,7 +61,12 @@ const hasResearchAssets = computed(() => {
 function resetPanelData() {
   sources.value = [];
   messages.value = [];
-  researchState.value = { status: "idle", step: "idle", completedCount: 0, targetCount: 0 };
+  researchState.value = {
+    status: "idle",
+    step: "idle",
+    completedCount: 0,
+    targetCount: 0,
+  };
   report.value = null;
 }
 
@@ -74,84 +75,98 @@ function pushNotice(message: string) {
 }
 
 function onTopAction() {
-  pushNotice(getNotImplementedMessage());
+  showNotImplemented();
 }
 
 function onAddSource() {
-  pushNotice(getNotImplementedMessage("添加来源"));
+  showNotImplemented("添加来源");
 }
 
 function onSendMessage() {
-  pushNotice(getNotImplementedMessage("发送消息"));
+  showNotImplemented("发送消息");
 }
 
-/** Handle incoming SSE event, update researchState / report reactively. */
-function handleResearchEvent(ev: ResearchRuntimeEvent) {
-  if (ev.type === "heartbeat") {
-    return; // keep-alive; nothing to update
+function handleResearchEvent(event: ResearchRuntimeEvent) {
+  if (event.type === "heartbeat") {
+    return;
   }
 
-  if (ev.payload) {
-    researchState.value = payloadToState(ev.payload);
+  if (event.payload) {
+    researchState.value = payloadToState(event.payload);
   }
 
-  // When the run completes, also refresh the report
-  if (ev.type === "completed") {
-    void notebooksApi.getReport(notebookId.value)
-      .then((r) => { report.value = r; })
-      .catch(() => { /* silently ignore if report endpoint not available yet */ });
+  if (event.type === "completed") {
+    void notebooksApi
+      .getReport(notebookId.value)
+      .then((value) => {
+        report.value = value;
+      })
+      .catch(() => {
+        // Ignore report refresh failures here; the page remains usable.
+      });
   }
 }
 
-/**
- * Establish SSE subscription for the given notebook id.
- * Tears down any existing connection first.
- * Called unconditionally whenever we have a valid id — independent of
- * whether the HTTP data load succeeded.
- */
 function connectSSE(id: string) {
   if (sseCleanup) {
     sseCleanup();
     sseCleanup = null;
   }
 
-  if (!id) return;
+  if (!id) {
+    return;
+  }
 
   sseCleanup = subscribeResearchStream(id, {
     onEvent: handleResearchEvent,
     onError: () => {
-      // Connection dropped — keep last known state; EventSource auto-reconnects
+      // EventSource will auto-reconnect. Keep the last known state in the UI.
     },
   });
 }
 
 async function onStartResearch() {
-  if (!notebookId.value) return;
+  if (!notebookId.value) {
+    return;
+  }
+
   notice.value = "";
+
   try {
     await notebooksApi.startResearch(notebookId.value);
-    // Optimistically reflect that the run has been kicked off; SSE will
-    // deliver authoritative state updates from the server shortly.
-    researchState.value = { ...researchState.value, status: "running", step: "starting" };
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "启动研究失败");
+    researchState.value = {
+      ...researchState.value,
+      status: "running",
+      step: "starting",
+    };
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "启动研究失败");
   }
 }
 
 async function onGenerateReport() {
-  if (!notebookId.value) return;
+  if (!notebookId.value) {
+    return;
+  }
+
   notice.value = "";
+
   try {
     await notebooksApi.generateReport(notebookId.value);
-    pushNotice("报告生成请求已提交，请稍候…");
-    // Poll once after a short delay in case the server finishes quickly
+    pushNotice("报告生成请求已提交，请稍候...");
+
     setTimeout(() => {
-      void notebooksApi.getReport(notebookId.value)
-        .then((r) => { report.value = r; })
-        .catch(() => { /* ignore */ });
+      void notebooksApi
+        .getReport(notebookId.value)
+        .then((value) => {
+          report.value = value;
+        })
+        .catch(() => {
+          // Ignore delayed refresh failure; user can retry manually.
+        });
     }, 3000);
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "生成报告失败");
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "生成报告失败");
   }
 }
 
@@ -172,16 +187,9 @@ async function loadWorkbenchData() {
   loading.value = true;
   error.value = "";
 
-  // Always establish SSE as soon as we know the id is valid, independent of
-  // whether the HTTP fetches below succeed or fail.
   connectSSE(notebookId.value);
 
-  const [
-    notebookResult,
-    sourcesResult,
-    messagesResult,
-    reportResult,
-  ] = await Promise.allSettled([
+  const [notebookResult, sourcesResult, messagesResult, reportResult] = await Promise.allSettled([
     notebooksApi.getNotebook(notebookId.value),
     notebooksApi.getSources(notebookId.value),
     notebooksApi.getMessages(notebookId.value),
@@ -193,17 +201,17 @@ async function loadWorkbenchData() {
   }
 
   if (notebookResult.status === "rejected") {
-    // Close any SSE connection opened above — the notebook doesn't exist or
-    // is inaccessible, so keeping the stream alive would be an orphan.
     if (sseCleanup) {
       sseCleanup();
       sseCleanup = null;
     }
+
     notebook.value = null;
     resetPanelData();
-    error.value = notebookResult.reason instanceof Error
-      ? notebookResult.reason.message
-      : "Notebook 信息加载失败，请稍后重试。";
+    error.value =
+      notebookResult.reason instanceof Error
+        ? notebookResult.reason.message
+        : "Notebook 信息加载失败，请稍后重试。";
     loading.value = false;
     return;
   }
@@ -213,9 +221,7 @@ async function loadWorkbenchData() {
   messages.value = messagesResult.status === "fulfilled" ? messagesResult.value : [];
   report.value = reportResult.status === "fulfilled" ? reportResult.value : null;
 
-  const partialFailure =
-    sourcesResult.status === "rejected"
-    || messagesResult.status === "rejected";
+  const partialFailure = sourcesResult.status === "rejected" || messagesResult.status === "rejected";
 
   if (partialFailure) {
     pushNotice("部分区域加载失败，已展示可用内容。");
@@ -227,13 +233,11 @@ async function loadWorkbenchData() {
 watch(
   notebookId,
   (newId, oldId) => {
-    if (newId !== oldId) {
-      // Disconnect SSE for the previous notebook immediately on id change
-      if (sseCleanup) {
-        sseCleanup();
-        sseCleanup = null;
-      }
+    if (newId !== oldId && sseCleanup) {
+      sseCleanup();
+      sseCleanup = null;
     }
+
     void loadWorkbenchData();
   },
   { immediate: true },
@@ -248,35 +252,26 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-100">
-    <div
-      v-if="loading"
-      class="min-h-screen flex items-center justify-center text-sm text-gray-600"
-    >
+  <div class="h-full bg-gray-100 overflow-hidden">
+    <div v-if="loading" class="h-full flex items-center justify-center text-sm text-gray-600">
       正在加载工作台...
     </div>
 
-    <div
-      v-else-if="error"
-      class="min-h-screen flex items-center justify-center p-6"
-    >
+    <div v-else-if="error" class="h-full flex items-center justify-center p-6">
       <div class="w-full max-w-lg rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
         {{ error }}
       </div>
     </div>
 
-    <div
-      v-else-if="!hasData"
-      class="min-h-screen flex items-center justify-center p-6"
-    >
+    <div v-else-if="!hasData" class="h-full flex items-center justify-center p-6">
       <div class="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-600 text-center">
         当前 Notebook 暂无可展示数据。
       </div>
     </div>
 
-    <div v-else class="min-h-screen flex flex-col">
+    <div v-else class="h-full flex flex-col overflow-hidden">
       <NotebookTopBar
-        :title="notebook?.title ?? 'Notebook Workbench'"
+        :title="notebook?.title ?? 'Notebook 工作台'"
         :on-share="onTopAction"
         :on-more="onTopAction"
       />
@@ -287,8 +282,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="flex-1 p-3 sm:p-4">
-        <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-[calc(100vh-88px)]">
+      <div class="flex-1 p-3 sm:p-4 min-h-0 overflow-hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-0">
           <SourcesPanel :sources="sources" :on-add-source="onAddSource" />
           <ChatPanel :messages="messages" :on-send="onSendMessage" />
           <StudioPanel

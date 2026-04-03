@@ -388,18 +388,19 @@ export async function getNotebookSources(
   notebookId: string
 ): Promise<NotebookSource[]> {
   const client = await getClient();
-  let notebook: Notebook;
+
+  let sources: Source[];
   try {
-    notebook = await client.notebooks.get(notebookId);
+    sources = await client.sources.list(notebookId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("expired") || message.includes("401")) {
       disposeClient();
     }
-    logger.warn({ notebookId, err }, "getNotebookSources: sdk.notebooks.get failed");
+    logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed");
     throw new Error(`Failed to fetch notebook sources: ${message}`);
   }
-  const sources: Source[] = notebook.sources ?? [];
+
   return sources.map(mapSource);
 }
 
