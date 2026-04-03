@@ -39,6 +39,7 @@ const researchState = ref<ResearchState>({
 });
 
 const report = ref<NotebookReport | null>(null);
+const togglingSourceIds = ref<string[]>([]);
 
 let sseCleanup: (() => void) | null = null;
 
@@ -80,6 +81,23 @@ function onTopAction() {
 
 function onAddSource() {
   showNotImplemented("添加来源");
+}
+
+async function onToggleSource(source: Source, enabled: boolean) {
+  if (!notebookId.value) return;
+
+  togglingSourceIds.value = [...togglingSourceIds.value, source.id];
+
+  try {
+    await notebooksApi.toggleSource(notebookId.value, source.id, enabled);
+    sources.value = await notebooksApi.getSources(notebookId.value);
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "更新来源状态失败");
+  } finally {
+    togglingSourceIds.value = togglingSourceIds.value.filter(
+      (id) => id !== source.id
+    );
+  }
 }
 
 function onSendMessage() {
@@ -284,7 +302,12 @@ onUnmounted(() => {
 
       <div class="flex-1 p-3 sm:p-4 min-h-0 overflow-hidden">
         <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-0">
-          <SourcesPanel :sources="sources" :on-add-source="onAddSource" />
+          <SourcesPanel
+            :sources="sources"
+            :toggling-source-ids="togglingSourceIds"
+            :on-add-source="onAddSource"
+            :on-toggle-source="onToggleSource"
+          />
           <ChatPanel :messages="messages" :on-send="onSendMessage" />
           <StudioPanel
             :research-state="researchState"

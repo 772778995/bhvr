@@ -1,4 +1,9 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const researchReports = sqliteTable("research_reports", {
   notebookId: text("notebook_id").primaryKey(),
@@ -47,3 +52,24 @@ export const questions = sqliteTable("questions", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const notebookSourceStates = sqliteTable(
+  "notebook_source_states",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    notebookId: text("notebook_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => ({
+    notebookSourceUnique: uniqueIndex("notebook_source_unique").on(
+      table.notebookId,
+      table.sourceId
+    ),
+  })
+);

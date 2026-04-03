@@ -10,6 +10,8 @@ export interface Source {
   title: string;
   type: string;
   status: string;
+  enabled: boolean;
+  url?: string;
 }
 
 export interface ChatMessage {
@@ -109,6 +111,16 @@ export const notebooksApi = {
 
   getSources(id: string) {
     return request<Source[]>(`/api/notebooks/${id}/sources`);
+  },
+
+  toggleSource(id: string, sourceId: string, enabled: boolean) {
+    return request<{ sourceId: string; enabled: boolean }>(
+      `/api/notebooks/${id}/sources/${sourceId}/toggle`,
+      {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      }
+    );
   },
 
   /** Chat messages for a notebook. */

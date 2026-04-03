@@ -25,6 +25,12 @@ import {
   invalidNotebookIdResponse,
   successResponse,
 } from "./response.js";
+import {
+  listEnabledSourceIds,
+  listSourceStateMap,
+  mergeSourceStates,
+  setSourceEnabled,
+} from "../../source-state/service.js";
 
 const notebooks = new Hono();
 
@@ -63,8 +69,47 @@ notebooks.get("/:id", async (c) => {
 
 notebooks.get("/:id/sources", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const response = await getNotebookSources(id);
-    return c.json(successResponse(response));
+    const [sources, stateMap] = await Promise.all([
+      getNotebookSources(id),
+      listSourceStateMap(id),
+    ]);
+
+    return c.json(successResponse(mergeSourceStates(sources, stateMap)));
+  });
+});
+
+notebooks.post("/:id/sources/:sourceId/toggle", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const sourceId = c.req.param("sourceId")?.trim();
+    if (!sourceId) {
+      return c.json(
+        {
+          success: false,
+          message: "Invalid source id",
+          errorCode: "INVALID_SOURCE_ID",
+        },
+        400
+      );
+    }
+
+    const body: { enabled?: boolean } = await c.req
+      .json<{ enabled?: boolean }>()
+      .catch(() => ({}));
+    const { enabled } = body;
+
+    if (typeof enabled !== "boolean") {
+      return c.json(
+        {
+          success: false,
+          message: "enabled must be boolean",
+          errorCode: "INVALID_ENABLED",
+        },
+        400
+      );
+    }
+
+    await setSourceEnabled(id, sourceId, enabled);
+    return c.json(successResponse({ sourceId, enabled }));
   });
 });
 
@@ -147,7 +192,16 @@ notebooks.post("/:id/research/start", async (c) => {
       );
     }
 
-    void runAutoResearch(id, askNotebookForResearch).catch((err) => {
+    const sources = await getNotebookSources(id);
+    const stateMap = await listSourceStateMap(id);
+    const merged = mergeSourceStates(sources, stateMap);
+    const enabledSourceIds = listEnabledSourceIds(merged);
+
+    void runAutoResearch(
+      id,
+      (notebookId, prompt) =>
+        askNotebookForResearch(notebookId, prompt, enabledSourceIds)
+    ).catch((err) => {
       // Error is tracked in runtime state by orchestrator.fail(); swallow here.
       void err;
     });
