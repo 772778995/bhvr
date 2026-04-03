@@ -47,6 +47,17 @@ await client.executeMultiple(`
     error_message TEXT,
     updated_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS notebook_source_states (
+    id TEXT PRIMARY KEY NOT NULL,
+    notebook_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS notebook_source_unique
+  ON notebook_source_states (notebook_id, source_id);
 `);
 
 logger.info({ path: DB_PATH }, "Database migrated successfully");

@@ -53,6 +53,7 @@ export interface NotebookSource {
   id: string;
   title: string;
   type: "pdf" | "web" | "text" | "youtube" | "drive" | "image" | "unknown";
+  sourceTypeRaw?: string;
   status: "ready" | "processing" | "failed" | "unknown";
   url?: string;
 }
@@ -342,6 +343,7 @@ function mapSource(s: Source): NotebookSource {
     id: s.sourceId,
     title: s.title ?? s.sourceId,
     type: normalizeSourceType(s.type),
+    sourceTypeRaw: s.type !== undefined ? String(s.type) : undefined,
     status: normalizeSourceStatus(s.status),
     ...(s.url ? { url: s.url } : {}),
   };
@@ -388,18 +390,17 @@ export async function getNotebookSources(
   notebookId: string
 ): Promise<NotebookSource[]> {
   const client = await getClient();
-  let notebook: Notebook;
+  let sources: Source[];
   try {
-    notebook = await client.notebooks.get(notebookId);
+    sources = await client.sources.list(notebookId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("expired") || message.includes("401")) {
       disposeClient();
     }
-    logger.warn({ notebookId, err }, "getNotebookSources: sdk.notebooks.get failed");
+    logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed");
     throw new Error(`Failed to fetch notebook sources: ${message}`);
   }
-  const sources: Source[] = notebook.sources ?? [];
   return sources.map(mapSource);
 }
 
@@ -435,9 +436,47 @@ export async function getNotebookMessages(
  */
 export async function askNotebookForResearch(
   notebookId: string,
-  prompt: string
+  prompt: string,
+  sourceIds?: string[]
 ): Promise<ResearchAskResult> {
-  return askNotebook(notebookId, prompt);
+  try {
+    const quota = getQuotaStatus();
+    if (quota.remaining <= 0) {
+      return {
+        success: false,
+        error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`,
+      };
+    }
+
+    const client = await getClient();
+    consumeQuota();
+    const result = await client.generation.chat(
+      notebookId,
+      prompt,
+      sourceIds?.length ? { sourceIds } : undefined
+    );
+
+    if (!result?.text) {
+      return {
+        success: false,
+        error: "Empty response from NotebookLM",
+      };
+    }
+
+    return {
+      success: true,
+      answer: result.text,
+      citations: result.citations || [],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    if (message.includes("expired") || message.includes("401")) {
+      disposeClient();
+    }
+
+    return { success: false, error: message };
+  }
 }
 
 /**
