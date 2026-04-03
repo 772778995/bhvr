@@ -1,5 +1,15 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 
+export const researchReports = sqliteTable("research_reports", {
+  notebookId: text("notebook_id").primaryKey(),
+  content: text("content"),
+  generatedAt: integer("generated_at", { mode: "timestamp" }),
+  errorMessage: text("error_message"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const researchTasks = sqliteTable("research_tasks", {
   id: text("id").primaryKey(),
   notebookUrl: text("notebook_url").notNull(),

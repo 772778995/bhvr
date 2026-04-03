@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   notebooksApi,
   type ChatMessage,
   type Notebook,
-  type ResearchEntry,
+  type NotebookReport,
+  type ResearchState,
   type Source,
-  type StudioTool,
 } from "@/api/notebooks";
+import { subscribeResearchStream, payloadToState, type ResearchRuntimeEvent } from "@/api/sse";
 import { getNotImplementedMessage } from "@/utils/not-implemented";
 import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
@@ -25,8 +26,20 @@ const activeRequestId = ref(0);
 const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
 const messages = ref<ChatMessage[]>([]);
-const studioTools = ref<StudioTool[]>([]);
-const researchEntry = ref<ResearchEntry | null>(null);
+
+// Research runtime state — populated via SSE events; initialised to idle
+const researchState = ref<ResearchState>({
+  status: "idle",
+  step: "idle",
+  completedCount: 0,
+  targetCount: 0,
+});
+
+// Stored report
+const report = ref<NotebookReport | null>(null);
+
+// SSE cleanup handle
+let sseCleanup: (() => void) | null = null;
 
 const notebookId = computed(() => {
   const idParam = route.params.id;
@@ -41,16 +54,19 @@ const hasData = computed(() => {
     notebook.value !== null
     || sources.value.length > 0
     || messages.value.length > 0
-    || studioTools.value.length > 0
-    || researchEntry.value !== null
   );
+});
+
+/** Whether there are Q&A assets that can be used to generate a report. */
+const hasResearchAssets = computed(() => {
+  return messages.value.length > 0 || researchState.value.completedCount > 0;
 });
 
 function resetPanelData() {
   sources.value = [];
   messages.value = [];
-  studioTools.value = [];
-  researchEntry.value = null;
+  researchState.value = { status: "idle", step: "idle", completedCount: 0, targetCount: 0 };
+  report.value = null;
 }
 
 function pushNotice(message: string) {
@@ -69,13 +85,74 @@ function onSendMessage() {
   pushNotice(getNotImplementedMessage("发送消息"));
 }
 
-function onOpenTool(tool: StudioTool) {
-  const label = tool.name || tool.id;
-  pushNotice(getNotImplementedMessage(label));
+/** Handle incoming SSE event, update researchState / report reactively. */
+function handleResearchEvent(ev: ResearchRuntimeEvent) {
+  if (ev.type === "heartbeat") {
+    return; // keep-alive; nothing to update
+  }
+
+  if (ev.payload) {
+    researchState.value = payloadToState(ev.payload);
+  }
+
+  // When the run completes, also refresh the report
+  if (ev.type === "completed") {
+    void notebooksApi.getReport(notebookId.value)
+      .then((r) => { report.value = r; })
+      .catch(() => { /* silently ignore if report endpoint not available yet */ });
+  }
 }
 
-function onOpenResearch() {
-  pushNotice(getNotImplementedMessage("自动课题研究"));
+/**
+ * Establish SSE subscription for the given notebook id.
+ * Tears down any existing connection first.
+ * Called unconditionally whenever we have a valid id — independent of
+ * whether the HTTP data load succeeded.
+ */
+function connectSSE(id: string) {
+  if (sseCleanup) {
+    sseCleanup();
+    sseCleanup = null;
+  }
+
+  if (!id) return;
+
+  sseCleanup = subscribeResearchStream(id, {
+    onEvent: handleResearchEvent,
+    onError: () => {
+      // Connection dropped — keep last known state; EventSource auto-reconnects
+    },
+  });
+}
+
+async function onStartResearch() {
+  if (!notebookId.value) return;
+  notice.value = "";
+  try {
+    await notebooksApi.startResearch(notebookId.value);
+    // Optimistically reflect that the run has been kicked off; SSE will
+    // deliver authoritative state updates from the server shortly.
+    researchState.value = { ...researchState.value, status: "running", step: "starting" };
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "启动研究失败");
+  }
+}
+
+async function onGenerateReport() {
+  if (!notebookId.value) return;
+  notice.value = "";
+  try {
+    await notebooksApi.generateReport(notebookId.value);
+    pushNotice("报告生成请求已提交，请稍候…");
+    // Poll once after a short delay in case the server finishes quickly
+    setTimeout(() => {
+      void notebooksApi.getReport(notebookId.value)
+        .then((r) => { report.value = r; })
+        .catch(() => { /* ignore */ });
+    }, 3000);
+  } catch (e) {
+    pushNotice(e instanceof Error ? e.message : "生成报告失败");
+  }
 }
 
 async function loadWorkbenchData() {
@@ -95,18 +172,20 @@ async function loadWorkbenchData() {
   loading.value = true;
   error.value = "";
 
+  // Always establish SSE as soon as we know the id is valid, independent of
+  // whether the HTTP fetches below succeed or fail.
+  connectSSE(notebookId.value);
+
   const [
     notebookResult,
     sourcesResult,
     messagesResult,
-    toolsResult,
-    researchResult,
+    reportResult,
   ] = await Promise.allSettled([
     notebooksApi.getNotebook(notebookId.value),
     notebooksApi.getSources(notebookId.value),
     notebooksApi.getMessages(notebookId.value),
-    notebooksApi.getStudioTools(notebookId.value),
-    notebooksApi.getResearchEntry(notebookId.value),
+    notebooksApi.getReport(notebookId.value),
   ]);
 
   if (isStale()) {
@@ -114,6 +193,12 @@ async function loadWorkbenchData() {
   }
 
   if (notebookResult.status === "rejected") {
+    // Close any SSE connection opened above — the notebook doesn't exist or
+    // is inaccessible, so keeping the stream alive would be an orphan.
+    if (sseCleanup) {
+      sseCleanup();
+      sseCleanup = null;
+    }
     notebook.value = null;
     resetPanelData();
     error.value = notebookResult.reason instanceof Error
@@ -126,14 +211,11 @@ async function loadWorkbenchData() {
   notebook.value = notebookResult.value;
   sources.value = sourcesResult.status === "fulfilled" ? sourcesResult.value : [];
   messages.value = messagesResult.status === "fulfilled" ? messagesResult.value : [];
-  studioTools.value = toolsResult.status === "fulfilled" ? toolsResult.value : [];
-  researchEntry.value = researchResult.status === "fulfilled" ? researchResult.value : null;
+  report.value = reportResult.status === "fulfilled" ? reportResult.value : null;
 
   const partialFailure =
     sourcesResult.status === "rejected"
-    || messagesResult.status === "rejected"
-    || toolsResult.status === "rejected"
-    || researchResult.status === "rejected";
+    || messagesResult.status === "rejected";
 
   if (partialFailure) {
     pushNotice("部分区域加载失败，已展示可用内容。");
@@ -144,11 +226,25 @@ async function loadWorkbenchData() {
 
 watch(
   notebookId,
-  () => {
+  (newId, oldId) => {
+    if (newId !== oldId) {
+      // Disconnect SSE for the previous notebook immediately on id change
+      if (sseCleanup) {
+        sseCleanup();
+        sseCleanup = null;
+      }
+    }
     void loadWorkbenchData();
   },
   { immediate: true },
 );
+
+onUnmounted(() => {
+  if (sseCleanup) {
+    sseCleanup();
+    sseCleanup = null;
+  }
+});
 </script>
 
 <template>
@@ -196,10 +292,11 @@ watch(
           <SourcesPanel :sources="sources" :on-add-source="onAddSource" />
           <ChatPanel :messages="messages" :on-send="onSendMessage" />
           <StudioPanel
-            :tools="studioTools"
-            :research-entry="researchEntry"
-            :on-open-tool="onOpenTool"
-            :on-open-research="onOpenResearch"
+            :research-state="researchState"
+            :report="report"
+            :has-research-assets="hasResearchAssets"
+            :on-start-research="onStartResearch"
+            :on-generate-report="onGenerateReport"
           />
         </div>
       </div>

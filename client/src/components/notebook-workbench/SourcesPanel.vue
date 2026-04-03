@@ -48,7 +48,6 @@ defineProps<Props>();
       >
         <p class="text-sm font-medium text-gray-900">{{ source.title }}</p>
         <p class="text-xs text-gray-500 mt-1">{{ source.type }} · {{ source.status }}</p>
-        <p class="text-xs text-gray-600 mt-2 line-clamp-2">{{ source.summary }}</p>
       </li>
     </ul>
   </section>

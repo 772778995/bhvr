@@ -39,6 +39,14 @@ await client.executeMultiple(`
     error_message TEXT,
     created_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS research_reports (
+    notebook_id TEXT PRIMARY KEY,
+    content TEXT,
+    generated_at INTEGER,
+    error_message TEXT,
+    updated_at INTEGER NOT NULL
+  );
 `);
 
 logger.info({ path: DB_PATH }, "Database migrated successfully");

@@ -10,7 +10,6 @@ export interface Source {
   title: string;
   type: string;
   status: string;
-  summary: string;
 }
 
 export interface ChatMessage {
@@ -21,17 +20,55 @@ export interface ChatMessage {
   status: string;
 }
 
-export interface StudioTool {
-  id: string;
-  name: string;
-  description: string;
-  available: boolean;
+/**
+ * Runtime status of a research run, aligned with the server ResearchStatus type.
+ * idle | running | failed | completed
+ */
+export type ResearchStatus = "idle" | "running" | "failed" | "completed";
+
+/**
+ * Granular step within a running research loop, aligned with server ResearchStep.
+ */
+export type ResearchStep =
+  | "idle"
+  | "starting"
+  | "generating_question"
+  | "waiting_answer"
+  | "refreshing_messages"
+  | "completed"
+  | "failed";
+
+/** Runtime state of auto-research for a notebook (mirrors ResearchRuntimeState). */
+export interface ResearchState {
+  status: ResearchStatus;
+  step: ResearchStep;
+  completedCount: number;
+  targetCount: number;
+  lastError?: string;
 }
 
-export interface ResearchEntry {
+/** Stored research report for a notebook. */
+export interface NotebookReport {
   id: string;
-  name: string;
+  notebookId: string;
+  content: string;
+  generatedAt: string;
+}
+
+/** Start-research request body. */
+export interface StartResearchRequest {
+  topic?: string;
+  numQuestions?: number;
+}
+
+/** Start-research response. */
+export interface StartResearchResponse {
+  message: string;
   status: string;
+}
+
+/** Generate-report response. */
+export interface GenerateReportResponse {
   message: string;
 }
 
@@ -41,8 +78,14 @@ interface ApiResponse<T> {
   message?: string;
 }
 
-async function request<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { ...(options?.headers as Record<string, string>) };
+  const method = options?.method?.toUpperCase() ?? "GET";
+  if (method === "POST" || method === "PUT" || method === "PATCH") {
+    headers["Content-Type"] ??= "application/json";
+  }
+
+  const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
@@ -50,10 +93,10 @@ async function request<T>(url: string): Promise<T> {
 
   const body = await res.json() as ApiResponse<T> | T;
   if (typeof body === "object" && body !== null && "success" in body) {
-    if (!body.success) {
-      throw new Error(body.message ?? "请求失败");
+    if (!(body as ApiResponse<T>).success) {
+      throw new Error((body as ApiResponse<T>).message ?? "请求失败");
     }
-    return body.data;
+    return (body as ApiResponse<T>).data;
   }
 
   return body as T;
@@ -68,15 +111,29 @@ export const notebooksApi = {
     return request<Source[]>(`/api/notebooks/${id}/sources`);
   },
 
+  /** Chat messages for a notebook. */
   getMessages(id: string) {
-    return request<ChatMessage[]>(`/api/notebooks/${id}/chat/messages`);
+    return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
   },
 
-  getStudioTools(id: string) {
-    return request<StudioTool[]>(`/api/notebooks/${id}/studio/tools`);
+  /** Start auto-research for a notebook. */
+  startResearch(id: string, body?: StartResearchRequest) {
+    return request<StartResearchResponse>(`/api/notebooks/${id}/research/start`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
   },
 
-  getResearchEntry(id: string) {
-    return request<ResearchEntry>(`/api/notebooks/${id}/research`);
+  /** Fetch the latest stored report for a notebook. */
+  getReport(id: string) {
+    return request<NotebookReport | null>(`/api/notebooks/${id}/report`);
+  },
+
+  /** Trigger report generation from completed Q&A answers. */
+  generateReport(id: string) {
+    return request<GenerateReportResponse>(`/api/notebooks/${id}/report/generate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
 };
