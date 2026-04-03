@@ -74,6 +74,22 @@ export interface GenerateReportResponse {
   message: string;
 }
 
+export interface SourceAddResponse {
+  sourceIds: string[];
+  wasChunked: boolean;
+}
+
+export interface SourceSearchResponse {
+  sessionId: string;
+  web: Array<{ url: string; title: string; id?: string; type?: string }>;
+  drive: Array<{ fileId: string; mimeType: string; title: string; id?: string }>;
+}
+
+export interface SourceProcessingStatus {
+  allReady: boolean;
+  processing: string[];
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -121,6 +137,55 @@ export const notebooksApi = {
         body: JSON.stringify({ enabled }),
       }
     );
+  },
+
+  addSourceFromUrl(id: string, body: { url: string; title?: string }) {
+    return request<SourceAddResponse>(`/api/notebooks/${id}/sources/add/url`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  addSourceFromText(id: string, body: { title: string; content: string }) {
+    return request<SourceAddResponse>(`/api/notebooks/${id}/sources/add/text`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  addSourceFromFile(id: string, file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<SourceAddResponse>(`/api/notebooks/${id}/sources/add/file`, {
+      method: "POST",
+      body: formData,
+      headers: {},
+    });
+  },
+
+  searchSources(id: string, body: { query: string; sourceType: "web" | "drive"; mode: "fast" | "deep" }) {
+    return request<SourceSearchResponse>(`/api/notebooks/${id}/sources/add/search`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  addDiscoveredSources(
+    id: string,
+    body: {
+      sessionId: string;
+      webSources?: Array<{ title: string; url: string }>;
+      driveSources?: Array<{ fileId: string; title: string; mimeType: string }>;
+    }
+  ) {
+    return request<{ sourceIds: string[] }>(`/api/notebooks/${id}/sources/add/discovered`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  getSourceProcessingStatus(id: string) {
+    return request<SourceProcessingStatus>(`/api/notebooks/${id}/sources/status`);
   },
 
   /** Chat messages for a notebook. */
