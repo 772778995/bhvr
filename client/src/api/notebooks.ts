@@ -89,6 +89,23 @@ export interface SourceProcessingStatus {
   processing: string[];
 }
 
+export interface SendMessageHistoryItem {
+  role: "user" | "assistant";
+  message: string;
+}
+
+export interface SendMessageRequest {
+  content: string;
+  conversationId?: string;
+  conversationHistory?: SendMessageHistoryItem[];
+}
+
+export interface SendMessageResponse {
+  conversationId: string | null;
+  message: ChatMessage;
+  messageIds?: [string, string];
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -184,6 +201,13 @@ export const notebooksApi = {
   /** Chat messages for a notebook. */
   getMessages(id: string) {
     return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
+  },
+
+  sendMessage(id: string, body: SendMessageRequest) {
+    return request<SendMessageResponse>(`/api/notebooks/${id}/chat/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   /** Start auto-research for a notebook. */

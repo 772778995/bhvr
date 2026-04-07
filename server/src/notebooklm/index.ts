@@ -17,6 +17,7 @@ export {
   searchWebSources,
   addDiscoveredSources,
   getSourceProcessingStatus,
+  sendNotebookChatMessage,
   // Types
   type AuthStatus,
   type AskResult,
@@ -24,6 +25,9 @@ export {
   type NotebookSource,
   type NotebookMessage,
   type NotebookMessagesResult,
+  type NotebookChatHistoryItem,
+  type NotebookChatRequest,
+  type NotebookChatResponse,
   type ResearchAskResult,
   type AccessCheckResult,
   type SourceAddResponse,

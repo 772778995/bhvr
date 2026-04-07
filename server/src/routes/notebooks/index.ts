@@ -14,6 +14,7 @@ import {
   getSourceProcessingStatus,
   isNotebookAuthError,
   listNotebooks,
+  sendNotebookChatMessage,
   searchWebSources,
 } from "../../notebooklm/index.js";
 import {
@@ -39,6 +40,11 @@ import {
   parseTextBody,
   parseUrlBody,
 } from "./source-add-validate.js";
+import {
+  listEnabledSourceIds,
+  listSourceStateMap,
+  mergeSourceStates,
+} from "../../source-state/service.js";
 
 const notebooks = new Hono();
 
@@ -234,6 +240,59 @@ notebooks.get("/:id/chat/messages", async (c) => {
           result.messages,
           result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
         )
+      );
+    });
+  });
+});
+
+notebooks.post("/:id/chat/messages", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const body: {
+      content?: string;
+      conversationId?: string;
+      conversationHistory?: Array<{ role: "user" | "assistant"; message: string }>;
+    } = await c.req.json().catch(() => ({}));
+    const content = body.content?.trim() ?? "";
+
+    if (!content) {
+      return c.json(
+        {
+          success: false,
+          message: "content is required",
+          errorCode: "INVALID_CONTENT",
+        },
+        400
+      );
+    }
+
+    return await withNotebookAuthHandling(async () => {
+      const sources = await getNotebookSources(id);
+      const enabledMap = await listSourceStateMap(id);
+      const mergedSources = mergeSourceStates(sources, enabledMap);
+      const sourceIds = listEnabledSourceIds(mergedSources);
+      const response = await sendNotebookChatMessage(id, {
+        prompt: content,
+        ...(sourceIds.length > 0 ? { sourceIds } : {}),
+        ...(body.conversationId ? { conversationId: body.conversationId } : {}),
+        ...(body.conversationHistory?.length
+          ? { conversationHistory: body.conversationHistory }
+          : {}),
+      });
+
+      const messageId = response.messageIds?.[1];
+
+      return c.json(
+        successResponse({
+          conversationId: response.conversationId ?? null,
+          message: {
+            id: messageId ?? crypto.randomUUID(),
+            role: "assistant" as const,
+            content: response.text,
+            createdAt: new Date().toISOString(),
+            status: "done" as const,
+          },
+          ...(response.messageIds ? { messageIds: response.messageIds } : {}),
+        })
       );
     });
   });

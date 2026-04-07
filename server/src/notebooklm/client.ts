@@ -90,6 +90,25 @@ export interface NotebookMessagesResult {
   degraded: boolean;
 }
 
+export interface NotebookChatHistoryItem {
+  role: "user" | "assistant";
+  message: string;
+}
+
+export interface NotebookChatRequest {
+  prompt: string;
+  sourceIds?: string[];
+  conversationId?: string;
+  conversationHistory?: NotebookChatHistoryItem[];
+}
+
+export interface NotebookChatResponse {
+  text: string;
+  conversationId?: string;
+  messageIds?: [string, string];
+  citations: unknown[];
+}
+
 export type ResearchAskResult = AskResult;
 
 export interface AccessCheckResult {
@@ -555,6 +574,42 @@ export async function askNotebookForResearch(
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("expired") || message.includes("401")) disposeClient();
     return { success: false, error: message };
+  }
+}
+
+export async function sendNotebookChatMessage(
+  notebookId: string,
+  request: NotebookChatRequest
+): Promise<NotebookChatResponse> {
+  try {
+    const quota = getQuotaStatus();
+    if (quota.remaining <= 0) {
+      throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
+    }
+
+    consumeQuota();
+    const result = await runNotebookRequest(async (client) => await client.generation.chat(notebookId, request.prompt, {
+      sourceIds: request.sourceIds,
+      conversationId: request.conversationId,
+      conversationHistory: request.conversationHistory,
+    }));
+
+    if (!result?.text) {
+      throw new Error("Empty response from NotebookLM");
+    }
+
+    return {
+      text: result.text,
+      conversationId: result.conversationId,
+      messageIds: result.messageIds,
+      citations: result.citations || [],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("expired") || message.includes("401")) {
+      await disposeClient();
+    }
+    throw err;
   }
 }
 

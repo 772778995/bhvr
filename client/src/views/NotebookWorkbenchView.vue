@@ -7,6 +7,7 @@ import {
   type Notebook,
   type NotebookReport,
   type ResearchState,
+  type SendMessageHistoryItem,
   type Source,
 } from "@/api/notebooks";
 import {
@@ -14,7 +15,6 @@ import {
   subscribeResearchStream,
   type ResearchRuntimeEvent,
 } from "@/api/sse";
-import { showNotImplemented } from "@/utils/not-implemented";
 import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
@@ -42,6 +42,9 @@ const researchState = ref<ResearchState>({
 const report = ref<NotebookReport | null>(null);
 const addSourceOpen = ref(false);
 const addSourceBusy = ref(false);
+const sending = ref(false);
+const activeConversationId = ref<string | null>(null);
+const conversationHistory = ref<SendMessageHistoryItem[]>([]);
 
 let sseCleanup: (() => void) | null = null;
 
@@ -64,6 +67,8 @@ const hasResearchAssets = computed(() => {
 function resetPanelData() {
   sources.value = [];
   messages.value = [];
+  activeConversationId.value = null;
+  conversationHistory.value = [];
   researchState.value = {
     status: "idle",
     step: "idle",
@@ -78,7 +83,7 @@ function pushNotice(message: string) {
 }
 
 function onTopAction() {
-  showNotImplemented();
+  pushNotice("该操作暂未开放。");
 }
 
 function onAddSource() {
@@ -216,8 +221,45 @@ async function onSearchAndAddSources(payload: {
   }
 }
 
-function onSendMessage() {
-  showNotImplemented("发送消息");
+async function onSendMessage(content: string) {
+  const trimmedContent = content.trim();
+  if (!notebookId.value || !trimmedContent || sending.value) {
+    return;
+  }
+
+  const optimisticMessage: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: "user",
+    content: trimmedContent,
+    createdAt: new Date().toISOString(),
+    status: "done",
+  };
+
+  notice.value = "";
+  sending.value = true;
+  messages.value = [...messages.value, optimisticMessage];
+
+  try {
+    const result = await notebooksApi.sendMessage(notebookId.value, {
+      content: trimmedContent,
+      ...(activeConversationId.value ? { conversationId: activeConversationId.value } : {}),
+      ...(conversationHistory.value.length > 0
+        ? { conversationHistory: conversationHistory.value }
+        : {}),
+    });
+
+    messages.value = [...messages.value, result.message];
+    activeConversationId.value = result.conversationId;
+    conversationHistory.value = messages.value.map((message) => ({
+      role: message.role,
+      message: message.content,
+    }));
+  } catch (err) {
+    messages.value = messages.value.filter((message) => message.id !== optimisticMessage.id);
+    pushNotice(err instanceof Error ? err.message : "发送消息失败");
+  } finally {
+    sending.value = false;
+  }
 }
 
 function handleResearchEvent(event: ResearchRuntimeEvent) {
@@ -422,7 +464,7 @@ onUnmounted(() => {
             :sources="sources"
             :on-add-source="onAddSource"
           />
-          <ChatPanel :messages="messages" :on-send="onSendMessage" />
+          <ChatPanel :messages="messages" :sending="sending" :on-send="onSendMessage" />
           <StudioPanel
             :research-state="researchState"
             :report="report"
