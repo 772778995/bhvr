@@ -141,15 +141,15 @@ async function onFileChange(event: Event) {
   <div v-if="open" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" @click.self="closeDialog">
     <div class="w-full max-w-3xl rounded-xl border border-gray-200 bg-white shadow-xl">
       <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h2 class="text-sm font-semibold text-gray-900">添加来源</h2>
-        <button type="button" class="rounded-md px-2 py-1 text-xs text-gray-600 hover:bg-gray-100" :disabled="busy" @click="closeDialog">
+        <h2 class="text-base font-semibold text-gray-900">添加来源</h2>
+        <button type="button" class="rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100" :disabled="busy" @click="closeDialog">
           关闭
         </button>
       </div>
 
       <div class="space-y-4 p-4">
         <section class="rounded-lg border border-gray-200 p-3">
-          <p class="mb-2 text-xs font-semibold text-gray-700">搜索 Web / Drive</p>
+          <p class="mb-2 text-sm font-semibold text-gray-700">搜索 Web / Drive</p>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_120px_110px_130px]">
             <input
               v-model="searchQuery"
@@ -158,33 +158,33 @@ async function onFileChange(event: Event) {
               placeholder="输入搜索词..."
               @blur="searchTouched = true"
               :class="[
-                'w-full rounded-md border px-3 py-2 text-sm',
+                'w-full rounded-md border px-3 py-2.5 text-base',
                 showSearchError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
               ]"
             />
-            <select v-model="searchSourceType" :disabled="busy" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+            <select v-model="searchSourceType" :disabled="busy" class="rounded-md border border-gray-300 px-2 py-2.5 text-base">
               <option value="web">Web</option>
               <option value="drive">Drive</option>
             </select>
-            <select v-model="searchMode" :disabled="busy || searchSourceType === 'drive'" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
+            <select v-model="searchMode" :disabled="busy || searchSourceType === 'drive'" class="rounded-md border border-gray-300 px-2 py-2.5 text-base">
               <option value="fast">Fast</option>
               <option value="deep">Deep</option>
             </select>
             <button
               type="button"
               :disabled="shouldDisableSubmitAction(busy)"
-              class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              class="rounded-md bg-gray-900 px-3 py-2.5 text-base text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               @click="submitSearch"
             >
               搜索并添加
             </button>
           </div>
-          <p v-if="showSearchError" class="mt-2 text-xs text-red-600">{{ searchError }}</p>
+          <p v-if="showSearchError" class="mt-2 text-sm text-red-600">{{ searchError }}</p>
         </section>
 
         <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div class="rounded-lg border border-gray-200 p-3">
-            <p class="mb-2 text-xs font-semibold text-gray-700">网站 URL</p>
+            <p class="mb-2 text-sm font-semibold text-gray-700">网站 URL</p>
             <div class="space-y-2">
               <input
                 v-model="url"
@@ -193,16 +193,16 @@ async function onFileChange(event: Event) {
                 placeholder="https://example.com/article"
                 @blur="urlTouched = true"
                 :class="[
-                  'w-full rounded-md border px-3 py-2 text-sm',
+                  'w-full rounded-md border px-3 py-2.5 text-base',
                   showUrlError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
                 ]"
               />
-              <input v-model="urlTitle" type="text" :disabled="busy" placeholder="可选标题" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-              <p v-if="showUrlError" class="text-xs text-red-600">{{ urlError }}</p>
+              <input v-model="urlTitle" type="text" :disabled="busy" placeholder="可选标题" class="w-full rounded-md border border-gray-300 px-3 py-2.5 text-base" />
+              <p v-if="showUrlError" class="text-sm text-red-600">{{ urlError }}</p>
               <button
                 type="button"
                 :disabled="shouldDisableSubmitAction(busy)"
-                class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                class="rounded-md bg-gray-900 px-3 py-2.5 text-base text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
                 @click="submitUrl"
               >
                 添加网站
@@ -211,12 +211,12 @@ async function onFileChange(event: Event) {
           </div>
 
           <div class="rounded-lg border border-gray-200 p-3">
-            <p class="mb-2 text-xs font-semibold text-gray-700">上传文件</p>
+            <p class="mb-2 text-sm font-semibold text-gray-700">上传文件</p>
             <input ref="fileInputRef" type="file" class="hidden" :disabled="busy" @change="onFileChange" />
             <button
               type="button"
               :disabled="busy"
-              class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              class="rounded-md border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
               @click="openFilePicker"
             >
               选择文件并上传
@@ -225,7 +225,7 @@ async function onFileChange(event: Event) {
         </section>
 
         <section class="rounded-lg border border-gray-200 p-3">
-          <p class="mb-2 text-xs font-semibold text-gray-700">复制文本</p>
+          <p class="mb-2 text-sm font-semibold text-gray-700">复制文本</p>
           <div class="space-y-2">
             <input
               v-model="textTitle"
@@ -234,11 +234,11 @@ async function onFileChange(event: Event) {
               placeholder="标题"
               @blur="textTitleTouched = true"
               :class="[
-                'w-full rounded-md border px-3 py-2 text-sm',
+                'w-full rounded-md border px-3 py-2.5 text-base',
                 showTextTitleError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
               ]"
             />
-            <p v-if="showTextTitleError" class="text-xs text-red-600">{{ textTitleError }}</p>
+            <p v-if="showTextTitleError" class="text-sm text-red-600">{{ textTitleError }}</p>
             <textarea
               v-model="textContent"
               :disabled="busy"
@@ -246,15 +246,15 @@ async function onFileChange(event: Event) {
               placeholder="粘贴文本内容..."
               @blur="textContentTouched = true"
               :class="[
-                'w-full rounded-md border px-3 py-2 text-sm',
+                'w-full rounded-md border px-3 py-2.5 text-base',
                 showTextContentError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
               ]"
             />
-            <p v-if="showTextContentError" class="text-xs text-red-600">{{ textContentError }}</p>
+            <p v-if="showTextContentError" class="text-sm text-red-600">{{ textContentError }}</p>
             <button
               type="button"
               :disabled="shouldDisableSubmitAction(busy)"
-              class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              class="rounded-md bg-gray-900 px-3 py-2.5 text-base text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               @click="submitText"
             >
               添加文本

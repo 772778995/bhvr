@@ -48,13 +48,13 @@ function progressPercent(state: ResearchState): number {
 </script>
 
 <template>
-  <section class="h-full bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-4">
+  <section class="h-full min-h-0 bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-4 overflow-hidden">
     <!-- 自动课题研究控制区 -->
-    <div class="flex flex-col gap-3">
-      <h2 class="text-sm font-semibold text-gray-900">自动课题研究</h2>
+    <div class="flex flex-col gap-3 shrink-0">
+      <h2 class="text-base font-semibold text-gray-900">自动课题研究</h2>
 
       <!-- 运行状态展示 -->
-      <div class="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 space-y-1.5">
+      <div class="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
         <!-- Status row -->
         <div class="flex items-center justify-between">
           <span class="text-gray-500">状态</span>
@@ -94,7 +94,7 @@ function progressPercent(state: ResearchState): number {
           class="h-1.5 rounded-full bg-gray-200 overflow-hidden"
         >
           <div
-            class="h-full rounded-full bg-blue-500 transition-all"
+            class="h-full rounded-full bg-blue-500 transition-all duration-300 ease-out"
             :style="{ width: `${progressPercent(researchState)}%` }"
           />
         </div>
@@ -102,7 +102,7 @@ function progressPercent(state: ResearchState): number {
         <!-- Error message -->
         <p
           v-if="researchState.lastError"
-          class="text-red-600 text-xs"
+          class="text-sm text-red-600"
         >
           {{ researchState.lastError }}
         </p>
@@ -112,7 +112,7 @@ function progressPercent(state: ResearchState): number {
       <button
         type="button"
         :disabled="isRunning(researchState)"
-        class="w-full px-3 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="w-full rounded-md bg-[#3a2e20] px-3 py-2.5 text-base text-[#f5ede0] transition-all duration-100 hover:bg-[#2a201a] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
         @click="props.onStartResearch()"
       >
         {{ isRunning(researchState) ? "研究进行中…" : "开始自动研究" }}
@@ -121,7 +121,7 @@ function progressPercent(state: ResearchState): number {
       <button
         type="button"
         :disabled="isRunning(researchState) || !hasResearchAssets"
-        class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="w-full rounded-md border border-[#c8b89a] bg-[#fbf7ef] px-3 py-2.5 text-base text-[#564738] transition-all duration-100 hover:bg-[#f1e8d8] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
         @click="props.onGenerateReport()"
       >
         生成研究报告
@@ -130,19 +130,19 @@ function progressPercent(state: ResearchState): number {
 
     <!-- 报告预览 -->
     <div v-if="report" class="flex flex-col gap-2 min-h-0 flex-1">
-      <hr class="border-gray-100" />
-      <h3 class="text-sm font-semibold text-gray-900 flex-shrink-0">报告预览</h3>
-      <div class="flex-1 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">
+      <hr class="border-gray-100 shrink-0" />
+      <h3 class="shrink-0 text-base font-semibold text-gray-900">报告预览</h3>
+      <div class="flex-1 min-h-0 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
         {{ report.content }}
       </div>
-      <p class="text-[10px] text-gray-400 flex-shrink-0">
+      <p class="shrink-0 text-sm text-gray-400">
         生成于 {{ report.generatedAt }}
       </p>
     </div>
 
     <div
       v-else
-      class="flex-1 text-sm text-gray-500 bg-gray-50 border border-dashed border-gray-300 rounded-md p-3 flex items-center justify-center text-center"
+      class="flex flex-1 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 p-3 text-center text-base leading-relaxed text-gray-500"
     >
       暂无报告，完成研究后点击"生成研究报告"。
     </div>

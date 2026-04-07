@@ -11,7 +11,7 @@
 - **后端**: Hono.js + @hono/node-server + TypeScript
 - **数据库**: SQLite，通过 Drizzle ORM + @libsql/client 操作
 - **NotebookLM API**: `notebooklm-kit` SDK（纯 HTTP RPC，API 调用无需浏览器）
-- **前端**（后续开发）: Vue 3 + Vite + TailwindCSS + shadcn-vue
+- **前端**: Vue 3 + Vite + UnoCSS。新 UI 默认避免 Element Plus / shadcn-vue 这类强视觉烙印的套件，优先 headless primitives + 本地样式。若需引入复杂交互 primitive，优先考虑 Reka UI。
 - **数据验证**: Zod
 
 ## 架构
@@ -54,6 +54,9 @@ server/src/
 - 数据库：使用 Drizzle ORM + `drizzle-orm/libsql`。数据库列名使用 `snake_case`。
 - ID：使用 `crypto.randomUUID()` 生成文本主键。
 - 生产代码禁止使用 `console.log`——如需日志请使用结构化日志。
+- 前端界面避免做成通用后台套件风格、模板化 AI 产品风格或明显 Electron 套壳风格；优先通过排版、密度、边界和局部 token 建立自己的视觉识别。
+- 当前研究工作台及其后续相关页面，默认采用“仿书页 / 档案页 / 研究手稿”方向：暖纸色背景、墨色文字、衬线标题、版心式分隔，避免科技控制台感。
+- 中文阅读型界面优先保证可读性：长期可见的正文、列表、表单输入和主要按钮文案不要默认压到 `text-xs`；`text-xs` 仅用于短标签和次级元信息，主要内容默认至少 `text-base`，并配合更宽松的 `line-height`。
 
 ## 重要约束
 

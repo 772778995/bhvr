@@ -20,12 +20,33 @@ import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
 import StudioPanel from "@/components/notebook-workbench/StudioPanel.vue";
 import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue";
+import ResizeDivider from "@/components/notebook-workbench/ResizeDivider.vue";
+import AppToast from "@/components/ui/AppToast.vue";
+import { useToast } from "@/composables/useToast";
 
 const route = useRoute();
+const { showToast } = useToast();
+
+// ── Resizable panels ────────────────────────────────────────────────────────
+const LEFT_MIN = 200;
+const RIGHT_MIN = 280;
+const LEFT_INIT = 280;
+const RIGHT_INIT = 340;
+
+const leftWidth = ref(LEFT_INIT);
+const rightWidth = ref(RIGHT_INIT);
+
+function onLeftDrag(delta: number) {
+  leftWidth.value = Math.max(LEFT_MIN, leftWidth.value + delta);
+}
+
+function onRightDrag(delta: number) {
+  // Right divider: dragging right shrinks right panel, dragging left grows it
+  rightWidth.value = Math.max(RIGHT_MIN, rightWidth.value - delta);
+}
 
 const loading = ref(true);
 const error = ref("");
-const notice = ref("");
 const activeRequestId = ref(0);
 
 const notebook = ref<Notebook | null>(null);
@@ -78,8 +99,8 @@ function resetPanelData() {
   report.value = null;
 }
 
-function pushNotice(message: string) {
-  notice.value = message;
+function pushNotice(message: string, type: "info" | "error" = "info") {
+  showToast(message, type);
 }
 
 function onTopAction() {
@@ -135,12 +156,11 @@ async function onAddSourceUrl(payload: { url: string; title?: string }) {
   }
 
   addSourceBusy.value = true;
-  notice.value = "";
   try {
     await notebooksApi.addSourceFromUrl(notebookId.value, payload);
     await handleSourceAdded();
   } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "添加网站来源失败");
+    pushNotice(e instanceof Error ? e.message : "添加网站来源失败", "error");
   } finally {
     addSourceBusy.value = false;
   }
@@ -152,12 +172,11 @@ async function onAddSourceText(payload: { title: string; content: string }) {
   }
 
   addSourceBusy.value = true;
-  notice.value = "";
   try {
     await notebooksApi.addSourceFromText(notebookId.value, payload);
     await handleSourceAdded();
   } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "添加文本来源失败");
+    pushNotice(e instanceof Error ? e.message : "添加文本来源失败", "error");
   } finally {
     addSourceBusy.value = false;
   }
@@ -169,12 +188,11 @@ async function onAddSourceFile(file: File) {
   }
 
   addSourceBusy.value = true;
-  notice.value = "";
   try {
     await notebooksApi.addSourceFromFile(notebookId.value, file);
     await handleSourceAdded();
   } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "上传文件来源失败");
+    pushNotice(e instanceof Error ? e.message : "上传文件来源失败", "error");
   } finally {
     addSourceBusy.value = false;
   }
@@ -190,7 +208,6 @@ async function onSearchAndAddSources(payload: {
   }
 
   addSourceBusy.value = true;
-  notice.value = "";
 
   try {
     const searchResult = await notebooksApi.searchSources(notebookId.value, payload);
@@ -215,7 +232,7 @@ async function onSearchAndAddSources(payload: {
 
     await handleSourceAdded();
   } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "搜索并添加来源失败");
+    pushNotice(e instanceof Error ? e.message : "搜索并添加来源失败", "error");
   } finally {
     addSourceBusy.value = false;
   }
@@ -235,7 +252,6 @@ async function onSendMessage(content: string) {
     status: "done",
   };
 
-  notice.value = "";
   sending.value = true;
   messages.value = [...messages.value, optimisticMessage];
 
@@ -256,7 +272,7 @@ async function onSendMessage(content: string) {
     }));
   } catch (err) {
     messages.value = messages.value.filter((message) => message.id !== optimisticMessage.id);
-    pushNotice(err instanceof Error ? err.message : "发送消息失败");
+    pushNotice(err instanceof Error ? err.message : "发送消息失败", "error");
   } finally {
     sending.value = false;
   }
@@ -306,8 +322,6 @@ async function onStartResearch() {
     return;
   }
 
-  notice.value = "";
-
   try {
     await notebooksApi.startResearch(notebookId.value);
     researchState.value = {
@@ -316,7 +330,7 @@ async function onStartResearch() {
       step: "starting",
     };
   } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "启动研究失败");
+    pushNotice(err instanceof Error ? err.message : "启动研究失败", "error");
   }
 }
 
@@ -324,8 +338,6 @@ async function onGenerateReport() {
   if (!notebookId.value) {
     return;
   }
-
-  notice.value = "";
 
   try {
     await notebooksApi.generateReport(notebookId.value);
@@ -342,15 +354,13 @@ async function onGenerateReport() {
         });
     }, 3000);
   } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "生成报告失败");
+    pushNotice(err instanceof Error ? err.message : "生成报告失败", "error");
   }
 }
 
 async function loadWorkbenchData() {
   const requestId = ++activeRequestId.value;
   const isStale = () => requestId !== activeRequestId.value;
-
-  notice.value = "";
 
   if (!notebookId.value) {
     notebook.value = null;
@@ -428,62 +438,80 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full bg-gray-100 overflow-hidden">
-    <div v-if="loading" class="h-full flex items-center justify-center text-sm text-gray-600">
-      正在加载工作台...
-    </div>
-
-    <div v-else-if="error" class="h-full flex items-center justify-center p-6">
-      <div class="w-full max-w-lg rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 text-sm">
-        {{ error }}
+  <div class="h-full overflow-hidden bg-[#e9dfcf] text-[#2f271f]">
+    <AppToast />
+    <div class="h-full bg-[linear-gradient(180deg,_rgba(248,242,231,0.98),_rgba(237,228,212,0.98))]">
+      <div v-if="loading" class="h-full flex items-center justify-center text-base text-[#6f6354]">
+        正在加载工作台...
       </div>
-    </div>
 
-    <div v-else-if="!hasData" class="h-full flex items-center justify-center p-6">
-      <div class="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-600 text-center">
-        当前 Notebook 暂无可展示数据。
-      </div>
-    </div>
-
-    <div v-else class="h-full flex flex-col overflow-hidden">
-      <NotebookTopBar
-        :title="notebook?.title ?? 'Notebook 工作台'"
-        :on-share="onTopAction"
-        :on-more="onTopAction"
-      />
-
-      <div v-if="notice" class="px-3 sm:px-4 pt-3">
-        <div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          {{ notice }}
+      <div v-else-if="error" class="h-full flex items-center justify-center p-6">
+        <div class="w-full max-w-lg border border-[#c98e7e] bg-[#f4ddd6] p-4 text-base leading-relaxed text-[#7b3328]">
+          {{ error }}
         </div>
       </div>
 
-      <div class="flex-1 p-3 sm:p-4 min-h-0 overflow-hidden">
-        <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-0">
-          <SourcesPanel
-            :sources="sources"
-            :on-add-source="onAddSource"
-          />
-          <ChatPanel :messages="messages" :sending="sending" :on-send="onSendMessage" />
-          <StudioPanel
-            :research-state="researchState"
-            :report="report"
-            :has-research-assets="hasResearchAssets"
-            :on-start-research="onStartResearch"
-            :on-generate-report="onGenerateReport"
-          />
+      <div v-else-if="!hasData" class="h-full flex items-center justify-center p-6">
+        <div class="w-full max-w-lg border border-[#d8cfbe] bg-[#f8f3ea] p-6 text-center text-base leading-relaxed text-[#716452]">
+          当前 Notebook 暂无可展示数据。
         </div>
       </div>
 
-      <AddSourceDialog
-        :open="addSourceOpen"
-        :busy="addSourceBusy"
-        :on-close="onCloseAddSourceDialog"
-        :on-add-url="onAddSourceUrl"
-        :on-add-text="onAddSourceText"
-        :on-search="onSearchAndAddSources"
-        :on-pick-file="onAddSourceFile"
-      />
+      <div v-else class="h-full flex flex-col overflow-hidden">
+        <NotebookTopBar
+          :title="notebook?.title ?? 'Notebook 工作台'"
+          :on-share="onTopAction"
+          :on-more="onTopAction"
+        />
+
+        <div class="min-h-0 flex-1 overflow-hidden p-3 sm:p-4 lg:p-5">
+          <div class="flex h-full min-h-0 gap-0">
+            <!-- Left: Sources -->
+            <div
+              class="shrink-0 min-w-0"
+              :style="{ width: leftWidth + 'px' }"
+            >
+              <SourcesPanel
+                :sources="sources"
+                :on-add-source="onAddSource"
+              />
+            </div>
+
+            <ResizeDivider @drag="onLeftDrag" />
+
+            <!-- Center: Chat (flex-1) -->
+            <div class="flex-1 min-w-0">
+              <ChatPanel :messages="messages" :sending="sending" :on-send="onSendMessage" />
+            </div>
+
+            <ResizeDivider @drag="onRightDrag" />
+
+            <!-- Right: Studio -->
+            <div
+              class="shrink-0 min-w-0"
+              :style="{ width: rightWidth + 'px' }"
+            >
+              <StudioPanel
+                :research-state="researchState"
+                :report="report"
+                :has-research-assets="hasResearchAssets"
+                :on-start-research="onStartResearch"
+                :on-generate-report="onGenerateReport"
+              />
+            </div>
+          </div>
+        </div>
+
+        <AddSourceDialog
+          :open="addSourceOpen"
+          :busy="addSourceBusy"
+          :on-close="onCloseAddSourceDialog"
+          :on-add-url="onAddSourceUrl"
+          :on-add-text="onAddSourceText"
+          :on-search="onSearchAndAddSources"
+          :on-pick-file="onAddSourceFile"
+        />
+      </div>
     </div>
   </div>
 </template>

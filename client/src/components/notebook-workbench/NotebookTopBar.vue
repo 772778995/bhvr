@@ -9,25 +9,30 @@ defineProps<Props>();
 </script>
 
 <template>
-  <header class="h-14 border-b border-gray-200 bg-white px-4 sm:px-6 flex items-center justify-between">
-    <div class="min-w-0">
-      <h1 class="text-base sm:text-lg font-semibold text-gray-900 truncate">{{ title }}</h1>
-    </div>
-    <div class="flex items-center gap-2">
-      <button
-        type="button"
-        class="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-        @click="onShare"
+  <header class="border-b border-[#d7cfbf] bg-[#f6f0e3] px-4 py-3 text-[#2e261d] sm:px-6">
+    <div class="flex items-center justify-between gap-4">
+      <h1
+        class="min-w-0 truncate text-[1.25rem] font-semibold text-[#2f2418] sm:text-[1.45rem] transition-opacity duration-200"
+        style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;"
       >
-        分享
-      </button>
-      <button
-        type="button"
-        class="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-        @click="onMore"
-      >
-        更多
-      </button>
+        {{ title }}
+      </h1>
+      <div class="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          class="border border-[#cfc4af] bg-[#fbf7ef] px-3 py-1.5 text-[0.95rem] text-[#564738] transition-all duration-100 ease-in-out hover:bg-[#f1e8d8] active:scale-95"
+          @click="onShare"
+        >
+          分享
+        </button>
+        <button
+          type="button"
+          class="border border-[#d8cfbf] bg-transparent px-3 py-1.5 text-[0.95rem] text-[#6a5b49] transition-all duration-100 ease-in-out hover:bg-[#efe7d7] active:scale-95"
+          @click="onMore"
+        >
+          更多
+        </button>
+      </div>
     </div>
   </header>
 </template>
