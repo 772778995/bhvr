@@ -40,7 +40,7 @@ function handleKeydown(event: KeyboardEvent) {
         v-if="messages.length === 0"
         class="h-full flex items-center justify-center text-sm text-gray-500 bg-gray-50 border border-dashed border-gray-300 rounded-md"
       >
-        还没有对话内容，输入问题即可开始。当前历史仅保留在本页会话中，刷新后会清空。
+        还没有对话内容，输入问题即可开始。
       </div>
 
       <ul v-else class="space-y-3 pr-1">
@@ -55,8 +55,6 @@ function handleKeydown(event: KeyboardEvent) {
         </li>
       </ul>
     </div>
-
-    <p class="mt-3 text-[11px] text-gray-500">当前对话仅保留在本页会话中，刷新页面后会清空。</p>
 
     <div class="pt-3 mt-3 border-t border-gray-100 flex items-center gap-2">
       <textarea

@@ -90,6 +90,25 @@ export interface NotebookMessagesResult {
   degraded: boolean;
 }
 
+type NotebookHistoryThreadIdResponse = Array<Array<[string]>>;
+
+type NotebookHistoryUserMessageRecord = [
+  id: string,
+  createdAt: [seconds: number, nanos: number],
+  roleCode: 1,
+  content: string,
+];
+
+type NotebookHistoryAssistantMessageRecord = [
+  id: string,
+  createdAt: [seconds: number, nanos: number],
+  roleCode: 2,
+  unused: null,
+  content: unknown[],
+];
+
+type NotebookHistoryMessageRecord = NotebookHistoryUserMessageRecord | NotebookHistoryAssistantMessageRecord;
+
 export interface NotebookChatHistoryItem {
   role: "user" | "assistant";
   message: string;
@@ -542,6 +561,81 @@ function mapNotebook(nb: Notebook): NotebookDetail {
   };
 }
 
+function parseRpcJson<T>(value: unknown): T {
+  if (typeof value === "string") {
+    return JSON.parse(value) as T;
+  }
+
+  return value as T;
+}
+
+function toIsoTimestamp(timestamp: [seconds: number, nanos: number] | undefined): string {
+  if (!timestamp || typeof timestamp[0] !== "number") {
+    return new Date(0).toISOString();
+  }
+
+  const [seconds, nanos] = timestamp;
+  return new Date((seconds * 1000) + Math.floor((nanos ?? 0) / 1_000_000)).toISOString();
+}
+
+function extractAssistantText(content: unknown[]): string {
+  const firstEntry = content[0];
+  if (!Array.isArray(firstEntry) || typeof firstEntry[0] !== "string") {
+    return "";
+  }
+
+  return firstEntry[0];
+}
+
+function mapHistoryMessage(record: NotebookHistoryMessageRecord): NotebookMessage {
+  const role = record[2] === 1 ? "user" : "assistant";
+  const content = record[2] === 1 ? record[3] : extractAssistantText(record[4]);
+
+  return {
+    id: record[0],
+    role,
+    content,
+    createdAt: toIsoTimestamp(record[1]),
+    status: "done",
+  };
+}
+
+async function listNotebookHistoryThreadIds(client: NotebookLMClient, notebookId: string): Promise<string[]> {
+  const response = await client.rpc("hPTbtc", [[], null, notebookId, 20], notebookId);
+  const parsed = parseRpcJson<NotebookHistoryThreadIdResponse>(response);
+
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed
+    .flatMap((group) => Array.isArray(group) ? group : [])
+    .map((entry) => Array.isArray(entry) ? entry[0] : null)
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+async function listNotebookHistoryMessages(
+  client: NotebookLMClient,
+  notebookId: string,
+  threadId: string,
+): Promise<NotebookMessage[]> {
+  const response = await client.rpc("khqZz", [[], null, null, threadId, 20], notebookId);
+  const parsed = parseRpcJson<unknown>(response);
+  const records = Array.isArray(parsed)
+    ? (Array.isArray(parsed[0]) ? parsed[0] : parsed)
+    : null;
+
+  if (!Array.isArray(records)) {
+    return [];
+  }
+
+  return records
+    .filter((record): record is NotebookHistoryMessageRecord => Array.isArray(record) && typeof record[0] === "string")
+    .map(mapHistoryMessage)
+    .filter((message) => message.content.trim().length > 0)
+    .reverse();
+}
+
 export async function getNotebookDetail(notebookId: string): Promise<NotebookDetail> {
   try {
     const notebook = await runNotebookRequest(async (client) => await client.notebooks.get(notebookId));
@@ -565,8 +659,23 @@ export async function getNotebookSources(notebookId: string): Promise<NotebookSo
 }
 
 export async function getNotebookMessages(notebookId: string): Promise<NotebookMessagesResult> {
-  logger.debug({ notebookId }, "getNotebookMessages: SDK has no history endpoint; returning degraded empty result");
-  return { messages: [], degraded: true };
+  try {
+    const messages = await runNotebookRequest(async (client) => {
+      const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
+      const latestThreadId = threadIds[0];
+
+      if (!latestThreadId) {
+        return [];
+      }
+
+      return await listNotebookHistoryMessages(client, notebookId, latestThreadId);
+    });
+
+    return { messages, degraded: false };
+  } catch (err) {
+    logger.warn({ notebookId, err }, "getNotebookMessages: direct history read failed; returning degraded empty result");
+    return { messages: [], degraded: true };
+  }
 }
 
 export async function askNotebookForResearch(
