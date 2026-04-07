@@ -1,5 +1,9 @@
 # Notebook List Page MVP Implementation Plan
 
+> **Status:** ✅ Completed (2026-04-07)
+>
+> **Note (2026-04-07):** This plan originally included local source enable/disable control via `notebook_source_states` table. During implementation, this feature was deferred and later removed in a hotfix due to database initialization issues in fresh worktree environments. The `/sources` endpoint now returns NotebookLM sources directly without local enabled-state persistence. The `source-state` module is now unused and can be cleaned up post-merge.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a page that reads the NotebookLM notebook list, displays it in the client, and navigates to `/notebook/:uuid` when the user clicks a notebook.
@@ -323,3 +327,42 @@ git commit -m "feat: add notebook list navigation route"
 - Spec coverage: covers backend list route, client API, new page, and navigation into the existing notebook workbench.
 - Placeholder scan: only pseudocode is used where implementation detail is unnecessary by request.
 - Type consistency: uses the same notebook identifier model as the existing `/notebook/:id` route.
+
+---
+
+## Post-Merge Cleanup (Deferred)
+
+After merging this plan, the following cleanup is recommended:
+
+- **Delete or deprecate:** `server/src/source-state/` — No longer used after removing local source enable/disable control.
+- **Database:** The `db/index.ts` now auto-initializes required tables on import, so running `npm run migrate` is optional for fresh databases. The `source-state` table creation can also be removed from `db/migrate.ts` if desired.
+
+---
+
+## Plan Retention Decision
+
+**Q: Should superpowers plan documents be deleted after completion?**
+
+**A: Generally no — keep them.** Here's why:
+
+| Reason | Explanation |
+|--------|-------------|
+| **Historical context** | Future developers can understand *why* decisions were made, not just *what* was implemented |
+| **Traceability** | Links in plans often reference spec discussions, research, or alternative approaches that aren't captured in code commits |
+| **Audit trail** | If a later change causes issues, the original plan explains the intended behavior |
+| **Onboarding** | New team members can read plans to understand the system's evolution |
+
+**When to delete:**
+- Plan contains sensitive/secret information
+- Plan is completely superseded by a comprehensive design document
+- Repository is archived and read-only
+
+**When to update (recommended):**
+- Mark status as ✅ Completed (with date)
+- Add implementation notes about decisions made during execution
+- Note any scope changes or deferred items (as done above)
+
+This plan is kept and updated because it documents:
+1. Original MVP scope vs. final implementation (source toggle was removed)
+2. Database auto-init fix was added post-implementation
+3. Future cleanup opportunities (source-state module)
