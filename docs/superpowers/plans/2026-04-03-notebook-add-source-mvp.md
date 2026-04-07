@@ -1,78 +1,78 @@
-# Notebook Add Source MVP Implementation Plan
+# Notebook 添加来源 MVP 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给代理执行者：** 实现该计划时必须使用 `superpowers:子智能体驱动开发`（推荐）或 `superpowers:executing-plans`，并按任务逐项推进。本文使用 `- [ ]` / `- [x]` 复选框维护状态。
 
-**Goal:** Implement the fastest useful MVP for “添加来源” in `/notebook/:id`, covering the source types shown in `docs/reference/notebooklm/notebook-addsource.png` and refreshing the source list after each successful add.
+**目标：** 为 `/notebook/:id` 实现"添加来源"的最小可用 MVP，覆盖 `docs/reference/notebooklm/notebook-addsource.png` 中展示的来源类型，并在每次成功添加后刷新来源列表。
 
-**Architecture:** Add a small backend ingestion surface under `/api/notebooks/:id/sources/add/*` that wraps `notebooklm-kit` source APIs for website, copied text, file upload, and web/drive search discovery. On the frontend, replace the current placeholder add action with a lightweight modal that mirrors the reference interaction model: top search area plus quick actions for file, website, drive, and copied text. Keep this MVP focused on working flows and source refresh; exclude favicon loading and other visual polish.
+**架构：** 在后端新增一组轻量的 `/api/notebooks/:id/sources/add/*` 接口，封装 `notebooklm-kit` 的来源能力，支持网站、复制文本、文件上传以及 Web/Drive 搜索发现。前端用一个轻量弹窗替换当前占位式添加动作，交互结构对齐参考图：顶部搜索区域 + 文件、网站、Drive、复制文本的快捷入口。该 MVP 只聚焦可用流程和来源刷新，不做 favicon 和额外视觉打磨。
 
-**Tech Stack:** Vue 3 + TypeScript + TailwindCSS, Hono + TypeScript, notebooklm-kit sources service, Drizzle ORM + SQLite only where already needed, Node test runner via `tsx`
+**技术栈：** Vue 3 + TypeScript + TailwindCSS，Hono + TypeScript，`notebooklm-kit` sources service，Drizzle ORM + SQLite（仅在已有需求处使用），Node test runner + `tsx`
 
 ---
 
-## Scope Check
+## 范围确认
 
-Reference UI:
+参考 UI：
 
 - `docs/reference/notebooklm/notebook-addsource.png`
 
-This MVP includes:
+本次 MVP 包含：
 
-- Website URL add
-- Copied text add
-- File upload add
-- Search web and add discovered results
-- Search Drive and add discovered results
-- Source list refresh after add
+- 网站 URL 添加
+- 复制文本添加
+- 文件上传添加
+- 搜索 Web 并添加发现结果
+- 搜索 Drive 并添加发现结果
+- 添加后刷新来源列表
 
-Out of scope for this MVP:
+本次 MVP 不包含：
 
-- Frontend-rendered website favicon logic
-- Source content preview
-- Drag-and-drop polish beyond basic file selection
-- Batch editing of source metadata
-
----
-
-## File Structure
-
-### Backend
-
-- Create: `server/src/routes/notebooks/source-add-validate.ts`
-  - Request validation helpers for the add-source endpoints.
-- Create: `server/src/routes/notebooks/source-add-validate.test.ts`
-  - Unit tests for add-source payload parsing.
-- Modify: `server/src/notebooklm/client.ts`
-  - Add source-ingestion wrappers for url/text/file/search/discovered/status.
-- Modify: `server/src/notebooklm/index.ts`
-  - Export the new wrappers and related types.
-- Modify: `server/src/routes/notebooks/index.ts`
-  - Add ingestion endpoints under `/sources/add/*` and a processing-status endpoint.
-
-### Frontend
-
-- Modify: `client/src/api/notebooks.ts`
-  - Add typed methods for the new add-source endpoints.
-- Create: `client/src/utils/add-source-validators.ts`
-  - Frontend guards for URL/text/search inputs.
-- Create: `client/src/utils/add-source-validators.test.ts`
-  - Unit tests for the frontend validators.
-- Create: `client/src/components/notebook-workbench/AddSourceDialog.vue`
-  - Lightweight modal matching the reference structure.
-- Modify: `client/src/views/NotebookWorkbenchView.vue`
-  - Own modal state, submit handlers, source refresh, and status polling.
-- Modify: `client/src/components/notebook-workbench/SourcesPanel.vue`
-  - Replace placeholder add action with dialog open.
+- 前端渲染网站 favicon 逻辑
+- 来源内容预览
+- 超出基础文件选择之外的拖拽上传打磨
+- 批量编辑来源元数据
 
 ---
 
-### Task 1: Add Backend Validation Helpers For MVP Source Inputs
+## 文件结构
 
-**Files:**
-- Create: `server/src/routes/notebooks/source-add-validate.ts`
-- Test: `server/src/routes/notebooks/source-add-validate.test.ts`
+### 后端
 
-- [ ] **Step 1: Write failing tests for URL, text, and search payload parsing**
+- 新建：`server/src/routes/notebooks/source-add-validate.ts`
+  - 添加来源接口的请求校验辅助函数
+- 新建：`server/src/routes/notebooks/source-add-validate.test.ts`
+  - 添加来源请求解析的单元测试
+- 修改：`server/src/notebooklm/client.ts`
+  - NotebookLM 来源写入包装方法：url/text/file/search/discovered/status
+- 修改：`server/src/notebooklm/index.ts`
+  - 导出上述包装方法和相关类型
+- 修改：`server/src/routes/notebooks/index.ts`
+  - 新增 `/sources/add/*` 接口和处理状态接口
+
+### 前端
+
+- 修改：`client/src/api/notebooks.ts`
+  - 新增添加来源相关的类型化 API 方法
+- 新建：`client/src/utils/add-source-validators.ts`
+  - 前端 URL/文本/搜索输入校验工具
+- 新建：`client/src/utils/add-source-validators.test.ts`
+  - 前端校验工具测试
+- 新建：`client/src/components/notebook-workbench/AddSourceDialog.vue`
+  - 轻量弹窗，结构对齐参考交互
+- 修改：`client/src/views/NotebookWorkbenchView.vue`
+  - 管理弹窗状态、提交逻辑、来源刷新和处理状态轮询
+- 修改：`client/src/components/notebook-workbench/SourcesPanel.vue`
+  - 将占位按钮替换为真正的打开弹窗动作
+
+---
+
+### 任务 1：为 MVP 来源输入补齐后端校验辅助函数
+
+**文件：**
+- 新建：`server/src/routes/notebooks/source-add-validate.ts`
+- 测试：`server/src/routes/notebooks/source-add-validate.test.ts`
+
+- [ ] **步骤 1：先写 URL、文本、搜索请求解析的失败测试**
 
 ```ts
 // server/src/routes/notebooks/source-add-validate.test.ts
@@ -101,12 +101,12 @@ test("parseSearchBody defaults sourceType to web", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **步骤 2：运行测试确认先失败**
 
-Run: `node --import tsx --test src/routes/notebooks/source-add-validate.test.ts`
-Expected: FAIL with module-not-found for `source-add-validate.js`
+运行：`node --import tsx --test src/routes/notebooks/source-add-validate.test.ts`
+预期：FAIL，报错找不到 `source-add-validate.js`
 
-- [ ] **Step 3: Implement validation helpers**
+- [ ] **步骤 3：实现校验逻辑**
 
 ```ts
 // server/src/routes/notebooks/source-add-validate.ts
@@ -159,12 +159,12 @@ export function parseSearchBody(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **步骤 4：运行测试确认通过**
 
-Run: `node --import tsx --test src/routes/notebooks/source-add-validate.test.ts`
-Expected: PASS with 3 tests passed
+运行：`node --import tsx --test src/routes/notebooks/source-add-validate.test.ts`
+预期：PASS，3 个测试全部通过
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/routes/notebooks/source-add-validate.ts server/src/routes/notebooks/source-add-validate.test.ts
@@ -173,16 +173,16 @@ git commit -m "test: add mvp source ingestion validators"
 
 ---
 
-### Task 2: Add NotebookLM Source-Ingestion Gateway Methods
+### 任务 2：添加 NotebookLM 来源写入网关方法
 
-**Files:**
-- Modify: `server/src/notebooklm/client.ts`
-- Modify: `server/src/notebooklm/index.ts`
+**文件：**
+- 修改：`server/src/notebooklm/client.ts`
+- 修改：`server/src/notebooklm/index.ts`
 
-- [ ] **Step 1: Write failing compile step by importing missing source-ingestion exports from the route layer**
+- [ ] **步骤 1：先通过导入缺失的来源写入导出制造失败的编译检查**
 
 ```ts
-// server/src/routes/notebooks/index.ts (temporary during implementation)
+// server/src/routes/notebooks/index.ts (实现期间临时使用)
 import {
   addSourceFromUrl,
   addSourceFromText,
@@ -193,15 +193,15 @@ import {
 } from "../../notebooklm/index.js";
 ```
 
-- [ ] **Step 2: Run build to verify it fails**
+- [ ] **步骤 2：运行构建确认先失败**
 
-Run: `npm run build --workspace server`
-Expected: FAIL with missing exports in `server/src/notebooklm/index.ts`
+运行：`npm run build --workspace server`
+预期：FAIL，报错 `server/src/notebooklm/index.ts` 缺少导出
 
-- [ ] **Step 3: Implement the minimal gateway wrappers**
+- [ ] **步骤 3：实现最小网关包装函数**
 
 ```ts
-// server/src/notebooklm/client.ts (additions)
+// server/src/notebooklm/client.ts (新增部分)
 import { ResearchMode, SearchSourceType } from "notebooklm-kit";
 
 export async function addSourceFromUrl(notebookId: string, input: { url: string; title?: string }) {
@@ -251,12 +251,12 @@ export async function getSourceProcessingStatus(notebookId: string) {
 }
 ```
 
-- [ ] **Step 4: Export the wrappers and run build**
+- [ ] **步骤 4：导出包装函数并运行构建**
 
-Run: `npm run build --workspace server`
-Expected: PASS
+运行：`npm run build --workspace server`
+预期：PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/notebooklm/client.ts server/src/notebooklm/index.ts
@@ -265,28 +265,28 @@ git commit -m "feat: add notebook source ingestion gateway methods"
 
 ---
 
-### Task 3: Add Backend Endpoints For Add-Source MVP
+### 任务 3：添加 Add-Source MVP 后端接口
 
-**Files:**
-- Modify: `server/src/routes/notebooks/index.ts`
-- Modify: `server/src/routes/notebooks/source-add-validate.ts`
+**文件：**
+- 修改：`server/src/routes/notebooks/index.ts`
+- 修改：`server/src/routes/notebooks/source-add-validate.ts`
 
-- [ ] **Step 1: Write the failing compile step by referencing a new route helper before implementation**
+- [ ] **步骤 1：先通过引用未实现路由辅助函数制造失败的编译检查**
 
 ```ts
-// server/src/routes/notebooks/index.ts (temporary during implementation)
+// server/src/routes/notebooks/index.ts (实现期间临时使用)
 const parsed = parseUrlBody(await c.req.json());
 ```
 
-- [ ] **Step 2: Run build to verify it fails**
+- [ ] **步骤 2：运行构建确认先失败**
 
-Run: `npm run build --workspace server`
-Expected: FAIL until parser imports and endpoint handlers are wired
+运行：`npm run build --workspace server`
+预期：FAIL，直到解析器导入和端点处理器连接完成
 
-- [ ] **Step 3: Add the add-source endpoints**
+- [ ] **步骤 3：添加 add-source 系列接口**
 
 ```ts
-// server/src/routes/notebooks/index.ts (additions)
+// server/src/routes/notebooks/index.ts (新增部分)
 notebooks.post("/:id/sources/add/url", async (c) => {
   return await withNotebookId(c, async (id) => {
     const parsed = parseUrlBody(await c.req.json().catch(() => ({})));
@@ -330,18 +330,18 @@ notebooks.get("/:id/sources/status", async (c) => {
 });
 ```
 
-- [ ] **Step 4: Add file-upload endpoint and run targeted verification**
+- [ ] **步骤 4：补上文件上传接口并做定向验证**
 
-Run:
+运行：
 
 - `npm run build --workspace server`
 
-Expected:
+预期：
 
-- URL/text/search/discovered/status routes compile
-- file upload route can be implemented with `await c.req.formData()` and `addSourceFromFile()` without affecting the other handlers
+- URL/text/search/discovered/status 路由编译通过
+- 文件上传路由可以用 `await c.req.formData()` 配合 `addSourceFromFile()` 实现，不影响其他处理器
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/routes/notebooks/index.ts server/src/routes/notebooks/source-add-validate.ts
@@ -350,14 +350,14 @@ git commit -m "feat: add notebook source ingestion endpoints"
 
 ---
 
-### Task 4: Add Frontend Validators And API Methods For Source Ingestion
+### 任务 4：添加前端校验工具与来源写入 API 方法
 
-**Files:**
-- Create: `client/src/utils/add-source-validators.ts`
-- Create: `client/src/utils/add-source-validators.test.ts`
-- Modify: `client/src/api/notebooks.ts`
+**文件：**
+- 新建：`client/src/utils/add-source-validators.ts`
+- 新建：`client/src/utils/add-source-validators.test.ts`
+- 修改：`client/src/api/notebooks.ts`
 
-- [ ] **Step 1: Write failing validator tests**
+- [ ] **步骤 1：先写失败的校验测试**
 
 ```ts
 // client/src/utils/add-source-validators.test.ts
@@ -374,12 +374,12 @@ test("normalizeSearchQuery trims whitespace", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **步骤 2：运行测试确认先失败**
 
-Run: `node --import tsx --test src/utils/add-source-validators.test.ts`
-Expected: FAIL with module-not-found for `add-source-validators.js`
+运行：`node --import tsx --test src/utils/add-source-validators.test.ts`
+预期：FAIL，报错找不到 `add-source-validators.js`
 
-- [ ] **Step 3: Implement validators and API methods**
+- [ ] **步骤 3：实现校验工具和 API 方法**
 
 ```ts
 // client/src/utils/add-source-validators.ts
@@ -398,7 +398,7 @@ export function normalizeSearchQuery(value: string): string {
 ```
 
 ```ts
-// client/src/api/notebooks.ts (additions)
+// client/src/api/notebooks.ts (新增部分)
 addSourceFromUrl(id: string, body: { url: string; title?: string }) {
   return request<{ sourceIds: string[]; wasChunked: boolean }>(`/api/notebooks/${id}/sources/add/url`, {
     method: "POST",
@@ -432,19 +432,19 @@ getSourceProcessingStatus(id: string) {
 },
 ```
 
-- [ ] **Step 4: Run targeted verification**
+- [ ] **步骤 4：运行定向验证**
 
-Run:
+运行：
 
 - `node --import tsx --test src/utils/add-source-validators.test.ts`
 - `npm run build --workspace client`
 
-Expected:
+预期：
 
-- validator tests pass
-- client build passes with new source-ingestion API methods
+- 校验测试通过
+- client 构建通过，新添加来源的 API 方法已包含
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add client/src/utils/add-source-validators.ts client/src/utils/add-source-validators.test.ts client/src/api/notebooks.ts
@@ -453,26 +453,26 @@ git commit -m "feat: add client validation and api methods for source ingestion"
 
 ---
 
-### Task 5: Build The Add-Source Dialog MVP And Refresh Flow
+### 任务 5：构建 Add-Source 弹窗 MVP 与刷新流程
 
-**Files:**
-- Create: `client/src/components/notebook-workbench/AddSourceDialog.vue`
-- Modify: `client/src/views/NotebookWorkbenchView.vue`
-- Modify: `client/src/components/notebook-workbench/SourcesPanel.vue`
+**文件：**
+- 新建：`client/src/components/notebook-workbench/AddSourceDialog.vue`
+- 修改：`client/src/views/NotebookWorkbenchView.vue`
+- 修改：`client/src/components/notebook-workbench/SourcesPanel.vue`
 
-- [ ] **Step 1: Write the failing compile step by importing a missing dialog component**
+- [ ] **步骤 1：先通过导入缺失弹窗组件制造失败的编译检查**
 
 ```ts
-// client/src/views/NotebookWorkbenchView.vue (temporary during implementation)
+// client/src/views/NotebookWorkbenchView.vue (实现期间临时使用)
 import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue";
 ```
 
-- [ ] **Step 2: Run build to verify it fails**
+- [ ] **步骤 2：运行构建确认先失败**
 
-Run: `npm run build --workspace client`
-Expected: FAIL with missing file `AddSourceDialog.vue`
+运行：`npm run build --workspace client`
+预期：FAIL，报错缺少文件 `AddSourceDialog.vue`
 
-- [ ] **Step 3: Implement the dialog and view wiring**
+- [ ] **步骤 3：实现弹窗与页面接线**
 
 ```vue
 <!-- client/src/components/notebook-workbench/AddSourceDialog.vue -->
@@ -490,7 +490,7 @@ interface Props {
 ```
 
 ```ts
-// client/src/views/NotebookWorkbenchView.vue (shape only)
+// client/src/views/NotebookWorkbenchView.vue (轮廓)
 const addSourceOpen = ref(false);
 const addSourceBusy = ref(false);
 
@@ -513,24 +513,24 @@ async function onAddSourceUrl(payload: { url: string; title?: string }) {
 ```
 
 ```vue
-<!-- client/src/components/notebook-workbench/SourcesPanel.vue (shape only) -->
+<!-- client/src/components/notebook-workbench/SourcesPanel.vue (轮廓) -->
 <button type="button" @click="onAddSource">添加</button>
 ```
 
-- [ ] **Step 4: Add processing polling and run targeted verification**
+- [ ] **步骤 4：补上处理状态轮询并做定向验证**
 
-Run:
+运行：
 
 - `npm run build --workspace client`
 - `npm run build --workspace server`
 
-Expected:
+预期：
 
-- add-source dialog opens from the sources panel
-- one successful add refreshes the source list
-- polling can call `/api/notebooks/:id/sources/status` until `allReady === true`
+- 添加来源弹窗从来源面板打开
+- 成功添加一次后刷新来源列表
+- 轮询可以调用 `/api/notebooks/:id/sources/status` 直到 `allReady === true`
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add client/src/components/notebook-workbench/AddSourceDialog.vue client/src/views/NotebookWorkbenchView.vue client/src/components/notebook-workbench/SourcesPanel.vue
@@ -539,8 +539,8 @@ git commit -m "feat: add notebook source dialog mvp"
 
 ---
 
-## Self-Review
+## 自检
 
-- Spec coverage: this plan covers the add-source reference flow and splits backend ingestion from frontend dialog work.
-- Placeholder scan: no favicon-related tasks or open-ended polish placeholders remain.
-- Type consistency: `sourceType`, `mode`, `sourceIds`, and processing-status fields are consistent across tasks.
+- 规格覆盖：该计划覆盖了参考图中的添加来源主流程，并清晰拆分了后端来源写入与前端弹窗交互
+- 占位项检查：favicon、来源预览和额外视觉打磨仍明确保持在范围外
+- 类型一致性：`sourceType`、`mode`、`sourceIds` 和 processing-status 字段在前后端保持一致
