@@ -7,6 +7,7 @@ import research from "./routes/research/index.js";
 import health from "./routes/health/index.js";
 import notebooks from "./routes/notebooks/index.js";
 import { recoverInterruptedTasks } from "./worker/recovery.js";
+import { authManager, DEFAULT_ACCOUNT_ID } from "./notebooklm/index.js";
 
 // Ensure DB is initialized on import
 import "./db/index.js";
@@ -40,6 +41,16 @@ const port = parseInt(process.env.PORT || "3000", 10);
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Server running");
+  const authMonitor = authManager.startAuthHealthMonitor(DEFAULT_ACCOUNT_ID);
+
+  process.once("SIGINT", () => {
+    authMonitor.stop();
+  });
+
+  process.once("SIGTERM", () => {
+    authMonitor.stop();
+  });
+
   recoverInterruptedTasks().catch((err) => {
     logger.error({ err }, "Failed to recover interrupted tasks");
   });

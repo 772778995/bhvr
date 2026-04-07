@@ -260,3 +260,49 @@ test("GET /api/notebooks/:id/sources returns NotebookLM sources without local en
     ],
   });
 });
+
+test("GET /api/notebooks returns 401 with explicit errorCode on unrecoverable auth failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function connect() {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => {
+          throw new Error("authentication revoked");
+        },
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  try {
+    const response = await notebooks.request("http://localhost/");
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "authentication revoked",
+      errorCode: "UNAUTHORIZED",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    await disposeClient();
+  }
+});

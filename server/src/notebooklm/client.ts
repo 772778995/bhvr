@@ -1,14 +1,13 @@
 /**
- * NotebookLM client — wraps notebooklm-kit SDK.
- * Handles authentication via saved cookies from `notebooklm login` CLI,
- * and provides methods for the research workflow.
+ * NotebookLM gateway — wraps notebooklm-kit SDK operations behind the auth manager.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, mkdirSync, copyFileSync } from "node:fs";
+import type { BrowserContext, Page } from "playwright";
 import {
   NotebookLMClient,
+  NotebookLMAuthError,
+  RefreshClient,
   ResearchMode,
   SearchSourceType,
   SourceType,
@@ -23,8 +22,23 @@ import type {
 } from "notebooklm-kit";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
-
-const STORAGE_STATE_PATH = resolve(homedir(), ".notebooklm", "storage-state.json");
+import {
+  authManager,
+  configureAuthManager,
+  DEFAULT_ACCOUNT_ID,
+  type RuntimeClientLike,
+} from "./auth-manager.js";
+import {
+  ensureProfileDirectories,
+  getLegacyStorageStatePath,
+  getProfilePaths,
+  readAuthMeta,
+  readStorageState,
+  writeAuthMeta,
+  writeStorageState,
+  type AuthMeta,
+  type AuthState,
+} from "./auth-profile.js";
 
 const ALLOWED_DOMAINS = [
   ".google.com",
@@ -34,12 +48,11 @@ const ALLOWED_DOMAINS = [
   ".googleusercontent.com",
 ];
 
-export interface AuthStatus {
-  authenticated: boolean;
-  storageStateExists: boolean;
-  cookieCount: number;
-  error?: string;
-}
+const testHooks = {
+  importPlaywright: defaultImportPlaywright,
+};
+
+export type AuthStatus = AuthMeta;
 
 export interface AskResult {
   success: boolean;
@@ -95,13 +108,25 @@ export interface SourceSearchInput {
   mode: "fast" | "deep";
 }
 
-let sdkInstance: NotebookLMClient | null = null;
+class AuthRequiredError extends Error {
+  readonly code = "AUTH_REQUIRED";
+}
 
-function loadCookies(): { cookieHeader: string; cookieCount: number } | null {
-  if (!existsSync(STORAGE_STATE_PATH)) return null;
+class NotebookRequestAuthError extends Error {
+  readonly code = "NOTEBOOK_AUTH_FAILED";
+}
 
-  const storageState = JSON.parse(readFileSync(STORAGE_STATE_PATH, "utf-8"));
-  const rawCookies = storageState.cookies;
+export function isNotebookAuthError(error: unknown): boolean {
+  return error instanceof NotebookRequestAuthError || error instanceof AuthRequiredError;
+}
+
+async function defaultImportPlaywright(): Promise<typeof import("playwright")> {
+  return await import("playwright");
+}
+
+function extractCookieData(storageState: unknown): { cookieHeader: string; cookieCount: number } | null {
+  if (!storageState || typeof storageState !== "object") return null;
+  const rawCookies = (storageState as { cookies?: unknown }).cookies;
   if (!rawCookies || !Array.isArray(rawCookies)) return null;
 
   const filtered = rawCookies.filter((cookie: any) =>
@@ -126,6 +151,18 @@ function loadCookies(): { cookieHeader: string; cookieCount: number } | null {
     cookieHeader: cookies.map((c: any) => `${c.name}=${c.value}`).join("; "),
     cookieCount: cookies.length,
   };
+}
+
+function loadCookiesFromProfile(accountId: string): { cookieHeader: string; cookieCount: number } | null {
+  const storageState = readStorageState(accountId);
+  if (!storageState.ok || !storageState.value) return null;
+  return extractCookieData(storageState.value);
+}
+
+function canAttemptSilentRefresh(accountId: string): boolean {
+  const cookieData = loadCookiesFromProfile(accountId);
+  if (!cookieData) return false;
+  return cookieData.cookieHeader.includes("SAPISID=");
 }
 
 async function fetchAuthToken(cookieHeader: string): Promise<string> {
@@ -154,64 +191,228 @@ async function fetchAuthToken(cookieHeader: string): Promise<string> {
   return tokenMatch[1];
 }
 
-async function getClient(): Promise<NotebookLMClient> {
-  if (sdkInstance) return sdkInstance;
+async function verifyNotebookPageAuthenticated(page: Page): Promise<void> {
+  const currentUrl = page.url();
+  if (currentUrl.includes("accounts.google.com") || currentUrl.includes("challenge")) {
+    throw new AuthRequiredError("Authentication requires manual re-login");
+  }
+}
 
-  const cookieData = loadCookies();
+async function exportPersistentContextState(context: BrowserContext, accountId: string): Promise<unknown> {
+  const storageState = await context.storageState();
+  writeStorageState(accountId, storageState);
+  return storageState;
+}
+
+async function refreshWithPersistentProfile(accountId: string): Promise<{ authToken: string; storageState: unknown }> {
+  const { chromium } = await testHooks.importPlaywright();
+  const paths = getProfilePaths(accountId);
+  const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
+    headless: true,
+  });
+
+  try {
+    const page = await context.newPage();
+    await page.goto("https://notebooklm.google.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await verifyNotebookPageAuthenticated(page);
+
+    const storageState = await exportPersistentContextState(context, accountId);
+    const cookieData = extractCookieData(storageState);
+    if (!cookieData) {
+      throw new NotebookRequestAuthError("No valid Google cookies found after refresh");
+    }
+
+    const authToken = await fetchAuthToken(cookieData.cookieHeader);
+    return { authToken, storageState };
+  } finally {
+    await context.close();
+  }
+}
+
+function isRecognizedAuthFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("401")
+    || message.includes("expired")
+    || message.includes("auth token")
+    || message.includes("authentication")
+    || error instanceof NotebookLMAuthError
+    || error instanceof AuthRequiredError
+    || error instanceof NotebookRequestAuthError;
+}
+
+async function ensureDefaultProfileInitialized(): Promise<void> {
+  ensureProfileDirectories(DEFAULT_ACCOUNT_ID);
+  const profile = getProfilePaths(DEFAULT_ACCOUNT_ID);
+  const legacyStorageStatePath = getLegacyStorageStatePath();
+  if (!existsSync(profile.storageStatePath) && existsSync(legacyStorageStatePath)) {
+    mkdirSync(profile.baseDir, { recursive: true });
+    copyFileSync(legacyStorageStatePath, profile.storageStatePath);
+  }
+
+  const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
+  if (meta.ok && meta.value.status === "missing" && existsSync(profile.storageStatePath)) {
+    writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+      accountId: DEFAULT_ACCOUNT_ID,
+      status: "expired",
+      error: "Stored credentials require validation",
+    });
+  }
+}
+
+async function createRuntimeClient(accountId: string): Promise<RuntimeClientLike> {
+  await ensureDefaultProfileInitialized();
+
+  const cookieData = loadCookiesFromProfile(accountId);
   if (!cookieData) {
-    throw new Error('No authentication found. Run "npx notebooklm login" first.');
+    throw new AuthRequiredError('No authentication found. Run "npx notebooklm login" first.');
   }
 
   const authToken = await fetchAuthToken(cookieData.cookieHeader);
-  const client = new NotebookLMClient({ authToken, cookies: cookieData.cookieHeader });
+  const client = new NotebookLMClient({
+    authToken,
+    cookies: cookieData.cookieHeader,
+    autoRefresh: false,
+  });
 
   await client.connect();
-
-  sdkInstance = client;
   return client;
 }
 
-export function disposeClient(): void {
-  if (sdkInstance) {
-    sdkInstance.dispose();
-    sdkInstance = null;
+async function validateProfile(accountId: string): Promise<{ status: Extract<AuthState, "ready" | "expired" | "reauth_required" | "error">; error?: string }> {
+  try {
+    const cookieData = loadCookiesFromProfile(accountId);
+    if (!cookieData) {
+      return { status: "reauth_required", error: 'No authentication found. Run "npx notebooklm login" first.' };
+    }
+
+    await fetchAuthToken(cookieData.cookieHeader);
+    return { status: "ready" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("accounts.google.com") || message.includes("re-authenticate")) {
+      return { status: "reauth_required", error: message };
+    }
+
+    if (message.includes("HTTP") || message.includes("token")) {
+      return { status: "expired", error: message };
+    }
+
+    return { status: "error", error: message };
   }
 }
 
-export function getAuthStatus(): AuthStatus {
-  const storageStateExists = existsSync(STORAGE_STATE_PATH);
+async function silentRefresh(accountId: string): Promise<{ authToken: string; storageState: unknown }> {
+  await ensureDefaultProfileInitialized();
 
-  if (!storageStateExists) {
-    return { authenticated: false, storageStateExists, cookieCount: 0 };
+  try {
+    const refreshed = await refreshWithPersistentProfile(accountId);
+
+    writeAuthMeta(accountId, {
+      accountId,
+      status: "ready",
+      lastCheckedAt: new Date().toISOString(),
+      lastRefreshedAt: new Date().toISOString(),
+    });
+
+    return refreshed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn({ accountId, err: error }, "Notebook auth refresh failed");
+    if (error instanceof AuthRequiredError) {
+      throw error;
+    }
+
+    const storageState = readStorageState(accountId);
+    if (storageState.ok && storageState.value) {
+      const cookieData = extractCookieData(storageState.value);
+      if (cookieData) {
+        try {
+          const refreshClient = new RefreshClient(cookieData.cookieHeader);
+          await refreshClient.refreshCredentials();
+
+          const authToken = await fetchAuthToken(cookieData.cookieHeader);
+          return { authToken, storageState: storageState.value };
+        } catch (fallbackError) {
+          throw new NotebookRequestAuthError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+        }
+      }
+    }
+
+    throw new NotebookRequestAuthError(message);
   }
+}
 
-  const cookieData = loadCookies();
-  if (!cookieData) {
-    return {
-      authenticated: false,
-      storageStateExists,
-      cookieCount: 0,
-      error: "No valid Google cookies found in storage state",
-    };
+configureAuthManager({
+  now: () => new Date(),
+  createRuntimeClient,
+  silentRefresh: async (accountId) => await silentRefresh(accountId),
+  validateProfile,
+  disposeRuntimeClient: async (client) => {
+    client.dispose();
+  },
+});
+
+export async function disposeClient(): Promise<void> {
+  await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
+}
+
+export const __testOnly = {
+  get importPlaywright() {
+    return testHooks.importPlaywright;
+  },
+  set importPlaywright(value: typeof defaultImportPlaywright) {
+    testHooks.importPlaywright = value;
+  },
+  silentRefreshForTests: silentRefresh,
+};
+
+export async function getAuthStatus(): Promise<AuthStatus> {
+  await ensureDefaultProfileInitialized();
+  return await authManager.getAuthProfileStatus(DEFAULT_ACCOUNT_ID);
+}
+
+async function getClient(): Promise<NotebookLMClient> {
+  const client = await authManager.getAuthenticatedSdkClient(DEFAULT_ACCOUNT_ID);
+  return client as NotebookLMClient;
+}
+
+async function runNotebookRequest<T>(operation: (client: NotebookLMClient) => Promise<T>): Promise<T> {
+  const client = await getClient();
+
+  try {
+    return await operation(client);
+  } catch (error) {
+    if (!isRecognizedAuthFailure(error)) {
+      throw error;
+    }
+
+    await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
+
+    if (!canAttemptSilentRefresh(DEFAULT_ACCOUNT_ID)) {
+      throw new NotebookRequestAuthError(error instanceof Error ? error.message : String(error));
+    }
+
+    const status = await authManager.refreshAuthProfile(DEFAULT_ACCOUNT_ID, "request-retry");
+    if (status.status !== "ready") {
+      throw new NotebookRequestAuthError(status.error ?? "Notebook authentication is unavailable");
+    }
+
+    const retryClient = await getClient();
+    try {
+      return await operation(retryClient);
+    } catch (retryError) {
+      if (isRecognizedAuthFailure(retryError)) {
+        throw new NotebookRequestAuthError(retryError instanceof Error ? retryError.message : String(retryError));
+      }
+
+      throw retryError;
+    }
   }
-
-  return {
-    authenticated: true,
-    storageStateExists,
-    cookieCount: cookieData.cookieCount,
-  };
 }
 
 export async function listNotebooks(): Promise<NotebookDetail[]> {
-  const client = await getClient();
-  try {
-    const notebooks = await client.notebooks.list();
-    return notebooks.map(mapNotebook);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("expired") || message.includes("401")) disposeClient();
-    throw err;
-  }
+  const notebooks = await runNotebookRequest(async (client) => await client.notebooks.list());
+  return notebooks.map(mapNotebook);
 }
 
 export function extractNotebookId(url: string): string {
@@ -229,9 +430,8 @@ export async function askNotebook(notebookId: string, question: string): Promise
       return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
     }
 
-    const client = await getClient();
     consumeQuota();
-    const result = await client.generation.chat(notebookId, question);
+    const result = await runNotebookRequest(async (client) => await client.generation.chat(notebookId, question));
 
     if (!result?.text) {
       return { success: false, error: "Empty response from NotebookLM" };
@@ -304,31 +504,25 @@ function mapNotebook(nb: Notebook): NotebookDetail {
 }
 
 export async function getNotebookDetail(notebookId: string): Promise<NotebookDetail> {
-  const client = await getClient();
-  let notebook: Notebook;
   try {
-    notebook = await client.notebooks.get(notebookId);
+    const notebook = await runNotebookRequest(async (client) => await client.notebooks.get(notebookId));
+    return mapNotebook(notebook);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("expired") || message.includes("401")) disposeClient();
     logger.warn({ notebookId, err }, "getNotebookDetail: sdk.notebooks.get failed");
     throw new Error(`Failed to fetch notebook detail: ${message}`);
   }
-  return mapNotebook(notebook);
 }
 
 export async function getNotebookSources(notebookId: string): Promise<NotebookSource[]> {
-  const client = await getClient();
-  let sources: Source[];
   try {
-    sources = await client.sources.list(notebookId);
+    const sources = await runNotebookRequest(async (client) => await client.sources.list(notebookId));
+    return sources.map(mapSource);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("expired") || message.includes("401")) disposeClient();
     logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed");
     throw new Error(`Failed to fetch notebook sources: ${message}`);
   }
-  return sources.map(mapSource);
 }
 
 export async function getNotebookMessages(notebookId: string): Promise<NotebookMessagesResult> {
@@ -347,9 +541,10 @@ export async function askNotebookForResearch(
       return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
     }
 
-    const client = await getClient();
     consumeQuota();
-    const result = await client.generation.chat(notebookId, prompt, sourceIds?.length ? { sourceIds } : undefined);
+    const result = await runNotebookRequest(
+      async (client) => await client.generation.chat(notebookId, prompt, sourceIds?.length ? { sourceIds } : undefined)
+    );
 
     if (!result?.text) {
       return { success: false, error: "Empty response from NotebookLM" };
@@ -364,20 +559,14 @@ export async function askNotebookForResearch(
 }
 
 export async function ensureNotebookAccessible(notebookId: string): Promise<AccessCheckResult> {
-  let client: NotebookLMClient;
   try {
-    client = await getClient();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { accessible: false, error: message };
-  }
-
-  try {
-    await client.notebooks.get(notebookId);
+    await runNotebookRequest(async (client) => {
+      await client.notebooks.get(notebookId);
+      return null;
+    });
     return { accessible: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("expired") || message.includes("401")) disposeClient();
     logger.warn({ notebookId, err }, "ensureNotebookAccessible: notebook.get failed");
     return { accessible: false, error: message };
   }
@@ -398,8 +587,7 @@ export async function addSourceFromUrl(
   notebookId: string,
   input: { url: string; title?: string }
 ): Promise<SourceAddResponse> {
-  const client = await getClient();
-  const sourceId = await client.sources.addFromURL(notebookId, input);
+  const sourceId = await runNotebookRequest(async (client) => await client.sources.addFromURL(notebookId, input));
   return { sourceIds: [sourceId], wasChunked: false };
 }
 
@@ -407,8 +595,7 @@ export async function addSourceFromText(
   notebookId: string,
   input: { title: string; content: string }
 ): Promise<SourceAddResponse> {
-  const client = await getClient();
-  const result = await client.sources.addFromText(notebookId, input);
+  const result = await runNotebookRequest(async (client) => await client.sources.addFromText(notebookId, input));
   return normalizeAddSourceResult(result);
 }
 
@@ -416,8 +603,7 @@ export async function addSourceFromFile(
   notebookId: string,
   input: { fileName: string; content: Buffer; mimeType?: string }
 ): Promise<SourceAddResponse> {
-  const client = await getClient();
-  const result = await client.sources.addFromFile(notebookId, input);
+  const result = await runNotebookRequest(async (client) => await client.sources.addFromFile(notebookId, input));
   return normalizeAddSourceResult(result);
 }
 
@@ -425,24 +611,21 @@ export async function searchWebSources(
   notebookId: string,
   input: SourceSearchInput
 ): Promise<WebSearchResult> {
-  const client = await getClient();
-  return await client.sources.searchWebAndWait(notebookId, {
+  return await runNotebookRequest(async (client) => await client.sources.searchWebAndWait(notebookId, {
     query: input.query,
     mode: input.mode === "deep" ? ResearchMode.DEEP : ResearchMode.FAST,
     sourceType: input.sourceType === "drive" ? SearchSourceType.GOOGLE_DRIVE : SearchSourceType.WEB,
-  });
+  }));
 }
 
 export async function addDiscoveredSources(
   notebookId: string,
   input: AddDiscoveredSourcesOptions
 ): Promise<{ sourceIds: string[] }> {
-  const client = await getClient();
-  const sourceIds = await client.sources.addDiscovered(notebookId, input);
+  const sourceIds = await runNotebookRequest(async (client) => await client.sources.addDiscovered(notebookId, input));
   return { sourceIds };
 }
 
 export async function getSourceProcessingStatus(notebookId: string): Promise<SourceProcessingStatus> {
-  const client = await getClient();
-  return await client.sources.status(notebookId);
+  return await runNotebookRequest(async (client) => await client.sources.status(notebookId));
 }

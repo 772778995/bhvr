@@ -24,10 +24,10 @@ const createResearchSchema = z.object({
 // POST /api/research — create and enqueue a research task
 research.post("/", async (c) => {
   // Validate auth first
-  const authStatus = getAuthStatus();
-  if (!authStatus.authenticated) {
+  const authStatus = await getAuthStatus();
+  if (authStatus.status === "missing" || authStatus.status === "reauth_required" || authStatus.status === "error") {
     return c.json(
-      { error: 'Not authenticated. Run "npx notebooklm login" first.' },
+      { error: authStatus.error ?? 'Not authenticated. Run "npx notebooklm login" first.' },
       401
     );
   }
