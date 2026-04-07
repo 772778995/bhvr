@@ -9,8 +9,10 @@ const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const tempHome = mkdtempSync(join(tmpdir(), "notebooklm-list-test-"));
 const notebooklmDir = join(tempHome, ".notebooklm");
+const defaultProfileDir = join(notebooklmDir, "profiles", "default");
 
 mkdirSync(notebooklmDir, { recursive: true });
+mkdirSync(defaultProfileDir, { recursive: true });
 writeFileSync(
   join(notebooklmDir, "storage-state.json"),
   JSON.stringify({
@@ -23,6 +25,11 @@ writeFileSync(
     ],
   })
 );
+
+function writeAuthMeta(meta: Record<string, unknown>) {
+  mkdirSync(defaultProfileDir, { recursive: true });
+  writeFileSync(join(defaultProfileDir, "auth-meta.json"), JSON.stringify(meta, null, 2));
+}
 
 process.env.HOME = tempHome;
 process.env.USERPROFILE = tempHome;
@@ -176,4 +183,72 @@ test("GET /api/notebooks returns 401 with explicit errorCode on unrecoverable au
     }
     await disposeClient();
   }
+});
+
+test("GET /api/notebooks/:id/report remains available when auth requires re-login", async () => {
+  writeAuthMeta({
+    accountId: "default",
+    status: "reauth_required",
+    error: "Authentication refresh failed repeatedly",
+  });
+
+  const notebookId = "b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4";
+  const generatedAt = new Date("2026-04-07T12:30:00.000Z");
+  const { upsertReport } = await import("../../report/service.js");
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  await upsertReport(notebookId, "cached report", generatedAt);
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: {
+      id: notebookId,
+      notebookId,
+      content: "cached report",
+      generatedAt: generatedAt.toISOString(),
+    },
+  });
+});
+
+test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {
+  writeAuthMeta({
+    accountId: "default",
+    status: "reauth_required",
+    error: "Authentication refresh failed repeatedly",
+  });
+
+  const notebookId = "b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4";
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/messages`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: [],
+    message: "NotebookLM 未提供历史会话接口，当前为降级空结果",
+  });
+});
+
+test("GET /api/notebooks/:id/research/stream remains available when auth requires re-login", async () => {
+  writeAuthMeta({
+    accountId: "default",
+    status: "reauth_required",
+    error: "Authentication refresh failed repeatedly",
+  });
+
+  const notebookId = "b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4";
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/research/stream`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+  await response.body?.cancel();
 });

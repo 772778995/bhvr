@@ -7,7 +7,6 @@ import {
   addSourceFromUrl,
   askNotebookForResearch,
   ensureNotebookAccessible,
-  getAuthStatus,
   getNotebookDetail,
   getNotebookMessages,
   getNotebookSources,
@@ -48,10 +47,6 @@ import {
 
 const notebooks = new Hono();
 
-function isAuthUsable(status: string): boolean {
-  return status === "ready" || status === "refreshing" || status === "expired";
-}
-
 async function withNotebookId(
   c: Context,
   handler: (id: string) => Promise<Response> | Response
@@ -85,21 +80,6 @@ async function withNotebookAuthHandling(handler: () => Promise<Response>): Promi
     throw error;
   }
 }
-
-notebooks.use("*", async (c, next) => {
-  const authStatus = await getAuthStatus();
-  if (!isAuthUsable(authStatus.status)) {
-    return c.json(
-      {
-        success: false,
-        message: authStatus.error ?? 'Not authenticated. Run "npx notebooklm login" first.',
-        errorCode: "UNAUTHORIZED",
-      },
-      401
-    );
-  }
-  await next();
-});
 
 notebooks.get("/", async (c) => {
   return await withNotebookAuthHandling(async () => {

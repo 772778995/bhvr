@@ -2,7 +2,7 @@
  * NotebookLM gateway — wraps notebooklm-kit SDK operations behind the auth manager.
  */
 
-import { existsSync, readFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, copyFileSync, statSync } from "node:fs";
 import type { BrowserContext, Page } from "playwright";
 import {
   NotebookLMClient,
@@ -263,9 +263,29 @@ async function ensureDefaultProfileInitialized(): Promise<void> {
   ensureProfileDirectories(DEFAULT_ACCOUNT_ID);
   const profile = getProfilePaths(DEFAULT_ACCOUNT_ID);
   const legacyStorageStatePath = getLegacyStorageStatePath();
-  if (!existsSync(profile.storageStatePath) && existsSync(legacyStorageStatePath)) {
+  const legacyExists = existsSync(legacyStorageStatePath);
+  const profileExists = existsSync(profile.storageStatePath);
+
+  if (!profileExists && legacyExists) {
     mkdirSync(profile.baseDir, { recursive: true });
     copyFileSync(legacyStorageStatePath, profile.storageStatePath);
+  }
+
+  if (profileExists && legacyExists) {
+    const legacyMtime = statSync(legacyStorageStatePath).mtimeMs;
+    const profileMtime = statSync(profile.storageStatePath).mtimeMs;
+    if (legacyMtime > profileMtime) {
+      copyFileSync(legacyStorageStatePath, profile.storageStatePath);
+
+      const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
+      if (meta.ok && meta.value.status === "reauth_required") {
+        writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+          accountId: DEFAULT_ACCOUNT_ID,
+          status: "expired",
+          error: "Stored credentials require validation",
+        });
+      }
+    }
   }
 
   const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
