@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { isValidHttpUrl, normalizeSearchQuery } from "@/utils/add-source-validators";
+import { computed, ref, watch } from "vue";
+import {
+  canShowValidationError,
+  getRequiredFieldError,
+  getUrlFieldError,
+  isValidHttpUrl,
+  normalizeSearchQuery,
+  shouldDisableSubmitAction,
+} from "@/utils/add-source-validators";
 
 interface Props {
   open: boolean;
@@ -24,16 +31,52 @@ const searchQuery = ref("");
 const searchSourceType = ref<"web" | "drive">("web");
 const searchMode = ref<"fast" | "deep">("fast");
 
+const urlTouched = ref(false);
+const textTitleTouched = ref(false);
+const textContentTouched = ref(false);
+const searchTouched = ref(false);
+
+const urlSubmitAttempted = ref(false);
+const textSubmitAttempted = ref(false);
+const searchSubmitAttempted = ref(false);
+
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const urlValid = computed(() => isValidHttpUrl(url.value));
 const searchQueryNormalized = computed(() => normalizeSearchQuery(searchQuery.value));
+const urlError = computed(() => getUrlFieldError(url.value));
+const searchError = computed(() => getRequiredFieldError(searchQuery.value, "搜索词"));
+const textTitleError = computed(() => getRequiredFieldError(textTitle.value, "标题"));
+const textContentError = computed(() => getRequiredFieldError(textContent.value, "文本内容"));
+const showUrlError = computed(() => canShowValidationError(urlError.value, urlTouched.value, urlSubmitAttempted.value));
+const showSearchError = computed(() => canShowValidationError(searchError.value, searchTouched.value, searchSubmitAttempted.value));
+const showTextTitleError = computed(() => canShowValidationError(textTitleError.value, textTitleTouched.value, textSubmitAttempted.value));
+const showTextContentError = computed(() => canShowValidationError(textContentError.value, textContentTouched.value, textSubmitAttempted.value));
 const searchModeEffective = computed<"fast" | "deep">(() => {
   if (searchSourceType.value === "drive" && searchMode.value === "deep") {
     return "fast";
   }
   return searchMode.value;
 });
+
+function resetValidationState() {
+  urlTouched.value = false;
+  textTitleTouched.value = false;
+  textContentTouched.value = false;
+  searchTouched.value = false;
+  urlSubmitAttempted.value = false;
+  textSubmitAttempted.value = false;
+  searchSubmitAttempted.value = false;
+}
+
+watch(
+  () => props.open,
+  (open, previousOpen) => {
+    if (open && !previousOpen) {
+      resetValidationState();
+    }
+  },
+);
 
 function closeDialog() {
   if (props.busy) {
@@ -43,6 +86,7 @@ function closeDialog() {
 }
 
 async function submitUrl() {
+  urlSubmitAttempted.value = true;
   if (!urlValid.value || props.busy) {
     return;
   }
@@ -53,6 +97,7 @@ async function submitUrl() {
 }
 
 async function submitText() {
+  textSubmitAttempted.value = true;
   if (!textTitle.value.trim() || !textContent.value.trim() || props.busy) {
     return;
   }
@@ -63,6 +108,7 @@ async function submitText() {
 }
 
 async function submitSearch() {
+  searchSubmitAttempted.value = true;
   if (!searchQueryNormalized.value || props.busy) {
     return;
   }
@@ -110,7 +156,11 @@ async function onFileChange(event: Event) {
               type="text"
               :disabled="busy"
               placeholder="输入搜索词..."
-              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+              @blur="searchTouched = true"
+              :class="[
+                'w-full rounded-md border px-3 py-2 text-sm',
+                showSearchError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
+              ]"
             />
             <select v-model="searchSourceType" :disabled="busy" class="rounded-md border border-gray-300 px-2 py-2 text-sm">
               <option value="web">Web</option>
@@ -122,24 +172,36 @@ async function onFileChange(event: Event) {
             </select>
             <button
               type="button"
-              :disabled="busy || !searchQueryNormalized"
+              :disabled="shouldDisableSubmitAction(busy)"
               class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               @click="submitSearch"
             >
               搜索并添加
             </button>
           </div>
+          <p v-if="showSearchError" class="mt-2 text-xs text-red-600">{{ searchError }}</p>
         </section>
 
         <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div class="rounded-lg border border-gray-200 p-3">
             <p class="mb-2 text-xs font-semibold text-gray-700">网站 URL</p>
             <div class="space-y-2">
-              <input v-model="url" type="text" :disabled="busy" placeholder="https://example.com/article" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <input
+                v-model="url"
+                type="text"
+                :disabled="busy"
+                placeholder="https://example.com/article"
+                @blur="urlTouched = true"
+                :class="[
+                  'w-full rounded-md border px-3 py-2 text-sm',
+                  showUrlError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
+                ]"
+              />
               <input v-model="urlTitle" type="text" :disabled="busy" placeholder="可选标题" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+              <p v-if="showUrlError" class="text-xs text-red-600">{{ urlError }}</p>
               <button
                 type="button"
-                :disabled="busy || !urlValid"
+                :disabled="shouldDisableSubmitAction(busy)"
                 class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
                 @click="submitUrl"
               >
@@ -165,17 +227,33 @@ async function onFileChange(event: Event) {
         <section class="rounded-lg border border-gray-200 p-3">
           <p class="mb-2 text-xs font-semibold text-gray-700">复制文本</p>
           <div class="space-y-2">
-            <input v-model="textTitle" type="text" :disabled="busy" placeholder="标题" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
+            <input
+              v-model="textTitle"
+              type="text"
+              :disabled="busy"
+              placeholder="标题"
+              @blur="textTitleTouched = true"
+              :class="[
+                'w-full rounded-md border px-3 py-2 text-sm',
+                showTextTitleError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
+              ]"
+            />
+            <p v-if="showTextTitleError" class="text-xs text-red-600">{{ textTitleError }}</p>
             <textarea
               v-model="textContent"
               :disabled="busy"
               rows="5"
               placeholder="粘贴文本内容..."
-              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+              @blur="textContentTouched = true"
+              :class="[
+                'w-full rounded-md border px-3 py-2 text-sm',
+                showTextContentError ? 'border-red-300 focus:border-red-400' : 'border-gray-300',
+              ]"
             />
+            <p v-if="showTextContentError" class="text-xs text-red-600">{{ textContentError }}</p>
             <button
               type="button"
-              :disabled="busy || !textTitle.trim() || !textContent.trim()"
+              :disabled="shouldDisableSubmitAction(busy)"
               class="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
               @click="submitText"
             >

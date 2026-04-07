@@ -33,6 +33,7 @@ import {
   successResponse,
 } from "./response.js";
 import {
+  parseDiscoveredSourcesBody,
   parseSearchBody,
   parseTextBody,
   parseUrlBody,
@@ -123,12 +124,12 @@ notebooks.post("/:id/sources/add/search", async (c) => {
 
 notebooks.post("/:id/sources/add/discovered", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const body = await c.req.json().catch(() => null);
-    if (!body || typeof body !== "object") {
-      return c.json({ success: false, message: "Invalid request body" }, 400);
+    const parsed = parseDiscoveredSourcesBody(await c.req.json().catch(() => null));
+    if (!parsed.ok) {
+      return c.json({ success: false, message: parsed.message }, 400);
     }
 
-    const result = await addDiscoveredSources(id, body as any);
+    const result = await addDiscoveredSources(id, parsed.value);
     return c.json(successResponse(result));
   });
 });

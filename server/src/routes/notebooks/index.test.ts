@@ -260,3 +260,25 @@ test("GET /api/notebooks/:id/sources returns NotebookLM sources without local en
     ],
   });
 });
+
+test("POST /api/notebooks/:id/sources/add/discovered rejects missing sessionId", async () => {
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  const response = await notebooks.request(
+    "http://localhost/123e4567-e89b-12d3-a456-426614174000/sources/add/discovered",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sourceIds: ["src-1"] }),
+    }
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    message: "sessionId is required",
+  });
+});
