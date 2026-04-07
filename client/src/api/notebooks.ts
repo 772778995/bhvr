@@ -10,7 +10,6 @@ export interface Source {
   title: string;
   type: string;
   status: string;
-  enabled: boolean;
   url?: string;
 }
 
@@ -121,22 +120,16 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const notebooksApi = {
+  getNotebooks() {
+    return request<Notebook[]>("/api/notebooks");
+  },
+
   getNotebook(id: string) {
     return request<Notebook>(`/api/notebooks/${id}`);
   },
 
   getSources(id: string) {
     return request<Source[]>(`/api/notebooks/${id}/sources`);
-  },
-
-  toggleSource(id: string, sourceId: string, enabled: boolean) {
-    return request<{ sourceId: string; enabled: boolean }>(
-      `/api/notebooks/${id}/sources/${sourceId}/toggle`,
-      {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      }
-    );
   },
 
   addSourceFromUrl(id: string, body: { url: string; title?: string }) {

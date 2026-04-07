@@ -1,26 +1,16 @@
 import { createRouter, createWebHistory } from "vue-router";
 import HomeView from "@/views/HomeView.vue";
+import NotebookListView from "@/views/NotebookListView.vue";
 import NotebookWorkbenchView from "@/views/NotebookWorkbenchView.vue";
+import { createAppRoutes } from "./navigation";
 
 const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    {
-      path: "/",
-      name: "home",
-      component: HomeView,
-    },
-    {
-      path: "/task/:id",
-      name: "task-detail",
-      component: () => import("@/views/TaskDetailView.vue"),
-    },
-    {
-      path: "/notebook/:id",
-      name: "notebook-workbench",
-      component: NotebookWorkbenchView,
-    },
-  ],
+  routes: createAppRoutes({
+    homeView: HomeView,
+    notebookListView: NotebookListView,
+    notebookWorkbenchView: NotebookWorkbenchView,
+  }),
 });
 
 export default router;

@@ -202,9 +202,16 @@ export function getAuthStatus(): AuthStatus {
   };
 }
 
-export async function listNotebooks() {
+export async function listNotebooks(): Promise<NotebookDetail[]> {
   const client = await getClient();
-  return client.notebooks.list();
+  try {
+    const notebooks = await client.notebooks.list();
+    return notebooks.map(mapNotebook);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("expired") || message.includes("401")) disposeClient();
+    throw err;
+  }
 }
 
 export function extractNotebookId(url: string): string {
@@ -292,7 +299,7 @@ function mapNotebook(nb: Notebook): NotebookDetail {
     id: nb.projectId,
     title: nb.title ?? nb.projectId,
     description: "",
-    updatedAt: nb.updatedAt ?? nb.lastAccessed ?? new Date().toISOString(),
+    updatedAt: nb.updatedAt ?? nb.lastAccessed ?? "",
   };
 }
 

@@ -40,7 +40,6 @@ const researchState = ref<ResearchState>({
 });
 
 const report = ref<NotebookReport | null>(null);
-const togglingSourceIds = ref<string[]>([]);
 const addSourceOpen = ref(false);
 const addSourceBusy = ref(false);
 
@@ -214,23 +213,6 @@ async function onSearchAndAddSources(payload: {
     pushNotice(e instanceof Error ? e.message : "搜索并添加来源失败");
   } finally {
     addSourceBusy.value = false;
-  }
-}
-
-async function onToggleSource(source: Source, enabled: boolean) {
-  if (!notebookId.value) return;
-
-  togglingSourceIds.value = [...togglingSourceIds.value, source.id];
-
-  try {
-    await notebooksApi.toggleSource(notebookId.value, source.id, enabled);
-    sources.value = await notebooksApi.getSources(notebookId.value);
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "更新来源状态失败");
-  } finally {
-    togglingSourceIds.value = togglingSourceIds.value.filter(
-      (id) => id !== source.id
-    );
   }
 }
 
@@ -438,9 +420,7 @@ onUnmounted(() => {
         <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_300px] gap-3 sm:gap-4 h-full min-h-0">
           <SourcesPanel
             :sources="sources"
-            :toggling-source-ids="togglingSourceIds"
             :on-add-source="onAddSource"
-            :on-toggle-source="onToggleSource"
           />
           <ChatPanel :messages="messages" :on-send="onSendMessage" />
           <StudioPanel

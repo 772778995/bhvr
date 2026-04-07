@@ -4,9 +4,7 @@ import { iconForSourceType } from "@/utils/source-icons";
 
 interface Props {
   sources: Source[];
-  togglingSourceIds: string[];
   onAddSource: () => void;
-  onToggleSource: (source: Source, enabled: boolean) => void;
 }
 
 defineProps<Props>();
@@ -70,15 +68,6 @@ function canOpen(source: Source): boolean {
             <p class="text-xs text-gray-500 mt-1">{{ source.type }} · {{ source.status }}</p>
           </div>
 
-          <button
-            type="button"
-            class="text-xs px-2 py-1 rounded border"
-            :class="source.enabled ? 'border-green-300 text-green-700 bg-green-50' : 'border-gray-300 text-gray-600 bg-white'"
-            :disabled="togglingSourceIds.includes(source.id)"
-            @click="onToggleSource(source, !source.enabled)"
-          >
-            {{ source.enabled ? "使用中" : "已排除" }}
-          </button>
         </div>
       </li>
     </ul>

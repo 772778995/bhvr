@@ -31,7 +31,7 @@ app.get("/", (c) => {
       research: "/api/research (POST/GET), /api/research/:id",
       health: "/api/health",
       notebooks:
-        "/api/notebooks/:id, /api/notebooks/:id/sources, /api/notebooks/:id/chat/messages, /api/notebooks/:id/studio/tools, /api/notebooks/:id/research",
+        "/api/notebooks, /api/notebooks/:id, /api/notebooks/:id/sources, /api/notebooks/:id/chat/messages, /api/notebooks/:id/studio/tools, /api/notebooks/:id/research",
     },
   });
 });

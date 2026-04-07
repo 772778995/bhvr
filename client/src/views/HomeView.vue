@@ -4,11 +4,13 @@ import { useRouter } from "vue-router";
 import { api, type ResearchTask } from "@/api/client";
 import CreateTaskForm from "@/components/CreateTaskForm.vue";
 import TaskCard from "@/components/TaskCard.vue";
+import { createHomeNotebookListEntry } from "@/router/navigation";
 
 const router = useRouter();
 const tasks = ref<ResearchTask[]>([]);
 const loading = ref(true);
 const error = ref("");
+const notebookListEntry = createHomeNotebookListEntry();
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -41,7 +43,23 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <CreateTaskForm @created="onTaskCreated" />
+    <div class="space-y-4">
+      <div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-4">
+        <div>
+          <p class="text-sm font-medium text-gray-900">Notebook 列表</p>
+          <p class="text-sm text-gray-500">先查看已有 Notebook，再进入对应工作台。</p>
+        </div>
+
+        <router-link
+          :to="notebookListEntry.to"
+          class="inline-flex items-center rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+        >
+          {{ notebookListEntry.label }}
+        </router-link>
+      </div>
+
+      <CreateTaskForm @created="onTaskCreated" />
+    </div>
 
     <div>
       <h2 class="text-lg font-semibold text-gray-900 mb-3">研究任务</h2>
