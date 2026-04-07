@@ -1,79 +1,94 @@
-# NotebookLM Auth Auto Refresh Implementation Plan
+# NotebookLM 认证自动刷新实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给执行型 agent 的要求：** 必须使用 `superpowers:子智能体驱动开发`（推荐）或等效按计划执行工作流，逐项完成本计划。所有步骤继续使用复选框 `- [ ]` / `- [x]` 跟踪进度。
 
-**Goal:** Add a single-account NotebookLM authentication subsystem that can persist a dedicated browser profile, refresh auth automatically in the background, retry once on auth failure, and return explicit auth states instead of leaking raw 500s.
+**目标：** 为 NotebookLM 增加一个单账号认证子系统，支持持久化专用浏览器 profile、后台自动刷新认证、认证失败时强制刷新并重试一次，并向前端返回明确的认证状态，而不是泄露原始 `500`。
 
-**Architecture:** Keep the current NotebookLM SDK integration, but split auth into a persistent profile layer and a disposable runtime client layer. Add an auth manager in the server that owns profile paths, auth metadata, refresh coordination, and runtime client invalidation. Route handlers should consume auth through this manager instead of directly trusting `storage-state.json` or a long-lived cached SDK instance.
+**架构：** 保留当前 NotebookLM SDK 集成，但将认证拆分为“持久化 profile 层”和“可丢弃的运行时 client 层”。在服务端新增 auth manager，统一管理 profile 路径、认证元数据、刷新协调以及运行时 client 失效。路由层通过 manager 获取认证能力，而不是继续直接信任 `storage-state.json` 或长生命周期缓存的 SDK 实例。
 
-**Tech Stack:** Node.js + TypeScript, Hono, notebooklm-kit, local filesystem under `~/.notebooklm/`, existing Vue client auth status consumer
-
----
-
-## Scope Check
-
-This plan is a single-account MVP only.
-
-Included:
-
-- Dedicated persisted auth profile for account `default`
-- Background health checking and refresh
-- Request-side forced refresh and one retry
-- Explicit auth status model and `/api/auth/status` upgrade
-- Converting NotebookLM auth failures from raw 500s into clear 401 responses
-
-Excluded:
-
-- Multi-account concurrent execution
-- Cloud-hosted browser workers
-- Guaranteed bypass of Google 2FA/risk challenges
-- Replacing notebooklm-kit internals
+**技术栈：** Node.js + TypeScript、Hono、`notebooklm-kit`、`~/.notebooklm/` 本地文件系统、现有 Vue 前端认证状态消费者。
 
 ---
 
-## File Structure
+## 当前进度
 
-### Backend
-
-- Create: `server/src/notebooklm/auth-profile.ts`
-  - Filesystem path helpers and persisted profile metadata read/write.
-- Create: `server/src/notebooklm/auth-profile.test.ts`
-  - Unit tests for profile path and metadata behavior.
-- Create: `server/src/notebooklm/auth-manager.ts`
-  - Owns auth state transitions, refresh flow, single-flight coordination, and runtime client lifecycle.
-- Create: `server/src/notebooklm/auth-manager.test.ts`
-  - Unit tests for refresh gating, cooldown, and retry behavior.
-- Modify: `server/src/notebooklm/client.ts`
-  - Stop owning long-lived auth state directly; consume the auth manager.
-- Modify: `server/src/notebooklm/index.ts`
-  - Export new auth manager surface and updated auth status types.
-- Modify: `server/src/routes/auth/index.ts`
-  - Return richer auth status.
-- Modify: `server/src/routes/notebooks/index.ts`
-  - Convert NotebookLM auth failures into 401 responses and reuse shared auth-aware request flow.
-- Modify: `server/src/index.ts`
-  - Start background auth health checking at process startup.
-
-### Frontend
-
-- Modify: `client/src/api/client.ts`
-  - Update auth status type.
-- Optionally Modify: `client/src/views/HomeView.vue`
-  - Show explicit auth state if already consumed there.
-- Modify: any current auth-status consumer
-  - Interpret `ready`, `refreshing`, `reauth_required`, and `error` explicitly.
+- [x] 已创建隔离 worktree：`.worktrees/auth-auto-refresh`
+- [x] 已建立 `auth-profile` 磁盘模型与测试
+- [x] 已建立 `auth-manager` 状态机骨架与测试
+- [x] 已将 `client.ts` 改为经由 auth manager 管理运行时 client
+- [x] 已把 `/api/auth/status` 升级为显式状态模型
+- [x] 已把 notebook 路由中的不可恢复认证失败转换为显式 `401`
+- [x] 已更新前端 `AuthStatus` 类型与首页状态提示
+- [x] 已完成基于持久化 `browser-user-data` 的真实静默刷新主流程
+- [ ] 尚未补齐所有手工认证生命周期验证
+- [ ] 尚未按任务粒度提交 commit
 
 ---
 
-### Task 1: Add Persistent Auth Profile Storage Model
+## 范围确认
 
-**Files:**
-- Create: `server/src/notebooklm/auth-profile.ts`
-- Test: `server/src/notebooklm/auth-profile.test.ts`
+本计划仅覆盖单账号 MVP。
 
-- [ ] **Step 1: Define the persisted profile layout and metadata shape**
+包含：
 
-Pseudocode:
+- `default` 账号的持久化认证 profile
+- 后台健康检查与刷新
+- 请求侧强制刷新与一次重试
+- 显式认证状态模型与 `/api/auth/status` 升级
+- 将 NotebookLM 认证失败从原始 `500` 转换为明确的 `401`
+
+不包含：
+
+- 多账号并发执行
+- 云端托管浏览器 worker
+- 保证绕过 Google 2FA / 风控挑战
+- 替换 `notebooklm-kit` 内部实现
+
+---
+
+## 文件结构
+
+### 后端
+
+- 新建：`server/src/notebooklm/auth-profile.ts`
+  - 文件系统路径助手与持久化 profile 元数据读写
+- 新建：`server/src/notebooklm/auth-profile.test.ts`
+  - profile 路径与元数据行为单测
+- 新建：`server/src/notebooklm/auth-manager.ts`
+  - 负责认证状态流转、刷新流程、single-flight 协调与运行时 client 生命周期
+- 新建：`server/src/notebooklm/auth-manager.test.ts`
+  - 负责刷新协调、失败阈值、缓存失效等单测
+- 修改：`server/src/notebooklm/client.ts`
+  - 不再直接持有长生命周期 auth 状态，改为消费 auth manager
+- 修改：`server/src/notebooklm/index.ts`
+  - 导出新的 auth manager 能力与新的认证状态类型
+- 修改：`server/src/routes/auth/index.ts`
+  - 返回更丰富的认证状态
+- 修改：`server/src/routes/notebooks/index.ts`
+  - 将 NotebookLM 认证失败转换为 `401`，并复用共享的 auth-aware 请求流
+- 修改：`server/src/index.ts`
+  - 服务启动时启动后台 auth 健康检查
+
+### 前端
+
+- 修改：`client/src/api/client.ts`
+  - 更新认证状态类型
+- 可能修改：`client/src/views/HomeView.vue`
+  - 如果该处已经消费认证状态，则显示显式状态
+- 修改：当前所有认证状态消费者
+  - 显式解释 `ready`、`refreshing`、`reauth_required`、`error`
+
+---
+
+### 任务 1：增加持久化认证 Profile 存储模型
+
+**文件：**
+- 新建：`server/src/notebooklm/auth-profile.ts`
+- 测试：`server/src/notebooklm/auth-profile.test.ts`
+
+- [x] **步骤 1：定义持久化 profile 布局与元数据结构**
+
+伪代码：
 
 ```text
 base = ~/.notebooklm/profiles/default/
@@ -91,14 +106,14 @@ auth-meta:
   error
 ```
 
-Requirements:
+要求：
 
-- Keep the account id fixed to `default` in MVP
-- Do not write anything into the repository workspace
+- MVP 中账号 id 固定为 `default`
+- 不向仓库工作区写入任何认证文件
 
-- [ ] **Step 2: Add profile helper responsibilities**
+- [x] **步骤 2：补充 profile helper 能力**
 
-Pseudocode:
+伪代码：
 
 ```text
 getProfilePaths(accountId)
@@ -109,33 +124,33 @@ readStorageState(accountId)
 writeStorageState(accountId, storageState)
 ```
 
-Requirements:
+要求：
 
-- Missing files should map to `missing`, not generic exceptions
-- Path helpers must be deterministic and testable
+- 缺失文件应映射为 `missing`，而不是通用异常
+- 路径 helper 必须可预测、可测试
 
-- [ ] **Step 3: Add unit tests for path and metadata behavior**
+- [x] **步骤 3：为路径与元数据行为增加单测**
 
-Test cases:
+测试用例：
 
-- resolves `default` profile paths correctly
-- returns `missing` when no metadata exists
-- round-trips auth metadata read/write
-- rejects malformed metadata with explicit error state
+- 正确解析 `default` profile 路径
+- 元数据不存在时返回 `missing`
+- 认证元数据读写可回环
+- 非法元数据返回显式错误状态
 
-- [ ] **Step 4: Run targeted verification**
+- [x] **步骤 4：运行定向验证**
 
-Run:
+执行：
 
 - `node --import tsx --test src/notebooklm/auth-profile.test.ts`
 - `npm run build --workspace server`
 
-Expected:
+期望：
 
-- tests pass
-- server build passes
+- 测试通过
+- server 构建通过
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/notebooklm/auth-profile.ts server/src/notebooklm/auth-profile.test.ts
@@ -144,16 +159,16 @@ git commit -m "feat: add persisted notebook auth profile model"
 
 ---
 
-### Task 2: Add Auth Manager State Machine And Refresh Coordination
+### 任务 2：增加 Auth Manager 状态机与刷新协调
 
-**Files:**
-- Create: `server/src/notebooklm/auth-manager.ts`
-- Test: `server/src/notebooklm/auth-manager.test.ts`
-- Modify: `server/src/notebooklm/index.ts`
+**文件：**
+- 新建：`server/src/notebooklm/auth-manager.ts`
+- 新建：`server/src/notebooklm/auth-manager.test.ts`
+- 修改：`server/src/notebooklm/index.ts`
 
-- [ ] **Step 1: Define the runtime auth status model**
+- [x] **步骤 1：定义运行时认证状态模型**
 
-Pseudocode:
+伪代码：
 
 ```text
 AuthState =
@@ -165,14 +180,14 @@ AuthState =
   error
 ```
 
-Requirements:
+要求：
 
-- `ready` means recently validated, not merely “file exists”
-- state model must match the approved spec exactly
+- `ready` 表示最近一次校验通过，不等于“文件存在”
+- 状态模型字段必须与批准规范一致
 
-- [ ] **Step 2: Define auth manager responsibilities**
+- [x] **步骤 2：定义 auth manager 职责**
 
-Pseudocode:
+伪代码：
 
 ```text
 getAuthProfileStatus(accountId)
@@ -183,14 +198,14 @@ getAuthenticatedSdkClient(accountId)
 startAuthHealthMonitor(accountId)
 ```
 
-Requirements:
+要求：
 
-- Keep the public API keyed by `accountId`, but call it with `default` only in MVP
-- Auth manager, not `client.ts`, should own cached runtime clients
+- 对外 API 保持 `accountId` 维度，但 MVP 中统一传 `default`
+- 运行时 client 缓存应由 auth manager 持有，而不是 `client.ts`
 
-- [ ] **Step 3: Add single-flight refresh and cooldown policy**
+- [x] **步骤 3：增加 single-flight 刷新与失败阈值策略**
 
-Pseudocode:
+伪代码：
 
 ```text
 if refresh already running:
@@ -206,33 +221,33 @@ else:
   resolve waiting callers
 ```
 
-Requirements:
+要求：
 
-- Multiple concurrent refresh triggers must collapse into one refresh operation
-- Repeated failures must not spin indefinitely
+- 多个并发刷新触发必须合并为一次刷新操作
+- 连续失败不能无限自旋
 
-- [ ] **Step 4: Add unit tests for refresh coordination**
+- [x] **步骤 4：增加刷新协调单测**
 
-Test cases:
+测试用例：
 
-- concurrent refresh calls share a single in-flight promise
-- successful refresh moves state to `ready`
-- repeated failures eventually move state to `reauth_required`
-- invalidation clears runtime client cache
+- 并发刷新调用共享同一个 in-flight promise
+- 刷新成功后状态变为 `ready`
+- 连续失败最终进入 `reauth_required`
+- 运行时 client 失效后缓存会被清空
 
-- [ ] **Step 5: Run targeted verification**
+- [x] **步骤 5：运行定向验证**
 
-Run:
+执行：
 
 - `node --import tsx --test src/notebooklm/auth-manager.test.ts`
 - `npm run build --workspace server`
 
-Expected:
+期望：
 
-- tests pass
-- server build passes
+- 测试通过
+- server 构建通过
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6：提交**
 
 ```bash
 git add server/src/notebooklm/auth-manager.ts server/src/notebooklm/auth-manager.test.ts server/src/notebooklm/index.ts
@@ -241,34 +256,34 @@ git commit -m "feat: add notebook auth manager with refresh coordination"
 
 ---
 
-### Task 3: Move NotebookLM Client Construction Behind The Auth Manager
+### 任务 3：将 NotebookLM Client 构建迁移到 Auth Manager 后面
 
-**Files:**
-- Modify: `server/src/notebooklm/client.ts`
-- Modify: `server/src/notebooklm/index.ts`
+**文件：**
+- 修改：`server/src/notebooklm/client.ts`
+- 修改：`server/src/notebooklm/index.ts`
 
-- [ ] **Step 1: Separate raw NotebookLM helpers from auth ownership**
+- [x] **步骤 1：将底层 NotebookLM helper 与 auth 持有职责拆开**
 
-Pseudocode:
+伪代码：
 
 ```text
-keep helpers:
-  normalize source/detail/message shapes
-  fetch auth token from cookie header
+保留 helper:
+  统一 source/detail/message 结构
+  从 cookie header 提取 auth token
 
-remove responsibilities:
-  long-lived sdkInstance ownership
-  direct storage-state trust as final auth truth
+移除职责:
+  长生命周期 sdkInstance 持有
+  直接把 storage-state 作为最终认证真相
 ```
 
-Requirements:
+要求：
 
-- `client.ts` should become a lower-level gateway module again
-- Auth manager should decide when to build/dispose clients
+- `client.ts` 重新回到较低层 gateway 模块定位
+- client 何时创建/销毁由 auth manager 决定
 
-- [ ] **Step 2: Define runtime client acquisition flow**
+- [x] **步骤 2：定义运行时 client 获取流程**
 
-Pseudocode:
+伪代码：
 
 ```text
 getAuthenticatedSdkClient(default):
@@ -282,18 +297,18 @@ getAuthenticatedSdkClient(default):
     return client
 ```
 
-- [ ] **Step 3: Run targeted verification**
+- [x] **步骤 3：运行定向验证**
 
-Run:
+执行：
 
 - `npm run build --workspace server`
 
-Expected:
+期望：
 
-- server build passes
-- notebook gateway functions compile against the new auth manager surface
+- server 构建通过
+- notebook gateway 已能基于新的 auth manager 接口编译通过
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4：提交**
 
 ```bash
 git add server/src/notebooklm/client.ts server/src/notebooklm/index.ts
@@ -302,15 +317,15 @@ git commit -m "refactor: route notebook sdk client creation through auth manager
 
 ---
 
-### Task 4: Add Background Health Checking And Silent Refresh Flow
+### 任务 4：增加后台健康检查与静默刷新流程
 
-**Files:**
-- Modify: `server/src/notebooklm/auth-manager.ts`
-- Modify: `server/src/index.ts`
+**文件：**
+- 修改：`server/src/notebooklm/auth-manager.ts`
+- 修改：`server/src/index.ts`
 
-- [ ] **Step 1: Define the background health check lifecycle**
+- [x] **步骤 1：定义后台健康检查生命周期**
 
-Pseudocode:
+伪代码：
 
 ```text
 on server startup:
@@ -325,14 +340,14 @@ monitor loop:
       mark reauth_required
 ```
 
-Requirements:
+要求：
 
-- Keep polling lightweight
-- Background checker must not create overlapping refresh operations
+- 轮询必须足够轻量
+- 后台检查不能产生重叠刷新操作
 
-- [ ] **Step 2: Define silent refresh behavior**
+- [x] **步骤 2：定义静默刷新行为**
 
-Pseudocode:
+伪代码：
 
 ```text
 silent refresh:
@@ -343,23 +358,36 @@ silent refresh:
   invalidate runtime client
 ```
 
-Requirements:
+要求：
 
-- Silent refresh must reuse persisted browser user data
-- On explicit challenge flows, return `reauth_required` instead of looping
+- 静默刷新必须复用持久化浏览器 user data
+- 碰到明确 challenge 流时，返回 `reauth_required`，不能自旋
 
-- [ ] **Step 3: Run targeted verification**
+当前结果：
 
-Run:
+- 已接入后台 monitor 和请求侧 refresh orchestration
+- 已通过 `launchPersistentContext(browser-user-data)` 复用持久化浏览器 profile
+- 已在刷新后重新导出 `storage-state.json` 并重新提取 token
+- 保留 `RefreshClient` 作为持久化浏览器刷新失败时的回退路径
+
+- [x] **步骤 3：运行定向验证**
+
+执行：
 
 - `npm run build --workspace server`
 
-Manual verification:
+手工验证：
 
-- start server with an already initialized profile
-- confirm monitor starts without crashing server boot
+- 使用已初始化 profile 启动服务
+- 确认 monitor 启动不会导致服务启动崩溃
 
-- [ ] **Step 4: Commit**
+当前结果：
+
+- server 编译通过
+- monitor 已在启动入口接入
+- 真实手工生命周期验证尚未完成
+
+- [ ] **步骤 4：提交**
 
 ```bash
 git add server/src/notebooklm/auth-manager.ts server/src/index.ts
@@ -368,16 +396,16 @@ git commit -m "feat: add background notebook auth health monitor"
 
 ---
 
-### Task 5: Add Request-Side Forced Refresh And One Retry
+### 任务 5：增加请求侧强制刷新与一次重试
 
-**Files:**
-- Modify: `server/src/notebooklm/client.ts`
-- Modify: `server/src/notebooklm/auth-manager.ts`
-- Modify: `server/src/routes/notebooks/index.ts`
+**文件：**
+- 修改：`server/src/notebooklm/client.ts`
+- 修改：`server/src/notebooklm/auth-manager.ts`
+- 修改：`server/src/routes/notebooks/index.ts`
 
-- [ ] **Step 1: Define the auth-aware request wrapper**
+- [x] **步骤 1：定义 auth-aware 请求包装器**
 
-Pseudocode:
+伪代码：
 
 ```text
 runNotebookRequest(operation):
@@ -390,14 +418,14 @@ runNotebookRequest(operation):
     raise explicit auth error
 ```
 
-Requirements:
+要求：
 
-- Only retry once per request
-- Restrict automatic retry to recognized auth failures
+- 每个请求最多自动重试一次
+- 仅对可识别的认证失败进行自动重试
 
-- [ ] **Step 2: Apply wrapper to notebook operations**
+- [x] **步骤 2：将包装器应用到 notebook 操作**
 
-Operations to cover:
+已覆盖操作：
 
 - notebook detail
 - notebook list
@@ -405,13 +433,13 @@ Operations to cover:
 - notebook ask/chat
 - access check
 
-Requirements:
+要求：
 
-- Keep route handlers thin; retry policy should live below the route layer
+- 路由层保持轻量，重试策略应位于路由层以下
 
-- [ ] **Step 3: Convert auth failures to explicit route responses**
+- [x] **步骤 3：将认证失败转换为显式路由响应**
 
-Pseudocode:
+伪代码：
 
 ```text
 if auth manager returns reauth_required or refresh_failed:
@@ -420,19 +448,26 @@ else:
   preserve existing non-auth error behavior
 ```
 
-- [ ] **Step 4: Run targeted verification**
+- [x] **步骤 4：运行定向验证**
 
-Run:
+执行：
 
+- `node --import tsx --test src/notebooklm/client.refresh.test.ts src/routes/notebooks/index.test.ts`
 - `npm run build --workspace server`
 
-Manual verification:
+手工验证：
 
-- simulate expired runtime client
-- confirm first request triggers refresh and retry
-- confirm irrecoverable auth returns 401, not raw 500
+- 模拟过期 runtime client
+- 确认首次请求会触发 refresh 与重试
+- 确认不可恢复认证返回 `401` 而不是原始 `500`
 
-- [ ] **Step 5: Commit**
+当前结果：
+
+- 路由测试已覆盖“401 后清缓存重连”和“不可恢复 auth 返回 401”
+- 新增测试已覆盖“复用 browser-user-data 并导出最新 storage-state”
+- server 构建通过
+
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/notebooklm/client.ts server/src/notebooklm/auth-manager.ts server/src/routes/notebooks/index.ts
@@ -441,16 +476,16 @@ git commit -m "feat: retry notebook requests after auth refresh"
 
 ---
 
-### Task 6: Upgrade `/api/auth/status` To Real Auth State
+### 任务 6：将 `/api/auth/status` 升级为真实认证状态
 
-**Files:**
-- Modify: `server/src/routes/auth/index.ts`
-- Modify: `server/src/notebooklm/index.ts`
-- Modify: `client/src/api/client.ts`
+**文件：**
+- 修改：`server/src/routes/auth/index.ts`
+- 修改：`server/src/notebooklm/index.ts`
+- 修改：`client/src/api/client.ts`
 
-- [ ] **Step 1: Define the new auth status response shape**
+- [x] **步骤 1：定义新的 auth status 响应结构**
 
-Pseudocode:
+伪代码：
 
 ```text
 AuthStatusResponse:
@@ -461,43 +496,43 @@ AuthStatusResponse:
   error
 ```
 
-Requirements:
+要求：
 
-- Replace the old boolean-based `authenticated` model
-- Keep field names aligned with the approved spec
+- 替换旧的布尔 `authenticated` 模型
+- 字段名与批准规范保持一致
 
-- [ ] **Step 2: Wire `/api/auth/status` to the auth manager**
+- [x] **步骤 2：将 `/api/auth/status` 连接到 auth manager**
 
-Pseudocode:
+伪代码：
 
 ```text
 GET /api/auth/status:
   return getAuthProfileStatus(default)
 ```
 
-- [ ] **Step 3: Update frontend auth status consumer types**
+- [x] **步骤 3：更新前端认证状态消费者类型**
 
-Pseudocode:
+伪代码：
 
 ```text
 client api AuthStatus:
-  stop using authenticated/storageStateExists/cookieCount
-  use explicit status enum instead
+  停止使用 authenticated/storageStateExists/cookieCount
+  改用显式 status enum
 ```
 
-- [ ] **Step 4: Run targeted verification**
+- [x] **步骤 4：运行定向验证**
 
-Run:
+执行：
 
 - `npm run build --workspace server`
 - `npm run build --workspace client`
 
-Expected:
+期望：
 
-- both builds pass
-- frontend compiles against the new auth status shape
+- 两端构建通过
+- 前端已经基于新的 auth status 结构编译通过
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add server/src/routes/auth/index.ts server/src/notebooklm/index.ts client/src/api/client.ts
@@ -506,16 +541,16 @@ git commit -m "feat: expose explicit notebook auth status states"
 
 ---
 
-### Task 7: Add Frontend Auth UX For Refreshing And Reauth Required
+### 任务 7：增加前端认证 UX，覆盖刷新中与需重新登录状态
 
-**Files:**
-- Modify: current auth-status consumer views
-- Likely Modify: `client/src/views/HomeView.vue`
-- Optionally Modify: notebook workbench entry points if they consume auth state
+**文件：**
+- 修改：当前认证状态消费者视图
+- 大概率修改：`client/src/views/HomeView.vue`
+- 如工作台入口消费认证状态，也可一并修改
 
-- [ ] **Step 1: Identify current auth status consumers**
+- [x] **步骤 1：识别当前 auth status 消费者**
 
-Pseudocode:
+伪代码：
 
 ```text
 find all uses of api.getAuthStatus()
@@ -525,14 +560,14 @@ map each place to one of:
   startup check
 ```
 
-Requirements:
+要求：
 
-- Do not assume HomeView is the only consumer
-- Keep UI copy small and explicit
+- 不要假设只有 HomeView 消费状态
+- UI 文案简短、明确
 
-- [ ] **Step 2: Define UI behavior per state**
+- [x] **步骤 2：定义各状态的 UI 行为**
 
-Pseudocode:
+伪代码：
 
 ```text
 ready -> no warning
@@ -542,17 +577,23 @@ error -> show failure message
 missing -> show setup/login required message
 ```
 
-- [ ] **Step 3: Run targeted verification**
+- [x] **步骤 3：运行定向验证**
 
-Run:
+执行：
 
 - `npm run build --workspace client`
 
-Manual verification:
+手工验证：
 
-- confirm UI compiles and can distinguish refreshing vs reauth_required
+- 确认 UI 能区分 `refreshing` 与 `reauth_required`
 
-- [ ] **Step 4: Commit**
+当前结果：
+
+- client 构建通过
+- HomeView 已显示显式状态提示
+- 手工界面验证尚未完成
+
+- [ ] **步骤 4：提交**
 
 ```bash
 git add client/src/views/HomeView.vue
@@ -561,42 +602,42 @@ git commit -m "feat: surface notebook auth refresh states in ui"
 
 ---
 
-### Task 8: End-To-End Verification And Regression Check
+### 任务 8：端到端验证与回归检查
 
-**Files:**
-- No new source files required unless a verification note is desired
+**文件：**
+- 不要求新增源码文件，除非需要记录验证说明
 
-- [ ] **Step 1: Run full build verification**
+- [x] **步骤 1：运行完整构建验证**
 
-Run:
+执行：
 
 - `npm run build`
 
-Expected:
+期望：
 
-- monorepo build passes
+- monorepo 构建通过
 
-- [ ] **Step 2: Run server-side auth tests**
+- [x] **步骤 2：运行服务端 auth 测试**
 
-Run:
+执行：
 
-- `node --import tsx --test src/notebooklm/auth-profile.test.ts src/notebooklm/auth-manager.test.ts`
+- `node --import tsx --test src/notebooklm/auth-profile.test.ts src/notebooklm/auth-manager.test.ts src/notebooklm/client.refresh.test.ts src/routes/notebooks/index.test.ts`
 
-Expected:
+期望：
 
-- auth unit tests pass
+- auth 相关单测通过
 
-- [ ] **Step 3: Perform manual auth lifecycle checks**
+- [ ] **步骤 3：执行手工认证生命周期检查**
 
-Manual checklist:
+手工清单：
 
-- first-time profile initialization works
-- service restart preserves login
-- expired runtime client can recover automatically
-- irrecoverable session produces `reauth_required`
-- notebook endpoints return 401 instead of raw 500 on unrecoverable auth failure
+- 首次 profile 初始化可用
+- 服务重启后仍能保留登录态
+- 过期 runtime client 可自动恢复
+- 不可恢复会话能产生 `reauth_required`
+- notebook 接口在不可恢复 auth 失败时返回 `401` 而不是原始 `500`
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4：提交**
 
 ```bash
 git add .
@@ -605,8 +646,8 @@ git commit -m "test: verify notebook auth auto-refresh flow"
 
 ---
 
-## Self-Review
+## 自检
 
-- Spec coverage: plan covers persisted profile storage, auth state model, health monitor, request retry, route behavior, and frontend auth state consumption.
-- Placeholder scan: implementation guidance is intentionally expressed as pseudocode only, per request.
-- Type consistency: `default`, `reauth_required`, `refreshing`, `lastCheckedAt`, and `lastRefreshedAt` are used consistently across tasks.
+- 规范覆盖：计划已经覆盖持久化 profile 存储、认证状态模型、后台 monitor、请求重试、路由行为和前端认证状态消费。
+- 占位符检查：实现指导仍以伪代码和任务步骤表达，没有把细节偷渡成未验证承诺。
+- 类型一致性：`default`、`reauth_required`、`refreshing`、`lastCheckedAt`、`lastRefreshedAt` 在任务描述中保持一致。

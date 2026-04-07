@@ -4,6 +4,7 @@ export {
   extractNotebookId,
   getAuthStatus,
   disposeClient,
+  isNotebookAuthError,
   // New gateway methods
   getNotebookDetail,
   getNotebookSources,
@@ -28,3 +29,23 @@ export {
   type SourceAddResponse,
   type SourceSearchInput,
 } from "./client.js";
+
+export {
+  DEFAULT_ACCOUNT_ID,
+  authManager,
+  configureAuthManager,
+  createAuthManager,
+  type AuthManager,
+  type AuthManagerDependencies,
+} from "./auth-manager.js";
+
+export {
+  getProfilePaths,
+  ensureProfileDirectories,
+  readAuthMeta,
+  writeAuthMeta,
+  readStorageState,
+  writeStorageState,
+  type AuthMeta,
+  type AuthState,
+} from "./auth-profile.js";

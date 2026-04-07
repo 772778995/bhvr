@@ -51,9 +51,10 @@ export interface CreateResearchResponse {
 }
 
 export interface AuthStatus {
-  authenticated: boolean;
-  storageStateExists: boolean;
-  cookieCount: number;
+  accountId: string;
+  status: "missing" | "ready" | "refreshing" | "expired" | "reauth_required" | "error";
+  lastCheckedAt?: string;
+  lastRefreshedAt?: string;
   error?: string;
 }
 

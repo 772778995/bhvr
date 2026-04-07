@@ -1,21 +1,30 @@
-# Notebook Conversation History Mapping MVP Implementation Plan
+# Notebook Workbench Chat Without Persistence Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:子智能体驱动开发 to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an MVP conversation history layer for `/notebook/:id` by mapping NotebookLM chat response metadata into our own persisted conversation/message records and rendering that history in the workbench.
+**Goal:** Enable `/notebook/:id` to send chat messages to NotebookLM from the workbench without adding any local persistence layer.
 
-**Architecture:** Do not wait for a nonexistent NotebookLM history-read API. Instead, add a thin local persistence layer that stores each user turn, the assistant reply, and the NotebookLM conversation metadata (`conversationId`, `messageIds`) returned by `generation.chat()`. The read path for `/api/notebooks/:id/messages` then becomes our own DB-backed history for conversations created through this app, while the write path is a new chat endpoint that continues the same NotebookLM conversation correctly.
+**Architecture:** Keep chat state in the browser only for the current page session. The server adds a thin chat-send endpoint that forwards the prompt, enabled source IDs, and optional in-memory continuation context to NotebookLM. We explicitly do not store conversation/message records in SQLite and we do not attempt to reconstruct history after a reload.
 
-**Tech Stack:** Vue 3 + TypeScript, Hono, Drizzle ORM + SQLite, notebooklm-kit `generation.chat`, Node test runner via `tsx`
+**Tech Stack:** Vue 3 + TypeScript, Hono, notebooklm-kit `generation.chat`, Node test runner via `tsx`
 
 ---
 
 ## Scope Check
 
-This plan is intentionally separate from source-sidebar polish and add-source workflow. It only covers chat send/history persistence for conversations initiated inside our app.
+This plan only covers sending messages from the workbench during the current browser session.
+
+In scope:
+
+- Sending a prompt from the workbench UI
+- Returning the assistant reply immediately
+- Continuing the same NotebookLM conversation during the current page session by passing client-held context back to the server
+- Keeping the existing degraded read endpoint behavior for history
 
 Out of scope for this MVP:
 
+- Any server-side persistence of conversations or messages
+- Rehydrating chat history after page refresh or reopen
 - Backfilling old NotebookLM conversations created outside this app
 - Streaming chat UI
 - Citation rendering
@@ -27,537 +36,265 @@ Out of scope for this MVP:
 
 ### Backend
 
-- Modify: `server/src/db/schema.ts`
-  - Add `notebook_conversations` and `notebook_messages` tables.
-- Modify: `server/src/db/migrate.ts`
-  - Create the new chat persistence tables and indexes.
-- Create: `server/src/chat-history/service.ts`
-  - Persist and read conversation/message records.
-- Create: `server/src/chat-history/service.test.ts`
-  - Unit tests for mapping and continuation helpers.
 - Modify: `server/src/notebooklm/client.ts`
-  - Add a chat gateway that accepts `conversationId`, `conversationHistory`, and `sourceIds`, and returns normalized assistant metadata.
+  - Add a chat gateway wrapper for `generation.chat()` that accepts optional continuation context and source filtering.
 - Modify: `server/src/notebooklm/index.ts`
   - Export the new gateway function and related types.
 - Modify: `server/src/routes/notebooks/index.ts`
-  - Replace degraded empty history reads with DB-backed reads and add `POST /:id/chat/messages`.
+  - Add `POST /:id/chat/messages` for direct NotebookLM chat sends.
 
 ### Frontend
 
 - Modify: `client/src/api/notebooks.ts`
   - Add send-message request/response types and API method.
 - Modify: `client/src/views/NotebookWorkbenchView.vue`
-  - Implement send flow, refresh local messages, and show loading/error state.
+  - Hold chat messages and NotebookLM continuation metadata in memory for the current page session.
 - Modify: `client/src/components/notebook-workbench/ChatPanel.vue`
-  - Replace readonly placeholder input with real input and disabled/loading states.
+  - Replace the placeholder input with a working composer and sending state.
 
 ---
 
-### Task 1: Add Chat History Persistence Tables And Helpers
-
-**Files:**
-- Modify: `server/src/db/schema.ts`
-- Modify: `server/src/db/migrate.ts`
-- Create: `server/src/chat-history/service.ts`
-- Test: `server/src/chat-history/service.test.ts`
-
-- [ ] **Step 1: Write the failing tests for message mapping and continuation lookup**
-
-```ts
-// server/src/chat-history/service.test.ts
-import test from "node:test";
-import assert from "node:assert/strict";
-import {
-  buildAssistantMessageRecord,
-  getContinuationContextFromMessages,
-} from "./service.js";
-
-test("buildAssistantMessageRecord maps NotebookLM metadata into stored fields", () => {
-  const record = buildAssistantMessageRecord("nb-1", "conv-1", {
-    text: "answer",
-    conversationId: "sdk-conv-1",
-    messageIds: ["sdk-conv-1", "msg-2"],
-    citations: [1, 2],
-  });
-
-  assert.equal(record.notebookId, "nb-1");
-  assert.equal(record.conversationId, "conv-1");
-  assert.equal(record.role, "assistant");
-  assert.equal(record.content, "answer");
-  assert.equal(record.sdkConversationId, "sdk-conv-1");
-  assert.equal(record.sdkMessageId, "msg-2");
-});
-
-test("getContinuationContextFromMessages returns latest sdk conversation metadata", () => {
-  const context = getContinuationContextFromMessages([
-    {
-      id: "m1",
-      role: "user",
-      content: "q1",
-      sdkConversationId: null,
-      sdkMessageId: null,
-    },
-    {
-      id: "m2",
-      role: "assistant",
-      content: "a1",
-      sdkConversationId: "sdk-conv-1",
-      sdkMessageId: "msg-2",
-    },
-  ]);
-
-  assert.deepEqual(context, {
-    conversationId: "sdk-conv-1",
-    conversationHistory: [{ role: "assistant", message: "a1" }],
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `node --import tsx --test src/chat-history/service.test.ts`
-Expected: FAIL with module-not-found for `./service.js`
-
-- [ ] **Step 3: Add chat tables and minimal service implementation**
-
-```ts
-// server/src/db/schema.ts (add blocks)
-export const notebookConversations = sqliteTable("notebook_conversations", {
-  id: text("id").primaryKey(),
-  notebookId: text("notebook_id").notNull(),
-  title: text("title").notNull().default("新对话"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-}, (table) => ({
-  notebookConversationUpdatedIdx: uniqueIndex("notebook_conversation_id_unique").on(table.id),
-}));
-
-export const notebookMessages = sqliteTable("notebook_messages", {
-  id: text("id").primaryKey(),
-  notebookId: text("notebook_id").notNull(),
-  conversationId: text("conversation_id").notNull(),
-  role: text("role", { enum: ["user", "assistant"] }).notNull(),
-  content: text("content").notNull(),
-  sdkConversationId: text("sdk_conversation_id"),
-  sdkMessageId: text("sdk_message_id"),
-  status: text("status", { enum: ["sent", "done", "failed"] }).notNull().default("done"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-});
-```
-
-```ts
-// server/src/db/migrate.ts (append SQL inside executeMultiple)
-CREATE TABLE IF NOT EXISTS notebook_conversations (
-  id TEXT PRIMARY KEY NOT NULL,
-  notebook_id TEXT NOT NULL,
-  title TEXT NOT NULL DEFAULT '新对话',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS notebook_messages (
-  id TEXT PRIMARY KEY NOT NULL,
-  notebook_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  sdk_conversation_id TEXT,
-  sdk_message_id TEXT,
-  status TEXT NOT NULL DEFAULT 'done',
-  created_at INTEGER NOT NULL
-);
-```
-
-```ts
-// server/src/chat-history/service.ts
-export interface StoredMessageLike {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  sdkConversationId: string | null;
-  sdkMessageId: string | null;
-}
-
-export function buildAssistantMessageRecord(
-  notebookId: string,
-  conversationId: string,
-  response: {
-    text?: string;
-    conversationId?: string;
-    messageIds?: [string, string];
-    citations?: number[];
-  },
-) {
-  return {
-    id: crypto.randomUUID(),
-    notebookId,
-    conversationId,
-    role: "assistant" as const,
-    content: response.text ?? "",
-    sdkConversationId: response.conversationId ?? null,
-    sdkMessageId: response.messageIds?.[1] ?? null,
-    status: "done" as const,
-    createdAt: new Date(),
-  };
-}
-
-export function getContinuationContextFromMessages(messages: StoredMessageLike[]) {
-  const latestAssistant = [...messages].reverse().find((message) => {
-    return message.role === "assistant" && message.sdkConversationId && message.sdkMessageId;
-  });
-
-  if (!latestAssistant?.sdkConversationId) {
-    return { conversationId: undefined, conversationHistory: [] as Array<{ role: "user" | "assistant"; message: string }> };
-  }
-
-  return {
-    conversationId: latestAssistant.sdkConversationId,
-    conversationHistory: messages
-      .filter((message) => message.role === "user" || message.role === "assistant")
-      .map((message) => ({ role: message.role, message: message.content })),
-  };
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `node --import tsx --test src/chat-history/service.test.ts`
-Expected: PASS with 2 tests passed
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/src/db/schema.ts server/src/db/migrate.ts server/src/chat-history/service.ts server/src/chat-history/service.test.ts
-git commit -m "feat: add notebook chat history persistence layer"
-```
-
----
-
-### Task 2: Add NotebookLM Chat Gateway That Returns Persistable Metadata
+### Task 1: Add A NotebookLM Chat Gateway For Current-Session Continuation
 
 **Files:**
 - Modify: `server/src/notebooklm/client.ts`
 - Modify: `server/src/notebooklm/index.ts`
 
-- [ ] **Step 1: Write failing compile step by importing a non-existent gateway export from the route layer**
+**Intent:** Expose a focused gateway for workbench chat that can continue a NotebookLM conversation when the client sends `conversationId` and `conversationHistory`, while keeping all state ephemeral.
 
-```ts
-// server/src/routes/notebooks/index.ts (temporary import during implementation)
-import { sendNotebookChatMessage } from "../../notebooklm/index.js";
-```
+- [ ] **Step 1: Write the failing compile step**
+
+  Add a temporary import in `server/src/routes/notebooks/index.ts` for `sendNotebookChatMessage` before the export exists.
 
 - [ ] **Step 2: Run build to verify it fails**
 
-Run: `npm run build --workspace server`
-Expected: FAIL with missing export `sendNotebookChatMessage`
+  Run: `npm run build --workspace server`
+  Expected: FAIL because `sendNotebookChatMessage` is not exported yet.
 
-- [ ] **Step 3: Implement the new gateway wrapper**
+- [ ] **Step 3: Implement the gateway wrapper**
 
-```ts
-// server/src/notebooklm/client.ts (additions)
-export interface NotebookChatRequest {
-  prompt: string;
-  sourceIds?: string[];
-  conversationId?: string;
-  conversationHistory?: Array<{ role: "user" | "assistant"; message: string }>;
-}
+  Add these backend types and behavior in `server/src/notebooklm/client.ts`:
 
-export interface NotebookChatResponse {
-  text: string;
-  conversationId?: string;
-  messageIds?: [string, string];
-  citations: number[];
-}
+  - `NotebookChatHistoryItem` with `{ role: "user" | "assistant"; message: string }`
+  - `NotebookChatRequest` with:
+    - `prompt: string`
+    - `sourceIds?: string[]`
+    - `conversationId?: string`
+    - `conversationHistory?: NotebookChatHistoryItem[]`
+  - `NotebookChatResponse` with:
+    - `text: string`
+    - `conversationId?: string`
+    - `messageIds?: [string, string]`
+    - `citations: unknown[]`
 
-export async function sendNotebookChatMessage(
-  notebookId: string,
-  request: NotebookChatRequest,
-): Promise<NotebookChatResponse> {
-  const client = await getClient();
-  const result = await client.generation.chat(notebookId, request.prompt, {
-    sourceIds: request.sourceIds,
-    conversationId: request.conversationId,
-    conversationHistory: request.conversationHistory,
-  });
+  Implement `sendNotebookChatMessage(notebookId, request)` to:
 
-  if (!result.text) {
-    throw new Error("Empty response from NotebookLM");
-  }
+  - Reuse the existing auth/quota/client flow already used by `askNotebookForResearch`
+  - Call `client.generation.chat(notebookId, request.prompt, options)`
+  - Pass `sourceIds`, `conversationId`, and `conversationHistory` when provided
+  - Throw an error if NotebookLM returns empty text
+  - Dispose the SDK client on auth-expiry style failures, matching existing client behavior
 
-  return {
-    text: result.text,
-    conversationId: result.conversationId,
-    messageIds: result.messageIds,
-    citations: result.citations ?? [],
-  };
-}
-```
+- [ ] **Step 4: Export the gateway from the public NotebookLM module**
 
-```ts
-// server/src/notebooklm/index.ts (add exports)
-export {
-  sendNotebookChatMessage,
-  type NotebookChatRequest,
-  type NotebookChatResponse,
-} from "./client.js";
-```
+  Update `server/src/notebooklm/index.ts` to re-export:
 
-- [ ] **Step 4: Run build to verify it passes**
+  - `sendNotebookChatMessage`
+  - `NotebookChatHistoryItem`
+  - `NotebookChatRequest`
+  - `NotebookChatResponse`
 
-Run: `npm run build --workspace server`
-Expected: PASS
+- [ ] **Step 5: Run build to verify it passes**
 
-- [ ] **Step 5: Commit**
+  Run: `npm run build --workspace server`
+  Expected: PASS
 
-```bash
-git add server/src/notebooklm/client.ts server/src/notebooklm/index.ts
-git commit -m "feat: expose notebook chat gateway metadata for history persistence"
-```
+- [ ] **Step 6: Commit**
+
+  ```bash
+  git add server/src/notebooklm/client.ts server/src/notebooklm/index.ts server/src/routes/notebooks/index.ts
+  git commit -m "feat: add notebook workbench chat gateway"
+  ```
 
 ---
 
-### Task 3: Replace Degraded Message Reads With DB-Backed History And Add Send Route
+### Task 2: Add A Direct Chat Send Route Without Persistence
 
 **Files:**
 - Modify: `server/src/routes/notebooks/index.ts`
-- Modify: `server/src/chat-history/service.ts`
 
-- [ ] **Step 1: Write the failing route-level behavior test as service-level coverage**
+**Intent:** Provide a workbench endpoint that sends one prompt to NotebookLM, using currently enabled sources plus client-provided continuation metadata, and returns only the new assistant turn plus updated conversation metadata.
 
-```ts
-// server/src/chat-history/service.test.ts (append)
-import test from "node:test";
-import assert from "node:assert/strict";
-import { toChatMessagesResponse } from "./service.js";
+- [ ] **Step 1: Write the failing compile step**
 
-test("toChatMessagesResponse sorts messages by createdAt ascending", () => {
-  const result = toChatMessagesResponse([
-    {
-      id: "2",
-      role: "assistant",
-      content: "a1",
-      status: "done",
-      createdAt: new Date("2026-04-03T10:01:00Z"),
-    },
-    {
-      id: "1",
-      role: "user",
-      content: "q1",
-      status: "sent",
-      createdAt: new Date("2026-04-03T10:00:00Z"),
-    },
-  ] as any);
+  Add a temporary call in the route module to a missing helper or response field used by the new chat endpoint.
 
-  assert.deepEqual(result.map((item) => item.id), ["1", "2"]);
-});
-```
+- [ ] **Step 2: Run build to verify it fails**
 
-- [ ] **Step 2: Run test to verify it fails**
+  Run: `npm run build --workspace server`
+  Expected: FAIL because the new route code references a missing symbol or mismatched response shape.
 
-Run: `node --import tsx --test src/chat-history/service.test.ts`
-Expected: FAIL with missing export `toChatMessagesResponse`
+- [ ] **Step 3: Implement `POST /:id/chat/messages`**
 
-- [ ] **Step 3: Implement read/write service methods and route wiring**
+  Add a new route in `server/src/routes/notebooks/index.ts`.
 
-```ts
-// server/src/chat-history/service.ts (additions)
-export interface ChatMessageDto {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: string;
-  status: "sent" | "done" | "failed";
-}
+  Request body:
 
-export function toChatMessagesResponse(rows: Array<{
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: Date;
-  status: "sent" | "done" | "failed";
-}>): ChatMessageDto[] {
-  return [...rows]
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((row) => ({
-      id: row.id,
-      role: row.role,
-      content: row.content,
-      createdAt: row.createdAt.toISOString(),
-      status: row.status,
-    }));
-}
-```
+  - `content: string`
+  - `conversationId?: string`
+  - `conversationHistory?: Array<{ role: "user" | "assistant"; message: string }>`
 
-```ts
-// server/src/routes/notebooks/index.ts (replace GET /:id/messages and add POST route)
-notebooks.get("/:id/messages", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const messages = await listNotebookMessages(id);
-    return c.json(successResponse(toChatMessagesResponse(messages)));
-  });
-});
+  Route behavior:
 
-notebooks.post("/:id/chat/messages", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const body = await c.req.json<{ content?: string; conversationId?: string }>().catch(() => ({}));
-    const content = body.content?.trim() ?? "";
+  - Trim and validate `content`; reject empty content with HTTP 400 and `INVALID_CONTENT`
+  - Load notebook sources via existing helpers
+  - Load source state overrides and filter to enabled source IDs using existing source-state utilities already used elsewhere in the notebook routes module; do not add new persistence
+  - Call `sendNotebookChatMessage()` with:
+    - `prompt: content`
+    - enabled `sourceIds`
+    - `conversationId` from the request when present
+    - `conversationHistory` from the request when present
+  - Return a success payload shaped like:
+    - `conversationId: string | null` where the value comes from NotebookLM when provided, otherwise `null`
+    - `message: { id, role, content, createdAt, status }`
+    - `messageIds?: [string, string]`
 
-    if (!content) {
-      return c.json({ success: false, message: "content is required", errorCode: "INVALID_CONTENT" }, 400);
-    }
+  Response rules:
 
-    const sources = await getNotebookSources(id);
-    const stateMap = await listSourceStateMap(id);
-    const merged = mergeSourceStates(sources, stateMap);
-    const sourceIds = listEnabledSourceIds(merged);
+  - The returned message should always be the assistant turn only
+  - `id` should use `response.messageIds?.[1]` when available, otherwise a generated UUID
+  - `role` is always `assistant`
+  - `createdAt` should be the current server timestamp in ISO format
+  - `status` should be `done`
 
-    const conversation = await getOrCreateConversation(id, body.conversationId);
-    const existingMessages = await listConversationMessages(conversation.id);
-    const continuation = getContinuationContextFromMessages(existingMessages);
+- [ ] **Step 4: Preserve the existing degraded history read behavior**
 
-    await createUserMessage(id, conversation.id, content);
+  Keep `GET /:id/messages` and `GET /:id/chat/messages` as degraded empty reads. Do not replace them with DB-backed history.
 
-    const response = await sendNotebookChatMessage(id, {
-      prompt: content,
-      sourceIds,
-      conversationId: continuation.conversationId,
-      conversationHistory: continuation.conversationHistory,
-    });
+- [ ] **Step 5: Run targeted verification**
 
-    await createAssistantMessage(buildAssistantMessageRecord(id, conversation.id, response));
+  Run: `npm run build --workspace server`
+  Expected:
 
-    const nextMessages = await listNotebookMessages(id);
-    return c.json(successResponse({ conversationId: conversation.id, messages: toChatMessagesResponse(nextMessages) }));
-  });
-});
-```
+  - build passes
+  - the new chat send route compiles cleanly
+  - no database or chat-history files were introduced
 
-- [ ] **Step 4: Run targeted verification**
+- [ ] **Step 6: Commit**
 
-Run:
-
-- `node --import tsx --test src/chat-history/service.test.ts`
-- `npm run build --workspace server`
-
-Expected:
-
-- service tests pass
-- server build passes
-- `/api/notebooks/:id/messages` no longer depends on degraded empty SDK read
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/src/chat-history/service.ts server/src/chat-history/service.test.ts server/src/routes/notebooks/index.ts
-git commit -m "feat: persist notebook workbench chat messages"
-```
+  ```bash
+  git add server/src/routes/notebooks/index.ts
+  git commit -m "feat: add direct notebook workbench chat route"
+  ```
 
 ---
 
-### Task 4: Wire The Workbench Chat UI To The New Message APIs
+### Task 3: Wire The Workbench Chat UI To The Direct Send API
 
 **Files:**
 - Modify: `client/src/api/notebooks.ts`
 - Modify: `client/src/views/NotebookWorkbenchView.vue`
 - Modify: `client/src/components/notebook-workbench/ChatPanel.vue`
 
-- [ ] **Step 1: Write the failing client compile step by referencing a missing send API method**
+**Intent:** Let the user send prompts from the workbench and see replies immediately, while keeping all conversation state in memory only for the current page session.
 
-```ts
-// client/src/views/NotebookWorkbenchView.vue (temporary during implementation)
-await notebooksApi.sendMessage(notebookId.value, { content: draft.value });
-```
+- [ ] **Step 1: Write the failing client compile step**
+
+  Add a temporary `notebooksApi.sendMessage(...)` call in `NotebookWorkbenchView.vue` before the API method exists.
 
 - [ ] **Step 2: Run build to verify it fails**
 
-Run: `npm run build --workspace client`
-Expected: FAIL with missing `sendMessage` on `notebooksApi`
+  Run: `npm run build --workspace client`
+  Expected: FAIL because `sendMessage` does not exist yet.
 
-- [ ] **Step 3: Implement the client API and UI wiring**
+- [ ] **Step 3: Implement the client API method**
 
-```ts
-// client/src/api/notebooks.ts (additions)
-export interface SendMessageRequest {
-  content: string;
-  conversationId?: string;
-}
+  In `client/src/api/notebooks.ts`, add:
 
-export interface SendMessageResponse {
-  conversationId: string;
-  messages: ChatMessage[];
-}
+  - `SendMessageHistoryItem` with `{ role: "user" | "assistant"; message: string }`
+  - `SendMessageRequest` with:
+    - `content: string`
+    - `conversationId?: string`
+    - `conversationHistory?: SendMessageHistoryItem[]`
+  - `SendMessageResponse` with:
+    - `conversationId: string | null`
+    - `message: ChatMessage`
+    - `messageIds?: [string, string]`
 
-sendMessage(id: string, body: SendMessageRequest) {
-  return request<SendMessageResponse>(`/api/notebooks/${id}/chat/messages`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-},
-```
+  Add `sendMessage(id, body)` that POSTs to `/api/notebooks/${id}/chat/messages`.
 
-```ts
-// client/src/views/NotebookWorkbenchView.vue (shape only)
-const activeConversationId = ref("");
-const sending = ref(false);
+- [ ] **Step 4: Implement in-memory send flow in `NotebookWorkbenchView.vue`**
 
-async function onSendMessage(content: string) {
-  if (!notebookId.value || !content.trim() || sending.value) return;
+  Add page-session-only state:
 
-  sending.value = true;
-  notice.value = "";
-  try {
-    const result = await notebooksApi.sendMessage(notebookId.value, {
-      content,
-      conversationId: activeConversationId.value || undefined,
-    });
-    activeConversationId.value = result.conversationId;
-    messages.value = result.messages;
-  } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "发送消息失败");
-  } finally {
-    sending.value = false;
-  }
-}
-```
+  - `sending = ref(false)`
+  - `activeConversationId = ref<string | null>(null)`
+  - `conversationHistory = ref<Array<{ role: "user" | "assistant"; message: string }>>([])`
 
-```vue
-<!-- client/src/components/notebook-workbench/ChatPanel.vue (shape only) -->
-<script setup lang="ts">
-import { ref } from "vue";
-const draft = ref("");
-function handleSubmit() {
-  const value = draft.value.trim();
-  if (!value) return;
-  props.onSend(value);
-  draft.value = "";
-}
-</script>
-```
+  Update page lifecycle behavior:
 
-- [ ] **Step 4: Run targeted verification**
+  - Reset `messages`, `activeConversationId`, and `conversationHistory` when notebook ID changes
+  - Continue to load server messages on first paint, but accept that they will usually be empty under the degraded endpoint
 
-Run:
+  Implement `onSendMessage(content: string)` to:
 
-- `npm run build --workspace client`
-- `npm run build --workspace server`
+  - Ignore empty content and duplicate submits while `sending` is true
+  - Optimistically append a user message to `messages`
+  - Build the request from the current in-memory `activeConversationId` and `conversationHistory`
+  - Await `notebooksApi.sendMessage()`
+  - Append the returned assistant message to `messages`
+  - Update `activeConversationId` from the response
+  - Rebuild `conversationHistory` so it reflects the full current in-memory transcript in `{ role, message }` form
+  - Surface failures through the existing notice area
+  - If the send fails, remove the optimistic user message so the UI does not falsely imply delivery
 
-Expected:
+- [ ] **Step 5: Replace the placeholder chat input in `ChatPanel.vue`**
 
-- client build passes
-- server build passes
-- workbench can send a message, receive a reply, and re-open with persisted history
+  Update the component API to accept:
 
-- [ ] **Step 5: Commit**
+  - `messages: ChatMessage[]`
+  - `sending: boolean`
+  - `onSend: (content: string) => void`
 
-```bash
-git add client/src/api/notebooks.ts client/src/views/NotebookWorkbenchView.vue client/src/components/notebook-workbench/ChatPanel.vue
-git commit -m "feat: wire notebook workbench chat to persisted history api"
-```
+  UI behavior:
+
+  - Use a local `draft` ref
+  - Submit on button click and Enter key
+  - Ignore blank messages
+  - Disable input and button while `sending` is true
+  - Change button text to `发送中...` while sending
+  - Keep the existing message list rendering style unless a small change is needed for usability
+
+- [ ] **Step 6: Add an explicit empty-state notice for non-persistent history**
+
+  Make it clear in the chat panel or existing page notice that conversation history is only kept for the current page session and will not survive refresh.
+
+- [ ] **Step 7: Run targeted verification**
+
+  Run:
+
+  - `npm run build --workspace client`
+  - `npm run build --workspace server`
+
+  Expected:
+
+  - client build passes
+  - server build passes
+  - the workbench can send a message and display the reply during the current session
+  - refreshing the page clears the unsaved conversation, by design
+
+- [ ] **Step 8: Commit**
+
+  ```bash
+  git add client/src/api/notebooks.ts client/src/views/NotebookWorkbenchView.vue client/src/components/notebook-workbench/ChatPanel.vue
+  git commit -m "feat: wire notebook workbench chat without persistence"
+  ```
 
 ---
 
 ## Self-Review
 
-- Spec coverage: this plan covers persistence, metadata mapping, send route, read route, and UI wiring.
-- Placeholder scan: no `TODO`/`TBD` placeholders remain.
-- Type consistency: uses `conversationId`, `messageIds`, `sourceIds`, and `ChatMessage` consistently across backend and frontend tasks.
+- Spec coverage: the plan now covers direct chat send, optional NotebookLM continuation metadata, and in-memory client session handling only.
+- Placeholder scan: no persistence-layer TODOs remain.
+- Type consistency: `conversationId`, `conversationHistory`, and `messageIds` are used consistently across server and client.
+- Scope guard: no database schema, migration, or local chat-history service changes are included.

@@ -12,6 +12,7 @@ import {
   getNotebookMessages,
   getNotebookSources,
   getSourceProcessingStatus,
+  isNotebookAuthError,
   listNotebooks,
   searchWebSources,
 } from "../../notebooklm/index.js";
@@ -41,6 +42,10 @@ import {
 
 const notebooks = new Hono();
 
+function isAuthUsable(status: string): boolean {
+  return status === "ready" || status === "refreshing" || status === "expired";
+}
+
 async function withNotebookId(
   c: Context,
   handler: (id: string) => Promise<Response> | Response
@@ -52,13 +57,36 @@ async function withNotebookId(
   return await handler(id);
 }
 
+async function withNotebookAuthHandling(handler: () => Promise<Response>): Promise<Response> {
+  try {
+    return await handler();
+  } catch (error) {
+    if (isNotebookAuthError(error)) {
+      const message = error instanceof Error ? error.message : "Notebook authentication unavailable";
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message,
+          errorCode: "UNAUTHORIZED",
+        }),
+        {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+
+    throw error;
+  }
+}
+
 notebooks.use("*", async (c, next) => {
-  const authStatus = getAuthStatus();
-  if (!authStatus.authenticated) {
+  const authStatus = await getAuthStatus();
+  if (!isAuthUsable(authStatus.status)) {
     return c.json(
       {
         success: false,
-        message: 'Not authenticated. Run "npx notebooklm login" first.',
+        message: authStatus.error ?? 'Not authenticated. Run "npx notebooklm login" first.',
         errorCode: "UNAUTHORIZED",
       },
       401
@@ -68,21 +96,27 @@ notebooks.use("*", async (c, next) => {
 });
 
 notebooks.get("/", async (c) => {
-  const response = await listNotebooks();
-  return c.json(successResponse(response));
+  return await withNotebookAuthHandling(async () => {
+    const response = await listNotebooks();
+    return c.json(successResponse(response));
+  });
 });
 
 notebooks.get("/:id", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const response = await getNotebookDetail(id);
-    return c.json(successResponse(response));
+    return await withNotebookAuthHandling(async () => {
+      const response = await getNotebookDetail(id);
+      return c.json(successResponse(response));
+    });
   });
 });
 
 notebooks.get("/:id/sources", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const sources = await getNotebookSources(id);
-    return c.json(successResponse(sources));
+    return await withNotebookAuthHandling(async () => {
+      const sources = await getNotebookSources(id);
+      return c.json(successResponse(sources));
+    });
   });
 });
 
@@ -93,8 +127,10 @@ notebooks.post("/:id/sources/add/url", async (c) => {
       return c.json({ success: false, message: parsed.message }, 400);
     }
 
-    const result = await addSourceFromUrl(id, parsed.value);
-    return c.json(successResponse(result));
+    return await withNotebookAuthHandling(async () => {
+      const result = await addSourceFromUrl(id, parsed.value);
+      return c.json(successResponse(result));
+    });
   });
 });
 
@@ -105,8 +141,10 @@ notebooks.post("/:id/sources/add/text", async (c) => {
       return c.json({ success: false, message: parsed.message }, 400);
     }
 
-    const result = await addSourceFromText(id, parsed.value);
-    return c.json(successResponse(result));
+    return await withNotebookAuthHandling(async () => {
+      const result = await addSourceFromText(id, parsed.value);
+      return c.json(successResponse(result));
+    });
   });
 });
 
@@ -117,8 +155,10 @@ notebooks.post("/:id/sources/add/search", async (c) => {
       return c.json({ success: false, message: parsed.message }, 400);
     }
 
-    const result = await searchWebSources(id, parsed.value);
-    return c.json(successResponse(result));
+    return await withNotebookAuthHandling(async () => {
+      const result = await searchWebSources(id, parsed.value);
+      return c.json(successResponse(result));
+    });
   });
 });
 
@@ -129,8 +169,10 @@ notebooks.post("/:id/sources/add/discovered", async (c) => {
       return c.json({ success: false, message: parsed.message }, 400);
     }
 
-    const result = await addDiscoveredSources(id, parsed.value);
-    return c.json(successResponse(result));
+    return await withNotebookAuthHandling(async () => {
+      const result = await addDiscoveredSources(id, parsed.value);
+      return c.json(successResponse(result));
+    });
   });
 });
 
@@ -147,45 +189,53 @@ notebooks.post("/:id/sources/add/file", async (c) => {
     }
 
     const content = Buffer.from(await file.arrayBuffer());
-    const result = await addSourceFromFile(id, {
-      fileName: file.name,
-      mimeType: file.type || undefined,
-      content,
-    });
+    return await withNotebookAuthHandling(async () => {
+      const result = await addSourceFromFile(id, {
+        fileName: file.name,
+        mimeType: file.type || undefined,
+        content,
+      });
 
-    return c.json(successResponse(result));
+      return c.json(successResponse(result));
+    });
   });
 });
 
 notebooks.get("/:id/sources/status", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const result = await getSourceProcessingStatus(id);
-    return c.json(successResponse(result));
+    return await withNotebookAuthHandling(async () => {
+      const result = await getSourceProcessingStatus(id);
+      return c.json(successResponse(result));
+    });
   });
 });
 
 notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const result = await getNotebookMessages(id);
-    return c.json(
-      successResponse(
-        result.messages,
-        result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
-      )
-    );
+    return await withNotebookAuthHandling(async () => {
+      const result = await getNotebookMessages(id);
+      return c.json(
+        successResponse(
+          result.messages,
+          result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
+        )
+      );
+    });
   });
 });
 
 // Backward-compatible alias for old client path.
 notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const result = await getNotebookMessages(id);
-    return c.json(
-      successResponse(
-        result.messages,
-        result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
-      )
-    );
+    return await withNotebookAuthHandling(async () => {
+      const result = await getNotebookMessages(id);
+      return c.json(
+        successResponse(
+          result.messages,
+          result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
+        )
+      );
+    });
   });
 });
 
@@ -222,13 +272,16 @@ notebooks.post("/:id/research/start", async (c) => {
 
     const access = await ensureNotebookAccessible(id);
     if (!access.accessible) {
+      const statusCode = access.error?.includes("authentication") ? 401 : 404;
+      const errorCode = statusCode === 401 ? "UNAUTHORIZED" : "NOTEBOOK_NOT_ACCESSIBLE";
+
       return c.json(
         {
           success: false,
           message: access.error ?? "目标笔记不可访问",
-          errorCode: "NOTEBOOK_NOT_ACCESSIBLE",
+          errorCode,
         },
-        404
+        statusCode
       );
     }
 
@@ -243,28 +296,29 @@ notebooks.post("/:id/research/start", async (c) => {
       );
     }
 
-    const sources = await getNotebookSources(id);
-    const sourceIds = sources.map((source) => source.id);
+    return await withNotebookAuthHandling(async () => {
+      const sources = await getNotebookSources(id);
+      const sourceIds = sources.map((source) => source.id);
 
-    void runAutoResearch(
-      id,
-      (notebookId, prompt) =>
-        askNotebookForResearch(notebookId, prompt, sourceIds)
-    ).catch((err) => {
-      // Error is tracked in runtime state by orchestrator.fail(); swallow here.
-      void err;
+      void runAutoResearch(
+        id,
+        (notebookId, prompt) =>
+          askNotebookForResearch(notebookId, prompt, sourceIds)
+      ).catch((err) => {
+        void err;
+      });
+
+      return c.json(
+        successResponse(
+          {
+            status: "accepted",
+            message: "自动研究已启动",
+          },
+          "自动研究已启动"
+        ),
+        202
+      );
     });
-
-    return c.json(
-      successResponse(
-        {
-          status: "accepted",
-          message: "自动研究已启动",
-        },
-        "自动研究已启动"
-      ),
-      202
-    );
   });
 });
 
@@ -303,27 +357,29 @@ notebooks.post("/:id/report/generate", async (c) => {
     const summaryPrompt =
       "请基于该笔记当前可用内容，生成一份结构化中文研究报告，包含：执行摘要、关键发现、分析过程、结论与建议。";
 
-    const result = await askNotebookForResearch(id, summaryPrompt);
-    if (!result.success || !result.answer) {
-      await setReportError(id, result.error ?? "报告生成失败");
+    return await withNotebookAuthHandling(async () => {
+      const result = await askNotebookForResearch(id, summaryPrompt);
+      if (!result.success || !result.answer) {
+        await setReportError(id, result.error ?? "报告生成失败");
+        return c.json(
+          {
+            success: false,
+            message: result.error ?? "报告生成失败",
+            errorCode: "REPORT_GENERATION_FAILED",
+          },
+          502
+        );
+      }
+
+      await upsertReport(id, result.answer, new Date());
+      await clearReportError(id);
+
       return c.json(
-        {
-          success: false,
-          message: result.error ?? "报告生成失败",
-          errorCode: "REPORT_GENERATION_FAILED",
-        },
-        502
+        successResponse({
+          message: "研究报告已生成",
+        })
       );
-    }
-
-    await upsertReport(id, result.answer, new Date());
-    await clearReportError(id);
-
-    return c.json(
-      successResponse({
-        message: "研究报告已生成",
-      })
-    );
+    });
   });
 });
 
