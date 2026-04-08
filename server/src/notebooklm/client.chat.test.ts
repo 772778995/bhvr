@@ -32,6 +32,30 @@ test("extractChatResponseText falls back to longest chunk text when text is empt
   assert.equal(result, "Recovered answer from chunks");
 });
 
+test("buildChatContextItems uses message ids for continued conversations", () => {
+  const result = __testOnly.buildChatContextItems({
+    sourceIds: ["source-a", "source-b"],
+    conversationId: "conv-1",
+    messageIds: ["conv-1", "msg-1"],
+  });
+
+  assert.deepEqual(result, [
+    [["conv-1"]],
+    [["msg-1"]],
+  ]);
+});
+
+test("buildChatContextItems uses sources for a new conversation", () => {
+  const result = __testOnly.buildChatContextItems({
+    sourceIds: ["source-a", "source-b"],
+  });
+
+  assert.deepEqual(result, [
+    [["source-a"]],
+    [["source-b"]],
+  ]);
+});
+
 test("mergeHistoryMessages flattens threads and excludes internal threads", () => {
   const messages = __testOnly.mergeHistoryMessages(
     [

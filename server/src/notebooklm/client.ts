@@ -113,6 +113,7 @@ export interface NotebookChatRequest {
   prompt: string;
   sourceIds?: string[];
   conversationId?: string;
+  messageIds?: [string, string];
   conversationHistory?: NotebookChatHistoryItem[];
 }
 
@@ -466,6 +467,21 @@ function extractChatResponseText(result: {
   return longestChunk?.trim() ?? "";
 }
 
+function buildChatContextItems(request: {
+  sourceIds?: string[];
+  conversationId?: string;
+  messageIds?: [string, string];
+}): string[][][] {
+  if (request.conversationId && request.messageIds?.[1]) {
+    return [
+      [[request.conversationId]],
+      [[request.messageIds[1]]],
+    ];
+  }
+
+  return (request.sourceIds ?? []).map((sourceId) => [[sourceId]]);
+}
+
 export const __testOnly = {
   get importPlaywright() {
     return testHooks.importPlaywright;
@@ -475,6 +491,7 @@ export const __testOnly = {
   },
   silentRefreshForTests: silentRefresh,
   extractChatResponseText,
+  buildChatContextItems,
   mergeHistoryMessages,
 };
 

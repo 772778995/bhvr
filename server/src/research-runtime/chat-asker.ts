@@ -23,7 +23,7 @@ export function createNotebookConversationAsker(
     try {
       const response = await sendMessage(notebookId, {
         prompt,
-        ...(sourceIds.length > 0 ? { sourceIds } : {}),
+        ...(sourceIds.length > 0 && !conversationId ? { sourceIds } : {}),
         ...(conversationId ? { conversationId } : {}),
         ...(conversationHistory.length > 0 ? { conversationHistory } : {}),
       });

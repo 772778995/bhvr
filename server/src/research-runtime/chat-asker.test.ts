@@ -61,11 +61,64 @@ test("createNotebookConversationAsker uses send-message flow and preserves conve
     {
       notebookId: "nb-1",
       prompt: "Ask the first question",
-      sourceIds: ["source-a", "source-b"],
       conversationId: "conv-1",
       conversationHistory: [
         { role: "user", message: "Generate questions" },
         { role: "assistant", message: "1. First question\n2. Second question" },
+      ],
+    },
+  ]);
+});
+
+test("createNotebookConversationAsker drops source ids after the first turn", async () => {
+  const calls: Array<{
+    notebookId: string;
+    prompt: string;
+    sourceIds?: string[];
+    conversationId?: string;
+    conversationHistory?: Array<{ role: "user" | "assistant"; message: string }>;
+  }> = [];
+
+  const ask = createNotebookConversationAsker(
+    "nb-1",
+    ["source-a"],
+    async (notebookId, request) => {
+      calls.push({ notebookId, ...request });
+
+      if (calls.length === 1) {
+        return {
+          text: "First answer",
+          conversationId: "conv-1",
+          messageIds: ["conv-1", "msg-1"],
+          citations: [],
+        };
+      }
+
+      return {
+        text: "Second answer",
+        conversationId: "conv-1",
+        messageIds: ["conv-1", "msg-2"],
+        citations: [],
+      };
+    }
+  );
+
+  await ask("nb-1", "First question");
+  await ask("nb-1", "Follow-up question");
+
+  assert.deepEqual(calls, [
+    {
+      notebookId: "nb-1",
+      prompt: "First question",
+      sourceIds: ["source-a"],
+    },
+    {
+      notebookId: "nb-1",
+      prompt: "Follow-up question",
+      conversationId: "conv-1",
+      conversationHistory: [
+        { role: "user", message: "First question" },
+        { role: "assistant", message: "First answer" },
       ],
     },
   ]);
