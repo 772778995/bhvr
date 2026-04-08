@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { NotebookReport, ResearchState } from "@/api/notebooks";
 
 interface Props {
@@ -12,115 +13,66 @@ interface Props {
 
 const props = defineProps<Props>();
 
-const STATUS_LABEL: Record<ResearchState["status"], string> = {
-  idle: "空闲",
-  running: "研究进行中…",
-  failed: "出现错误",
-  completed: "已完成",
-};
+const running = computed(() => props.researchState.status === "running");
 
-const STEP_LABEL: Record<ResearchState["step"], string> = {
-  idle: "",
-  starting: "正在启动",
-  generating_question: "生成研究问题",
-  waiting_answer: "等待 NotebookLM 回答",
-  refreshing_messages: "同步消息",
-  completed: "全部完成",
-  failed: "已中止",
-};
+const toggleOn = computed(() => running.value || props.researchState.status === "completed");
 
-function statusLabel(state: ResearchState): string {
-  return STATUS_LABEL[state.status] ?? state.status;
+function handleToggle() {
+  if (running.value) return; // guard: don't re-trigger while running
+  props.onStartResearch();
 }
 
-function stepLabel(state: ResearchState): string {
-  return STEP_LABEL[state.step] ?? state.step;
-}
-
-function isRunning(state: ResearchState): boolean {
-  return state.status === "running";
-}
-
-function progressPercent(state: ResearchState): number {
-  if (state.targetCount <= 0) return 0;
-  return Math.min(100, Math.round((state.completedCount / state.targetCount) * 100));
-}
+const countLabel = computed(() => {
+  const { completedCount, targetCount, status } = props.researchState;
+  if (status === "idle" && completedCount <= 0) return "暂无问答数据";
+  if (status === "running" && targetCount > 0) {
+    return `已完成 ${completedCount} / ${targetCount} 轮问答`;
+  }
+  if (completedCount > 0) return `已完成 ${completedCount} 轮问答`;
+  return "暂无问答数据";
+});
 </script>
 
 <template>
   <section class="h-full min-h-0 bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-4 overflow-hidden">
     <!-- 自动课题研究控制区 -->
     <div class="flex flex-col gap-3 shrink-0">
-      <h2 class="text-base font-semibold text-gray-900">自动课题研究</h2>
+      <!-- 标题行：标题 + toggle -->
+      <div class="flex items-center justify-between">
+        <h2 class="text-base font-semibold text-gray-900">自动课题研究</h2>
 
-      <!-- 运行状态展示 -->
-      <div class="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
-        <!-- Status row -->
-        <div class="flex items-center justify-between">
-          <span class="text-gray-500">状态</span>
+        <!-- Toggle switch -->
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="toggleOn"
+          :disabled="running"
+          class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+          :class="toggleOn ? 'bg-[#3a2e20]' : 'bg-gray-300'"
+          @click="handleToggle"
+        >
           <span
-            :class="{
-              'text-blue-600 font-medium': isRunning(researchState),
-              'text-green-600 font-medium': researchState.status === 'completed',
-              'text-red-600 font-medium': researchState.status === 'failed',
-              'text-gray-600': researchState.status === 'idle',
-            }"
-          >
-            {{ statusLabel(researchState) }}
-          </span>
-        </div>
-
-        <!-- Step row (only while running or just finished) -->
-        <div
-          v-if="researchState.status === 'running' || (researchState.status === 'completed' && researchState.step !== 'idle')"
-          class="flex items-center justify-between"
-        >
-          <span class="text-gray-500">步骤</span>
-          <span class="text-gray-600">{{ stepLabel(researchState) }}</span>
-        </div>
-
-        <!-- Progress row -->
-        <div
-          v-if="researchState.targetCount > 0"
-          class="flex items-center justify-between"
-        >
-          <span class="text-gray-500">进度</span>
-          <span>{{ researchState.completedCount }} / {{ researchState.targetCount }} 轮</span>
-        </div>
-
-        <!-- Progress bar -->
-        <div
-          v-if="researchState.targetCount > 0"
-          class="h-1.5 rounded-full bg-gray-200 overflow-hidden"
-        >
-          <div
-            class="h-full rounded-full bg-blue-500 transition-all duration-300 ease-out"
-            :style="{ width: `${progressPercent(researchState)}%` }"
+            class="pointer-events-none inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow ring-0 transition-transform duration-150 ease-in-out"
+            :class="toggleOn ? 'translate-x-4.5' : 'translate-x-0'"
           />
-        </div>
-
-        <!-- Error message -->
-        <p
-          v-if="researchState.lastError"
-          class="text-sm text-red-600"
-        >
-          {{ researchState.lastError }}
-        </p>
+        </button>
       </div>
 
-      <!-- 操作按钮 -->
-      <button
-        type="button"
-        :disabled="isRunning(researchState)"
-        class="w-full rounded-md bg-[#3a2e20] px-3 py-2.5 text-base text-[#f5ede0] transition-all duration-100 hover:bg-[#2a201a] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-        @click="props.onStartResearch()"
-      >
-        {{ isRunning(researchState) ? "研究进行中…" : "开始自动研究" }}
-      </button>
+      <!-- 问答数据计数 -->
+      <p class="text-sm text-gray-500">{{ countLabel }}</p>
 
+      <!-- 错误提示 -->
+      <p
+        v-if="researchState.lastError"
+        class="text-sm text-red-600 leading-relaxed"
+      >
+        {{ researchState.lastError }}
+      </p>
+
+      <!-- 生成研究报告按钮 -->
       <button
         type="button"
-        :disabled="isRunning(researchState) || !hasResearchAssets"
+        :disabled="running || !hasResearchAssets"
         class="w-full rounded-md border border-[#c8b89a] bg-[#fbf7ef] px-3 py-2.5 text-base text-[#564738] transition-all duration-100 hover:bg-[#f1e8d8] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
         @click="props.onGenerateReport()"
       >
