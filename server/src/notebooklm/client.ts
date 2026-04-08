@@ -12,14 +12,17 @@ import {
   SearchSourceType,
   SourceType,
   SourceStatus,
+  ArtifactType,
+  ArtifactState,
   getErrorCode,
 } from "notebooklm-kit";
-import type { Notebook, Source } from "notebooklm-kit";
+import type { Notebook, Source, Artifact } from "notebooklm-kit";
 import type {
   AddDiscoveredSourcesOptions,
   AddSourceResult,
   SourceProcessingStatus,
   WebSearchResult,
+  CreateArtifactOptions,
 } from "notebooklm-kit";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
@@ -1013,4 +1016,103 @@ export async function createNotebook(input: CreateNotebookInput): Promise<Notebo
     logger.warn({ input, err }, "createNotebook: sdk.notebooks.create failed");
     throw new Error(`Failed to create notebook: ${message}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Artifact operations
+// ---------------------------------------------------------------------------
+
+export { ArtifactType, ArtifactState };
+export type { Artifact, CreateArtifactOptions };
+
+export interface CreateArtifactResult {
+  artifactId: string;
+  state: string;
+}
+
+const ARTIFACT_TYPE_MAP: Record<string, ArtifactType> = {
+  audio: ArtifactType.AUDIO,
+  video: ArtifactType.VIDEO,
+  slide_deck: ArtifactType.SLIDE_DECK,
+  mind_map: ArtifactType.MIND_MAP,
+  report: ArtifactType.REPORT,
+  flashcards: ArtifactType.FLASHCARDS,
+  quiz: ArtifactType.QUIZ,
+  infographic: ArtifactType.INFOGRAPHIC,
+};
+
+function resolveArtifactType(type: string): ArtifactType {
+  const resolved = ARTIFACT_TYPE_MAP[type.toLowerCase()];
+  if (resolved === undefined) {
+    throw new Error(`Unknown artifact type: "${type}". Valid types: ${Object.keys(ARTIFACT_TYPE_MAP).join(", ")}`);
+  }
+  return resolved;
+}
+
+function artifactStateLabel(state: ArtifactState | undefined): string {
+  switch (state) {
+    case ArtifactState.CREATING:
+      return "creating";
+    case ArtifactState.READY:
+      return "ready";
+    case ArtifactState.FAILED:
+      return "failed";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Create an artifact in a notebook.
+ * Routes to the correct SDK sub-service based on `type` string.
+ */
+export async function createArtifact(
+  notebookId: string,
+  type: string,
+  options?: CreateArtifactOptions,
+): Promise<CreateArtifactResult> {
+  const artifactType = resolveArtifactType(type);
+
+  const result = await runNotebookRequest(async (client) => {
+    // Audio and Video sub-services return AudioOverview/VideoOverview with
+    // different id fields, so we route them separately. All other types go
+    // through the generic `artifacts.create` which accepts CreateArtifactOptions.
+    switch (artifactType) {
+      case ArtifactType.AUDIO:
+        return await client.artifacts.audio.create(notebookId, options as Parameters<typeof client.artifacts.audio.create>[1]);
+      case ArtifactType.VIDEO:
+        return await client.artifacts.video.create(notebookId, options as Parameters<typeof client.artifacts.video.create>[1]);
+      default:
+        return await client.artifacts.create(notebookId, artifactType, options);
+    }
+  });
+
+  // Audio/Video sub-services return AudioOverview/VideoOverview with different id fields
+  const artifactId = (result as Artifact).artifactId
+    ?? (result as { audioId?: string }).audioId
+    ?? (result as { videoId?: string }).videoId
+    ?? "";
+
+  return {
+    artifactId,
+    state: artifactStateLabel((result as Artifact).state),
+  };
+}
+
+/**
+ * Get a single artifact by ID.
+ */
+export async function getArtifact(notebookId: string, artifactId: string): Promise<Artifact> {
+  return await runNotebookRequest(async (client) =>
+    await client.artifacts.get(artifactId, notebookId) as Artifact
+  );
+}
+
+/**
+ * List all artifacts in a notebook.
+ */
+export async function listArtifacts(notebookId: string): Promise<Artifact[]> {
+  return await runNotebookRequest(async (client) =>
+    await client.artifacts.list(notebookId)
+  );
 }

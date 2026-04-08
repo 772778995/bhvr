@@ -20,6 +20,12 @@ export {
   deleteSource,
   sendNotebookChatMessage,
   createNotebook,
+  // Artifact operations
+  createArtifact,
+  getArtifact,
+  listArtifacts,
+  ArtifactType,
+  ArtifactState,
   // Types
   type AuthStatus,
   type AskResult,
@@ -35,6 +41,9 @@ export {
   type SourceAddResponse,
   type SourceSearchInput,
   type CreateNotebookInput,
+  type CreateArtifactResult,
+  type Artifact,
+  type CreateArtifactOptions,
 } from "./client.js";
 
 export {

@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   notebooksApi,
+  type Artifact,
   type ChatMessage,
   type Notebook,
   type NotebookReport,
@@ -36,9 +37,9 @@ const { showToast } = useToast();
 const { visible: loaderVisible, loaderTitle, entries: loaderEntries, startLoading, addEntry, stopLoading } = useGlobalLoader();
 
 // ── Resizable panels ────────────────────────────────────────────────────────
-const LEFT_MIN = 320;
-const LEFT_MAX = 600;
-const LEFT_INIT = 400;
+const LEFT_MIN = 200;
+const LEFT_MAX = 480;
+const LEFT_INIT = 280;
 const RIGHT_MIN = 280;
 const RIGHT_MAX = 560;
 const CENTER_MIN = 320;
@@ -65,13 +66,15 @@ function onRightDrag(delta: number) {
   rightWidth.value = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, rightWidth.value - delta));
 }
 
-// ── Left tab state ──────────────────────────────────────────────────────────
-const activeLeftTab = ref<'sources' | 'chat'>('sources');
+// ── Center tab state ────────────────────────────────────────────────────────
+const activeCenterTab = ref<'chat' | 'reports'>('chat');
 
 // ── Center panel state ──────────────────────────────────────────────────────
 const reportView = ref<'list' | 'detail'>('list');
 const reports = ref<NotebookReport[]>([]);
 const selectedReportId = ref<string | null>(null);
+
+const selectedArtifact = ref<Artifact | null>(null);
 
 const selectedReport = computed(() => {
   if (!selectedReportId.value) return null;
@@ -138,6 +141,7 @@ function resetPanelData() {
   };
   reports.value = [];
   selectedReportId.value = null;
+  selectedArtifact.value = null;
   reportView.value = 'list';
 }
 
@@ -324,11 +328,24 @@ async function refreshReports() {
 
 function onSelectReport(reportId: string) {
   selectedReportId.value = reportId;
+  selectedArtifact.value = null;
   reportView.value = 'detail';
+}
+
+async function onSelectArtifact(artifactId: string) {
+  if (!notebookId.value) return;
+  try {
+    selectedArtifact.value = await notebooksApi.getArtifact(notebookId.value, artifactId);
+    selectedReportId.value = null;
+    reportView.value = 'detail';
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "获取产物详情失败", "error");
+  }
 }
 
 function onBackToList() {
   selectedReportId.value = null;
+  selectedArtifact.value = null;
   reportView.value = 'list';
 }
 
@@ -456,27 +473,6 @@ async function onStartResearch() {
   }
 }
 
-async function onGenerateReport() {
-  if (!notebookId.value) {
-    return;
-  }
-
-  try {
-    startLoading('正在生成报告...');
-    await notebooksApi.generateReport(notebookId.value);
-    pushNotice("报告生成请求已提交，请稍候...");
-
-    // Refresh reports list after a brief delay to allow backend processing
-    setTimeout(() => {
-      void refreshReports();
-    }, 3000);
-  } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "生成报告失败", "error");
-  } finally {
-    stopLoading();
-  }
-}
-
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadWorkbenchData() {
   const requestId = ++activeRequestId.value;
@@ -588,67 +584,72 @@ onUnmounted(() => {
 
         <div class="min-h-0 flex-1 overflow-hidden p-3 sm:p-4 lg:p-5">
           <div class="flex h-full min-h-0 gap-0">
-            <!-- ─── Left: Tabbed (Sources / Chat) ─── -->
+            <!-- ─── Left: Sources only ─── -->
             <div
               class="shrink-0 min-w-0 flex flex-col"
               :style="{ width: leftWidth + 'px' }"
             >
+              <SourcesPanel
+                :sources="sources"
+                :on-add-source="onAddSource"
+                :on-delete-source="onRequestDeleteSource"
+              />
+            </div>
+
+            <ResizeDivider @drag="onLeftDrag" />
+
+            <!-- ─── Center: Tabbed (Chat / Reports) ─── -->
+            <div class="flex-1 min-w-0 flex flex-col" :style="{ minWidth: CENTER_MIN + 'px' }">
               <!-- Tab bar -->
               <div class="shrink-0 flex border-b border-[#d8cfbe] mb-0">
                 <button
                   type="button"
                   class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
-                  :class="activeLeftTab === 'sources'
+                  :class="activeCenterTab === 'chat'
                     ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
                     : 'text-[#9a8a78] hover:text-[#6a5b49]'"
-                  @click="activeLeftTab = 'sources'"
+                  @click="activeCenterTab = 'chat'"
                 >
-                  来源
+                  对话
                 </button>
                 <button
                   type="button"
                   class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
-                  :class="activeLeftTab === 'chat'
+                  :class="activeCenterTab === 'reports'
                     ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
                     : 'text-[#9a8a78] hover:text-[#6a5b49]'"
-                  @click="activeLeftTab = 'chat'"
+                  @click="activeCenterTab = 'reports'"
                 >
-                  对话
+                  报告
                 </button>
               </div>
 
               <!-- Tab content -->
               <div class="flex-1 min-h-0 pt-2">
-                <SourcesPanel
-                  v-show="activeLeftTab === 'sources'"
-                  :sources="sources"
-                  :on-add-source="onAddSource"
-                  :on-delete-source="onRequestDeleteSource"
-                />
                 <ChatPanel
-                  v-show="activeLeftTab === 'chat'"
+                  v-show="activeCenterTab === 'chat'"
                   :messages="messages"
                   :sending="sending"
                   :on-send="onSendMessage"
                 />
+                <template v-if="activeCenterTab === 'reports'">
+                  <ReportListPanel
+                    v-if="reportView === 'list'"
+                    :notebook-id="notebookId"
+                    :reports="reports"
+                    :on-select="onSelectReport"
+                    :on-select-artifact="onSelectArtifact"
+                    :on-delete="onRequestDeleteReport"
+                  />
+                  <ReportDetailPanel
+                    v-else-if="reportView === 'detail' && (selectedReport || selectedArtifact)"
+                    :notebook-id="notebookId"
+                    :report="selectedReport ?? undefined"
+                    :artifact="selectedArtifact ?? undefined"
+                    :on-back="onBackToList"
+                  />
+                </template>
               </div>
-            </div>
-
-            <ResizeDivider @drag="onLeftDrag" />
-
-            <!-- ─── Center: Reports (list / detail) ─── -->
-            <div class="flex-1 min-w-0" :style="{ minWidth: CENTER_MIN + 'px' }">
-              <ReportListPanel
-                v-if="reportView === 'list'"
-                :reports="reports"
-                :on-select="onSelectReport"
-                :on-delete="onRequestDeleteReport"
-              />
-              <ReportDetailPanel
-                v-else-if="reportView === 'detail' && selectedReport"
-                :report="selectedReport"
-                :on-back="onBackToList"
-              />
             </div>
 
             <ResizeDivider @drag="onRightDrag" />
@@ -659,11 +660,11 @@ onUnmounted(() => {
               :style="{ width: rightWidth + 'px' }"
             >
               <StudioPanel
+                :notebook-id="notebookId"
                 :research-state="researchState"
                 :has-research-assets="hasResearchAssets"
                 :message-count="messages.length"
                 :on-start-research="onStartResearch"
-                :on-generate-report="onGenerateReport"
               />
             </div>
           </div>

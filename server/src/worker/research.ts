@@ -160,13 +160,29 @@ async function compileSummary(
     .where(eq(researchTasks.id, taskId));
 
   const topicContext = topic ? `关于「${topic}」` : "";
-  const summaryPrompt = `请根据本笔记本中的所有来源和文档，编写一份完整的研究报告${topicContext}。报告应包含以下部分：
-1. 摘要总结
-2. 关键发现（按主题组织）
-3. 详细分析
-4. 结论与建议
+  const summaryPrompt = `请基于该笔记本中的所有来源和此前对话内容，撰写一份系统性中文研究报告${topicContext}。
 
-请尽量详尽，并在可能的情况下引用来源中的具体信息。`;
+结构要求：
+1. 执行摘要（200-300字）：概述研究背景、核心发现和关键结论
+2. 研究方法与数据来源：简述所用来源类型及覆盖范围
+3. 核心发现（按主题组织，每个主题需有：）
+   - 主要发现陈述
+   - 支撑证据与数据（引用具体来源内容）
+   - 不同来源间的交叉验证或分歧
+4. 深度分析
+   - 因果关系与机制分析
+   - 趋势与模式识别
+   - 局限性与证据空白
+5. 结论与建议
+   - 核心结论（基于证据的确定性程度分级）
+   - 具体可行的建议
+   - 后续研究方向
+
+格式要求：
+- 使用 Markdown 格式
+- 关键数据和引用使用引用块（>）标记来源
+- 重要发现使用粗体标注
+- 尽量详尽，不要省略细节`;
 
   try {
     const summaryResult = await askNotebookWithRetry(taskId, notebookId, summaryPrompt, {

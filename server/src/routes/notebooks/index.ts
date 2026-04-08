@@ -18,6 +18,9 @@ import {
   listNotebooks,
   sendNotebookChatMessage,
   searchWebSources,
+  createArtifact,
+  getArtifact,
+  listArtifacts,
 } from "../../notebooklm/index.js";
 import {
   attachRegistrySubscription,
@@ -590,7 +593,29 @@ notebooks.post("/:id/report/generate", async (c) => {
     }
 
     const summaryPrompt =
-      "请基于该笔记当前可用内容，生成一份结构化中文研究报告，包含：执行摘要、关键发现、分析过程、结论与建议。";
+      `请基于该笔记本中的所有来源和此前对话内容，撰写一份系统性中文研究报告。
+
+结构要求：
+1. 执行摘要（200-300字）：概述研究背景、核心发现和关键结论
+2. 研究方法与数据来源：简述所用来源类型及覆盖范围
+3. 核心发现（按主题组织，每个主题需有：）
+   - 主要发现陈述
+   - 支撑证据与数据（引用具体来源内容）
+   - 不同来源间的交叉验证或分歧
+4. 深度分析
+   - 因果关系与机制分析
+   - 趋势与模式识别
+   - 局限性与证据空白
+5. 结论与建议
+   - 核心结论（基于证据的确定性程度分级）
+   - 具体可行的建议
+   - 后续研究方向
+
+格式要求：
+- 使用 Markdown 格式
+- 关键数据和引用使用引用块（>）标记来源
+- 重要发现使用粗体标注
+- 尽量详尽，不要省略细节`;
 
     return await withNotebookAuthHandling(async () => {
       const result = await askNotebookForResearch(id, summaryPrompt);
@@ -614,6 +639,66 @@ notebooks.post("/:id/report/generate", async (c) => {
           message: "研究报告已生成",
         })
       );
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Artifact routes
+// ---------------------------------------------------------------------------
+
+notebooks.post("/:id/artifacts", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
+    const type = typeof body["type"] === "string" ? body["type"].trim() : "";
+
+    if (!type) {
+      return c.json({ success: false, message: "type is required", errorCode: "INVALID_TYPE" }, 400);
+    }
+
+    const options = (body["options"] ?? {}) as Record<string, unknown>;
+
+    return await withNotebookAuthHandling(async () => {
+      try {
+        const result = await createArtifact(id, type, options);
+        return c.json(successResponse(result));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith("Unknown artifact type")) {
+          return c.json({ success: false, message, errorCode: "INVALID_TYPE" }, 400);
+        }
+        return c.json({ success: false, message, errorCode: "ARTIFACT_CREATE_FAILED" }, 502);
+      }
+    });
+  });
+});
+
+notebooks.get("/:id/artifacts/:artifactId", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const artifactId = c.req.param("artifactId");
+
+    return await withNotebookAuthHandling(async () => {
+      try {
+        const artifact = await getArtifact(id, artifactId);
+        return c.json(successResponse(artifact));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ success: false, message, errorCode: "ARTIFACT_FETCH_FAILED" }, 502);
+      }
+    });
+  });
+});
+
+notebooks.get("/:id/artifacts", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    return await withNotebookAuthHandling(async () => {
+      try {
+        const artifacts = await listArtifacts(id);
+        return c.json(successResponse(artifacts));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ success: false, message, errorCode: "ARTIFACTS_FETCH_FAILED" }, 502);
+      }
     });
   });
 });

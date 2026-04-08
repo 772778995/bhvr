@@ -152,6 +152,7 @@ export interface ResearchDriverAnswerResult {
 export interface ResearchDriver {
   nextQuestion(notebookId: string): Promise<ResearchDriverQuestionResult>;
   askQuestion(notebookId: string, question: string): Promise<ResearchDriverAnswerResult>;
+  feedContext(summary: string): Promise<void>;
   getHiddenConversationIds(): string[];
 }
 

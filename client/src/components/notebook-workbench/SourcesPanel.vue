@@ -11,7 +11,7 @@ interface Props {
 defineProps<Props>();
 
 function canOpen(source: Source): boolean {
-  return source.type === "web" && Boolean(source.url);
+  return (source.type === "web" || source.type === "youtube") && Boolean(source.url);
 }
 
 function typeLabel(type: string): string {
@@ -20,6 +20,11 @@ function typeLabel(type: string): string {
     file: "文件",
     text: "文本",
     drive: "云端硬盘",
+    pdf: "PDF",
+    youtube: "YouTube",
+    image: "图片",
+    video: "视频",
+    audio: "音频",
   };
   return map[type] ?? type;
 }

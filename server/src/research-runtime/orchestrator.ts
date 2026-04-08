@@ -206,6 +206,16 @@ export async function runAutoResearch(
           hiddenConversationIds: driver.getHiddenConversationIds(),
         });
 
+        // Feed the Q&A summary back to the planner so it can generate
+        // progressively deeper, non-repetitive follow-up questions.
+        try {
+          const answer = result.answer ?? "";
+          const summary = `上一轮研究：\n问题：${question}\n回答摘要：${answer.substring(0, 200)}${answer.length > 200 ? "…" : ""}`;
+          await driver.feedContext(summary);
+        } catch (feedErr) {
+          logger.warn({ notebookId, turn: i + 1, err: feedErr }, "orchestrator: feedContext failed (non-fatal)");
+        }
+
         if (registry.shouldStop(notebookId)) {
           registry.stop(notebookId);
           logger.info({ notebookId, completedCount: registry.get(notebookId)?.completedCount ?? 0 }, "orchestrator: auto-research stopped by request");

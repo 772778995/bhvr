@@ -116,6 +116,14 @@ export function createNotebookResearchDriver(
       };
     },
 
+    async feedContext(summary: string): Promise<void> {
+      // Send the Q&A summary into the planner conversation so it knows
+      // what has already been asked and answered, enabling deeper follow-ups.
+      const result = await plannerAsker(notebookId, summary);
+      // Update planner conversation id if returned; ignore the reply content.
+      plannerConversationId = result.conversationId ?? plannerConversationId;
+    },
+
     getHiddenConversationIds(): string[] {
       return plannerConversationId ? [plannerConversationId] : [];
     },

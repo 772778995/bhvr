@@ -17,6 +17,7 @@ test("runAutoResearch fails when next-question generation returns empty", async 
       prompts.push(question);
       return { success: true, answer: `Answer for: ${question}`, conversationId: "visible-thread" };
     },
+    async feedContext() {},
     getHiddenConversationIds() {
       return ["planner-thread"];
     },
@@ -55,6 +56,7 @@ test("runAutoResearch stops when stop is requested", async () => {
 
       return result;
     },
+    async feedContext() {},
     getHiddenConversationIds() {
       return ["planner-thread"];
     },

@@ -149,6 +149,46 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
   return body as T;
 }
 
+// ---------------------------------------------------------------------------
+// Artifact types
+// ---------------------------------------------------------------------------
+
+export const ArtifactType = {
+  UNKNOWN: 0,
+  REPORT: 1,
+  QUIZ: 5,
+  FLASHCARDS: 6,
+  MIND_MAP: 7,
+  INFOGRAPHIC: 8,
+  SLIDE_DECK: 9,
+  AUDIO: 10,
+  VIDEO: 11,
+} as const;
+
+export type ArtifactTypeValue = (typeof ArtifactType)[keyof typeof ArtifactType];
+
+export const ArtifactState = {
+  UNKNOWN: 0,
+  CREATING: 1,
+  READY: 2,
+  FAILED: 3,
+} as const;
+
+export type ArtifactStateValue = (typeof ArtifactState)[keyof typeof ArtifactState];
+
+export interface Artifact {
+  artifactId: string;
+  type: ArtifactTypeValue;
+  state: ArtifactStateValue;
+  title?: string;
+  createdAt?: string;
+}
+
+export interface CreateArtifactResponse {
+  artifactId: string;
+  state: string;
+}
+
 export const notebooksApi = {
   getNotebooks() {
     return request<Notebook[]>("/api/notebooks");
@@ -279,5 +319,27 @@ export const notebooksApi = {
       method: "POST",
       body: JSON.stringify({}),
     });
+  },
+
+  // -------------------------------------------------------------------------
+  // Artifacts
+  // -------------------------------------------------------------------------
+
+  /** Create an artifact (audio, quiz, flashcards, etc.) for a notebook. */
+  createArtifact(id: string, type: string, options?: Record<string, unknown>) {
+    return request<CreateArtifactResponse>(`/api/notebooks/${id}/artifacts`, {
+      method: "POST",
+      body: JSON.stringify({ type, options }),
+    });
+  },
+
+  /** Get a single artifact by ID. */
+  getArtifact(id: string, artifactId: string) {
+    return request<Artifact>(`/api/notebooks/${id}/artifacts/${artifactId}`);
+  },
+
+  /** List all artifacts for a notebook. */
+  listArtifacts(id: string) {
+    return request<Artifact[]>(`/api/notebooks/${id}/artifacts`);
   },
 };

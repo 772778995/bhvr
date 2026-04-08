@@ -56,14 +56,12 @@ function scrollToBottom() {
 </script>
 
 <template>
-  <section class="h-full bg-white border border-gray-200 rounded-lg p-4 flex flex-col min-h-0">
-    <h2 class="mb-3 text-base font-semibold text-gray-900 shrink-0">对话</h2>
-
+  <section class="h-full w-full bg-[#f8f3ea] border border-[#d8cfbe] rounded-lg p-4 flex flex-col min-h-0">
      <div class="flex-1 min-h-0 relative">
        <div ref="scrollContainerRef" class="absolute inset-0 overflow-y-auto scroll-smooth">
          <div
            v-if="messages.length === 0"
-           class="h-full flex items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 text-base leading-relaxed text-gray-500"
+            class="h-full flex items-center justify-center rounded-md border border-dashed border-[#d8cfbe] bg-[#f0e8d8] px-4 text-base leading-relaxed text-[#9a8a78]"
          >
            还没有对话内容，输入问题即可开始。
          </div>
@@ -114,18 +112,18 @@ function scrollToBottom() {
        </button>
      </div>
 
-    <div class="pt-3 mt-3 border-t border-gray-100 flex items-center gap-2 shrink-0">
+    <div class="pt-3 mt-3 border-t border-[#e0d5c0] flex items-center gap-2 shrink-0">
       <textarea
         v-model="draft"
         rows="2"
         :disabled="sending"
         placeholder="输入消息..."
-        class="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2.5 text-base text-gray-900 disabled:bg-gray-50 disabled:text-gray-500 transition-colors duration-100"
+        class="flex-1 resize-none rounded-md border border-[#d8cfbe] bg-white px-3 py-2.5 text-base text-[#2f271f] disabled:bg-[#f0e8d8] disabled:text-[#9a8a78] transition-colors duration-100"
         @keydown="handleKeydown"
       />
       <button
         type="button"
-        class="rounded-md bg-gray-900 px-3 py-2.5 text-base text-white transition-all duration-100 hover:bg-gray-800 active:scale-95 disabled:cursor-not-allowed disabled:bg-gray-400"
+        class="rounded-md bg-[#3a2e20] px-3 py-2.5 text-base text-[#f5ede0] transition-all duration-100 hover:bg-[#2f271f] active:scale-95 disabled:cursor-not-allowed disabled:bg-[#b8a99a]"
         :disabled="sending || !draft.trim()"
         @click="handleSubmit"
       >

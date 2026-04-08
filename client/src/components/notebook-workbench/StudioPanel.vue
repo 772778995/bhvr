@@ -1,21 +1,32 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import type { ResearchState } from "@/api/notebooks";
+import { computed, onUnmounted, reactive } from "vue";
+import {
+  type ResearchState,
+  ArtifactState,
+  notebooksApi,
+} from "@/api/notebooks";
+import { useToast } from "@/composables/useToast";
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
 
 interface Props {
+  notebookId: string;
   researchState: ResearchState;
-  /** True when there are Q&A messages that can be compiled into a report. */
   hasResearchAssets: boolean;
-  /** Current number of conversation turns (Q&A pairs). */
   messageCount: number;
   onStartResearch: () => void;
-  onGenerateReport: () => void;
 }
 
 const props = defineProps<Props>();
+const { showToast } = useToast();
+
+// ---------------------------------------------------------------------------
+// Research toggle (preserved from original)
+// ---------------------------------------------------------------------------
 
 const running = computed(() => props.researchState.status === "running");
-
 const toggleOn = computed(() => running.value);
 
 function handleToggle() {
@@ -30,60 +41,298 @@ const countLabel = computed(() => {
   }
   return `共 ${turns} 轮问答`;
 });
+
+// ---------------------------------------------------------------------------
+// Artifact definitions
+// ---------------------------------------------------------------------------
+
+interface ArtifactDef {
+  key: string;
+  label: string;
+  /** The type string sent to the API, or null for unsupported types. */
+  apiType: string | null;
+  icon: string; // inline SVG path data
+}
+
+const artifacts: ArtifactDef[] = [
+  {
+    key: "audio",
+    label: "音频概述",
+    apiType: "audio",
+    // headphones icon
+    icon: "M3 18v-6a9 9 0 0 1 18 0v6M3 18a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a3 3 0 0 0-3 3zm18 0a3 3 0 0 1-3 3h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a3 3 0 0 1 3 3z",
+  },
+  {
+    key: "slide_deck",
+    label: "幻灯片",
+    apiType: "slide_deck",
+    // presentation/slide icon
+    icon: "M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm8 16v-3m-4 3h8",
+  },
+  {
+    key: "video",
+    label: "视频概述",
+    apiType: "video",
+    // film/clapboard icon
+    icon: "M15 10l5-3v10l-5-3M3 6h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z",
+  },
+  {
+    key: "mind_map",
+    label: "思维导图",
+    apiType: "mind_map",
+    // network/graph icon
+    icon: "M12 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM5 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm14 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 8v3m-5 3l4-3m6 3l-4-3",
+  },
+  {
+    key: "report",
+    label: "研究报告",
+    apiType: "report",
+    // document/page icon
+    icon: "M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 0v6h6M8 13h8M8 17h5",
+  },
+  {
+    key: "flashcards",
+    label: "闪卡",
+    apiType: "flashcards",
+    // stacked cards icon
+    icon: "M5 6h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM7 3h10a1 1 0 0 1 1 1v1H6V4a1 1 0 0 1 1-1z",
+  },
+  {
+    key: "quiz",
+    label: "测验",
+    apiType: "quiz",
+    // question mark circle icon
+    icon: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-6v.01M12 8a2 2 0 0 1 1.71 3.04L12 13",
+  },
+  {
+    key: "infographic",
+    label: "信息图",
+    apiType: "infographic",
+    // bar chart icon
+    icon: "M4 20h16M4 20V10m0 10h4V14m-4-4h4v4m0 0h4V8m0 12h4V4m0 16h4v-8",
+  },
+  {
+    key: "datatable",
+    label: "数据表",
+    apiType: null, // unsupported
+    // table/grid icon
+    icon: "M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm0 5h18M3 14h18M9 5v14M15 5v14",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Generation state per artifact
+// ---------------------------------------------------------------------------
+
+/** Tracks in-flight generation for each artifact key. */
+const generating = reactive<Record<string, boolean>>({});
+/** Track active poll timers so we can clean them up on unmount. */
+const pollTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function clearAllTimers() {
+  for (const t of pollTimers) clearTimeout(t);
+  pollTimers.clear();
+}
+
+onUnmounted(clearAllTimers);
+
+// ---------------------------------------------------------------------------
+// Poll helper
+// ---------------------------------------------------------------------------
+
+const POLL_INTERVAL_MS = 3_000;
+const MAX_POLLS = 60; // 3 min total
+
+async function pollArtifact(
+  notebookId: string,
+  artifactId: string,
+  label: string,
+  key: string,
+) {
+  let attempts = 0;
+
+  const poll = async () => {
+    if (attempts >= MAX_POLLS) {
+      generating[key] = false;
+      showToast(`${label} 生成超时`, "error");
+      return;
+    }
+    attempts++;
+    try {
+      const artifact = await notebooksApi.getArtifact(notebookId, artifactId);
+      if (artifact.state === ArtifactState.READY) {
+        generating[key] = false;
+        showToast(`${label} 已生成`, "info");
+        return;
+      }
+      if (artifact.state === ArtifactState.FAILED) {
+        generating[key] = false;
+        showToast(`${label} 生成失败`, "error");
+        return;
+      }
+      // Still creating – schedule next poll
+      const timer = setTimeout(poll, POLL_INTERVAL_MS);
+      pollTimers.add(timer);
+    } catch {
+      generating[key] = false;
+      showToast(`${label} 状态查询失败`, "error");
+    }
+  };
+
+  const timer = setTimeout(poll, POLL_INTERVAL_MS);
+  pollTimers.add(timer);
+}
+
+// ---------------------------------------------------------------------------
+// Card click handler
+// ---------------------------------------------------------------------------
+
+async function handleArtifactClick(def: ArtifactDef) {
+  // Unsupported type
+  if (def.apiType === null) {
+    showToast("功能正在建设中…", "info");
+    return;
+  }
+
+  // Already generating this type
+  if (generating[def.key]) return;
+
+  generating[def.key] = true;
+  showToast(`正在生成 ${def.label}…`, "info");
+
+  try {
+    const res = await notebooksApi.createArtifact(
+      props.notebookId,
+      def.apiType,
+    );
+    await pollArtifact(props.notebookId, res.artifactId, def.label, def.key);
+  } catch {
+    generating[def.key] = false;
+    showToast(`${def.label} 创建失败`, "error");
+  }
+}
 </script>
 
 <template>
-  <section class="h-full min-h-0 bg-[#f8f3ea] border border-[#d8cfbe] rounded-lg p-4 flex flex-col gap-4 overflow-hidden">
-    <!-- 自动课题研究控制区 -->
-    <div class="flex flex-col gap-3 shrink-0">
-      <!-- 标题行：标题 + toggle -->
-      <div class="flex items-center justify-between">
-        <h2
-          class="text-base font-semibold text-[#2f271f]"
-          style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
-        >
-          自动课题研究
-        </h2>
+  <section
+    class="h-full min-h-0 bg-[#f8f3ea] border border-[#d8cfbe] rounded-lg flex flex-col overflow-hidden"
+  >
+    <!-- Scrollable content -->
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-5">
+      <!-- ─── Panel title ─── -->
+      <h2
+        class="text-lg font-semibold text-[#2f271f] shrink-0"
+        style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
+      >
+        Studio
+      </h2>
 
-        <!-- Toggle switch -->
-        <button
-          type="button"
-          role="switch"
-          :aria-checked="toggleOn"
-          class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1"
-          :class="toggleOn ? 'bg-[#3a2e20]' : 'bg-[#c4b89a]'"
-          @click="handleToggle"
-        >
+      <!-- ─── 自动课题研究 ─── -->
+      <div class="flex flex-col gap-2.5 shrink-0">
+        <div class="flex items-center justify-between">
           <span
-            class="pointer-events-none inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow ring-0 transition-transform duration-150 ease-in-out"
-            :class="toggleOn ? 'translate-x-4.5' : 'translate-x-0'"
-          />
-        </button>
+            class="text-base font-medium text-[#2f271f]"
+            style="
+              font-family: 'Noto Serif SC', 'Source Han Serif SC', serif;
+            "
+          >
+            自动课题研究
+          </span>
+
+          <!-- Toggle switch -->
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="toggleOn"
+            class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1"
+            :class="toggleOn ? 'bg-[#3a2e20]' : 'bg-[#c4b89a]'"
+            @click="handleToggle"
+          >
+            <span
+              class="pointer-events-none inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow ring-0 transition-transform duration-150 ease-in-out"
+              :class="toggleOn ? 'translate-x-4.5' : 'translate-x-0'"
+            />
+          </button>
+        </div>
+
+        <p class="text-sm text-[#9a8a78] leading-relaxed">{{ countLabel }}</p>
+
+        <p
+          v-if="researchState.lastError"
+          class="text-sm text-[#b33c2a] leading-relaxed"
+        >
+          {{ researchState.lastError }}
+        </p>
       </div>
 
-      <!-- 问答数据计数 -->
-      <p class="text-sm text-[#9a8a78]">{{ countLabel }}</p>
+      <!-- ─── Divider ─── -->
+      <div
+        class="border-t border-[#d8cfbe] shrink-0"
+        aria-hidden="true"
+      />
 
-      <!-- 错误提示 -->
-      <p
-        v-if="researchState.lastError"
-        class="text-sm text-[#b33c2a] leading-relaxed"
-      >
-        {{ researchState.lastError }}
-      </p>
+      <!-- ─── 生成产物 ─── -->
+      <div class="flex flex-col gap-3">
+        <h3
+          class="text-base font-medium text-[#2f271f] shrink-0"
+          style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
+        >
+          生成产物
+        </h3>
 
-      <!-- 生成研究报告按钮 -->
-      <button
-        type="button"
-        :disabled="running || !hasResearchAssets"
-        class="w-full rounded-md border border-[#c8b89a] bg-[#fbf7ef] px-3 py-2.5 text-base text-[#564738] transition-all duration-100 hover:bg-[#f1e8d8] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-        @click="props.onGenerateReport()"
-      >
-        生成研究报告
-      </button>
+        <!-- 2-col grid -->
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            v-for="art in artifacts"
+            :key="art.key"
+            type="button"
+            :disabled="generating[art.key]"
+            class="group flex flex-col items-center gap-1.5 rounded-md border bg-[#fffbf4] border-[#ddd3c2] px-2 py-3 text-[#2f271f] transition-all duration-150 ease-in-out hover:shadow-md hover:-translate-y-0.5 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60"
+            @click="handleArtifactClick(art)"
+          >
+            <!-- Icon -->
+            <span class="relative flex items-center justify-center w-7 h-7 text-[#7a6c5a]">
+              <!-- Spinner overlay when generating -->
+              <svg
+                v-if="generating[art.key]"
+                class="absolute inset-0 w-7 h-7 animate-spin text-[#9a8a78]"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-dasharray="50 14"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <svg
+                v-else
+                class="w-6 h-6"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path :d="art.icon" />
+              </svg>
+            </span>
+
+            <!-- Label -->
+            <span
+              class="text-sm leading-snug"
+              :class="generating[art.key] ? 'text-[#9a8a78]' : 'text-[#564738]'"
+            >
+              {{ generating[art.key] ? "生成中…" : art.label }}
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
-
-    <!-- 留空区域 -->
-    <div class="flex-1" />
   </section>
 </template>

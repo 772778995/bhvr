@@ -50,6 +50,24 @@
     <text x="12" y="17" text-anchor="middle" fill="currentColor" stroke="none" font-size="6" font-weight="bold" font-family="sans-serif">PDF</text>
   </svg>
 
+  <!-- YouTube: rounded play button -->
+  <svg
+    v-else-if="source.type === 'youtube'"
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    :width="size"
+    :height="size"
+    :style="iconStyle"
+  >
+    <rect x="2" y="4" width="20" height="16" rx="4"/>
+    <polygon points="10 8 16 12 10 16" fill="currentColor" stroke="none"/>
+  </svg>
+
   <!-- Video: play button in rectangle -->
   <svg
     v-else-if="source.type === 'video'"
@@ -66,6 +84,25 @@
   >
     <rect x="2" y="4" width="20" height="16" rx="2"/>
     <polygon points="10 8 16 12 10 16" fill="currentColor" stroke="none"/>
+  </svg>
+
+  <!-- Image: landscape/mountain icon -->
+  <svg
+    v-else-if="source.type === 'image'"
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    :width="size"
+    :height="size"
+    :style="iconStyle"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <circle cx="8.5" cy="8.5" r="1.5"/>
+    <polyline points="21 15 16 10 5 21"/>
   </svg>
 
   <!-- Audio: music note -->
