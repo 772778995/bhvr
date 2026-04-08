@@ -36,20 +36,6 @@ function typeLabel(type: string): string {
       </button>
     </div>
 
-    <div class="mb-3 shrink-0">
-      <input
-        type="text"
-        readonly
-        value="搜索来源（即将支持）"
-        class="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2.5 text-sm text-gray-500"
-      />
-    </div>
-
-    <div class="mb-3 shrink-0 rounded-md border border-gray-200 bg-gray-50 p-2.5">
-      <p class="text-sm font-medium text-gray-700">筛选条件</p>
-      <p class="mt-1 text-sm leading-relaxed text-gray-500">按来源类型与状态筛选（即将支持）</p>
-    </div>
-
     <div
       v-if="sources.length === 0"
       class="rounded-md border border-dashed border-gray-300 bg-gray-50 p-4 text-base leading-relaxed text-gray-500"
