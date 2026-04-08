@@ -6,15 +6,25 @@ import {
   index,
 } from "drizzle-orm/sqlite-core";
 
-export const researchReports = sqliteTable("research_reports", {
-  notebookId: text("notebook_id").primaryKey(),
-  content: text("content"),
-  generatedAt: integer("generated_at", { mode: "timestamp" }),
-  errorMessage: text("error_message"),
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
+export const researchReports = sqliteTable(
+  "research_reports",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    notebookId: text("notebook_id").notNull(),
+    title: text("title").notNull(),
+    content: text("content"),
+    generatedAt: integer("generated_at", { mode: "timestamp" }),
+    errorMessage: text("error_message"),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    notebookIdx: index("idx_reports_notebook").on(table.notebookId),
+  })
+);
 
 export const researchTasks = sqliteTable("research_tasks", {
   id: text("id").primaryKey(),

@@ -39,14 +39,6 @@ await client.executeMultiple(`
     created_at INTEGER NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS research_reports (
-    notebook_id TEXT PRIMARY KEY,
-    content TEXT,
-    generated_at INTEGER,
-    error_message TEXT,
-    updated_at INTEGER NOT NULL
-  );
-
   CREATE TABLE IF NOT EXISTS notebook_source_states (
     id TEXT PRIMARY KEY NOT NULL,
     notebook_id TEXT NOT NULL,
@@ -70,6 +62,68 @@ await client.executeMultiple(`
   CREATE INDEX IF NOT EXISTS chat_messages_notebook_id
   ON chat_messages (notebook_id, created_at ASC);
 `);
+
+// Migrate research_reports: old schema had notebook_id as PK, new schema has id as PK
+const tableInfo = await client.execute(
+  "PRAGMA table_info(research_reports)"
+);
+const hasIdColumn = tableInfo.rows.some((row) => row.name === "id");
+
+if (!hasIdColumn && tableInfo.rows.length > 0) {
+  // Old table exists — migrate data
+  logger.info("Migrating research_reports from single-report to multi-report schema");
+  const oldRows = await client.execute("SELECT * FROM research_reports");
+  await client.execute("DROP TABLE research_reports");
+  await client.executeMultiple(`
+    CREATE TABLE research_reports (
+      id TEXT PRIMARY KEY,
+      notebook_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT,
+      generated_at INTEGER,
+      error_message TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reports_notebook
+    ON research_reports (notebook_id);
+  `);
+
+  for (const row of oldRows.rows) {
+    const id = crypto.randomUUID();
+    const notebookId = row.notebook_id as string;
+    const content = row.content as string | null;
+    const generatedAt = row.generated_at as number | null;
+    const errorMessage = row.error_message as string | null;
+    const updatedAt = row.updated_at as number;
+    const title = "研究报告（已迁移）";
+
+    await client.execute({
+      sql: `INSERT INTO research_reports (id, notebook_id, title, content, generated_at, error_message, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, notebookId, title, content, generatedAt, errorMessage, updatedAt],
+    });
+  }
+
+  logger.info({ migratedCount: oldRows.rows.length }, "research_reports migration complete");
+} else if (tableInfo.rows.length === 0) {
+  // Table doesn't exist yet — create fresh
+  await client.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS research_reports (
+      id TEXT PRIMARY KEY,
+      notebook_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT,
+      generated_at INTEGER,
+      error_message TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reports_notebook
+    ON research_reports (notebook_id);
+  `);
+}
+// else: table already has 'id' column — new schema, nothing to do
 
 logger.debug({ path: DB_PATH }, "Database ensured successfully");
 

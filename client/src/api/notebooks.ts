@@ -48,8 +48,10 @@ export interface ResearchState {
 export interface NotebookReport {
   id: string;
   notebookId: string;
-  content: string;
-  generatedAt: string;
+  title: string;
+  content: string | null;
+  generatedAt: string | null;
+  errorMessage?: string | null;
 }
 
 /** Start-research request body. */
@@ -238,9 +240,26 @@ export const notebooksApi = {
     });
   },
 
-  /** Fetch the latest stored report for a notebook. */
+  /** Fetch the latest stored report for a notebook (backward-compatible). */
   getReport(id: string) {
     return request<NotebookReport | null>(`/api/notebooks/${id}/report`);
+  },
+
+  /** List all reports for a notebook. */
+  listReports(id: string) {
+    return request<NotebookReport[]>(`/api/notebooks/${id}/reports`);
+  },
+
+  /** Fetch a single report by its ID. */
+  getReportById(id: string, reportId: string) {
+    return request<NotebookReport>(`/api/notebooks/${id}/reports/${reportId}`);
+  },
+
+  /** Delete a report by its ID. */
+  deleteReport(id: string, reportId: string) {
+    return request<{ deleted: boolean }>(`/api/notebooks/${id}/reports/${reportId}`, {
+      method: "DELETE",
+    });
   },
 
   /** Trigger report generation from completed Q&A answers. */

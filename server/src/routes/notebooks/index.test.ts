@@ -238,26 +238,27 @@ test("GET /api/notebooks/:id/report remains available when auth requires re-logi
     error: "Authentication refresh failed repeatedly",
   });
 
-  const notebookId = "b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4";
+  const notebookId = crypto.randomUUID();
   const generatedAt = new Date("2026-04-07T12:30:00.000Z");
-  const { upsertReport } = await import("../../report/service.js");
+  const { createReport } = await import("../../report/service.js");
   const routeModule = await import("./index.js");
   const notebooks = routeModule.default;
 
-  await upsertReport(notebookId, "cached report", generatedAt);
+  const report = await createReport(notebookId, "cached report", generatedAt);
 
   const response = await notebooks.request(`http://localhost/${notebookId}/report`);
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
-    success: true,
-    data: {
-      id: notebookId,
-      notebookId,
-      content: "cached report",
-      generatedAt: generatedAt.toISOString(),
-    },
-  });
+  const body = await response.json() as {
+    success: boolean;
+    data: { id: string; notebookId: string; title: string; content: string; generatedAt: string };
+  };
+  assert.equal(body.success, true);
+  assert.equal(body.data.notebookId, notebookId);
+  assert.equal(body.data.content, "cached report");
+  assert.equal(body.data.generatedAt, generatedAt.toISOString());
+  assert.equal(body.data.id, report.id);
+  assert.ok(body.data.title);
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {

@@ -25,9 +25,11 @@ import {
 import { parseNotebookIdOrNull } from "./validate.js";
 import {
   clearReportError,
-  getReportByNotebookId,
+  createReport,
+  deleteReportById,
+  getReportById,
+  listReportsByNotebookId,
   setReportError,
-  upsertReport,
 } from "../../report/service.js";
 import { createNotebookConversationAsker, createNotebookResearchDriver } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
@@ -484,19 +486,74 @@ notebooks.post("/:id/research/stop", async (c) => {
 
 notebooks.get("/:id/report", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const row = await getReportByNotebookId(id);
-    if (!row || !row.content || !row.generatedAt) {
+    const reports = await listReportsByNotebookId(id);
+    // Return the latest report with content (backward-compatible)
+    const row = reports.find((r) => r.content && r.generatedAt);
+    if (!row) {
       return c.json(successResponse(null));
     }
 
     return c.json(
       successResponse({
-        id: row.notebookId,
+        id: row.id,
         notebookId: row.notebookId,
+        title: row.title,
         content: row.content,
-        generatedAt: row.generatedAt.toISOString(),
+        generatedAt: row.generatedAt!.toISOString(),
       })
     );
+  });
+});
+
+notebooks.get("/:id/reports", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const reports = await listReportsByNotebookId(id);
+    return c.json(
+      successResponse(
+        reports.map((r) => ({
+          id: r.id,
+          notebookId: r.notebookId,
+          title: r.title,
+          content: r.content,
+          generatedAt: r.generatedAt?.toISOString() ?? null,
+          errorMessage: r.errorMessage ?? null,
+        }))
+      )
+    );
+  });
+});
+
+notebooks.get("/:id/reports/:reportId", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const reportId = c.req.param("reportId");
+    const row = await getReportById(reportId);
+    if (!row || row.notebookId !== id) {
+      return c.json({ success: false, message: "报告不存在", errorCode: "NOT_FOUND" }, 404);
+    }
+
+    return c.json(
+      successResponse({
+        id: row.id,
+        notebookId: row.notebookId,
+        title: row.title,
+        content: row.content,
+        generatedAt: row.generatedAt?.toISOString() ?? null,
+        errorMessage: row.errorMessage ?? null,
+      })
+    );
+  });
+});
+
+notebooks.delete("/:id/reports/:reportId", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const reportId = c.req.param("reportId");
+    const row = await getReportById(reportId);
+    if (!row || row.notebookId !== id) {
+      return c.json({ success: false, message: "报告不存在", errorCode: "NOT_FOUND" }, 404);
+    }
+
+    await deleteReportById(reportId);
+    return c.json(successResponse({ deleted: true }));
   });
 });
 
@@ -531,7 +588,7 @@ notebooks.post("/:id/report/generate", async (c) => {
         );
       }
 
-      await upsertReport(id, result.answer, new Date());
+      await createReport(id, result.answer, new Date());
       await clearReportError(id);
 
       return c.json(
