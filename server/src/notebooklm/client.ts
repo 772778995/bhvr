@@ -123,7 +123,37 @@ export interface NotebookChatResponse {
   citations: unknown[];
 }
 
-export type ResearchAskResult = AskResult;
+export interface ResearchAskResult {
+  success: boolean;
+  answer?: string;
+  error?: string;
+  citations?: unknown[];
+  conversationId?: string;
+}
+
+function mergeHistoryMessages(
+  threadMessages: NotebookMessage[][],
+  hiddenThreadIds: string[] = [],
+  orderedThreadIds: string[] = [],
+): NotebookMessage[] {
+  const hidden = new Set(hiddenThreadIds);
+
+  const flattened = threadMessages
+    .map((messages, index) => ({
+      threadId: orderedThreadIds[index],
+      messages,
+    }))
+    .filter((entry) => !entry.threadId || !hidden.has(entry.threadId))
+    .flatMap((entry) => entry.messages)
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+  const seen = new Set<string>();
+  return flattened.filter((message) => {
+    if (seen.has(message.id)) return false;
+    seen.add(message.id);
+    return true;
+  });
+}
 
 export interface AccessCheckResult {
   accessible: boolean;
@@ -445,6 +475,7 @@ export const __testOnly = {
   },
   silentRefreshForTests: silentRefresh,
   extractChatResponseText,
+  mergeHistoryMessages,
 };
 
 export async function getAuthStatus(): Promise<AuthStatus> {
@@ -687,16 +718,26 @@ export async function getNotebookSources(notebookId: string): Promise<NotebookSo
   }
 }
 
-export async function getNotebookMessages(notebookId: string): Promise<NotebookMessage[]> {
+export async function getNotebookMessages(
+  notebookId: string,
+  options: { hiddenThreadIds?: string[]; activeThreadId?: string } = {}
+): Promise<NotebookMessage[]> {
   const messages = await runNotebookRequest(async (client) => {
     const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
-    const latestThreadId = threadIds[0];
+    const orderedThreadIds = [
+      ...(options.activeThreadId ? [options.activeThreadId] : []),
+      ...threadIds.filter((threadId) => threadId !== options.activeThreadId),
+    ];
 
-    if (!latestThreadId) {
+    if (orderedThreadIds.length === 0) {
       return [];
     }
 
-    return await listNotebookHistoryMessages(client, notebookId, latestThreadId);
+    const threadMessages = await Promise.all(
+      orderedThreadIds.map(async (threadId) => await listNotebookHistoryMessages(client, notebookId, threadId))
+    );
+
+    return mergeHistoryMessages(threadMessages, options.hiddenThreadIds ?? [], orderedThreadIds);
   });
 
   return messages;

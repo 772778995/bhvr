@@ -21,11 +21,7 @@ export interface ChatMessage {
   status: string;
 }
 
-/**
- * Runtime status of a research run, aligned with the server ResearchStatus type.
- * idle | running | failed | completed
- */
-export type ResearchStatus = "idle" | "running" | "failed" | "completed";
+export type ResearchStatus = "idle" | "running" | "failed" | "completed" | "stopped";
 
 /**
  * Granular step within a running research loop, aligned with server ResearchStep.
@@ -232,6 +228,13 @@ export const notebooksApi = {
     return request<StartResearchResponse>(`/api/notebooks/${id}/research/start`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
+    });
+  },
+
+  stopResearch(id: string) {
+    return request<StartResearchResponse>(`/api/notebooks/${id}/research/stop`, {
+      method: "POST",
+      body: JSON.stringify({}),
     });
   },
 

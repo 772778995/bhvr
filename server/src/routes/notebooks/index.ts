@@ -28,10 +28,9 @@ import {
   setReportError,
   upsertReport,
 } from "../../report/service.js";
-import { createNotebookConversationAsker } from "../../research-runtime/chat-asker.js";
-import { getLiveMessages } from "../../research-runtime/live-messages.js";
+import { createNotebookConversationAsker, createNotebookResearchDriver } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
-import { get as getRuntimeState } from "../../research-runtime/registry.js";
+import { get as getRuntimeState, requestStop } from "../../research-runtime/registry.js";
 import {
   invalidNotebookIdResponse,
   successResponse,
@@ -215,12 +214,11 @@ notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
       try {
-        const liveMessages = getLiveMessages(id);
-        if (liveMessages.length > 0) {
-          return c.json(successResponse(liveMessages));
-        }
-
-        const messages = await getNotebookMessages(id);
+        const runtime = getRuntimeState(id);
+        const messages = await getNotebookMessages(id, {
+          hiddenThreadIds: runtime?.hiddenConversationIds,
+          activeThreadId: runtime?.activeConversationId,
+        });
         return c.json(successResponse(messages));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -242,12 +240,11 @@ notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
       try {
-        const liveMessages = getLiveMessages(id);
-        if (liveMessages.length > 0) {
-          return c.json(successResponse(liveMessages));
-        }
-
-        const messages = await getNotebookMessages(id);
+        const runtime = getRuntimeState(id);
+        const messages = await getNotebookMessages(id, {
+          hiddenThreadIds: runtime?.hiddenConversationIds,
+          activeThreadId: runtime?.activeConversationId,
+        });
         return c.json(successResponse(messages));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -417,7 +414,7 @@ notebooks.post("/:id/research/start", async (c) => {
 
       void runAutoResearch(
         id,
-        createNotebookConversationAsker(id, sourceIds, sendNotebookChatMessage)
+        createNotebookResearchDriver(id, sourceIds, sendNotebookChatMessage)
       ).catch((err) => {
         void err;
       });
@@ -433,6 +430,25 @@ notebooks.post("/:id/research/start", async (c) => {
         202
       );
     });
+  });
+});
+
+notebooks.post("/:id/research/stop", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const runtime = getRuntimeState(id);
+    if (!runtime || runtime.status !== "running") {
+      return c.json(
+        {
+          success: false,
+          message: "当前没有正在运行的自动研究任务",
+          errorCode: "RESEARCH_NOT_RUNNING",
+        },
+        409
+      );
+    }
+
+    requestStop(id);
+    return c.json(successResponse({ status: "stopping", message: "自动研究将在当前轮结束后停止" }));
   });
 });
 

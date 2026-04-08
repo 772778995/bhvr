@@ -17,7 +17,7 @@
  * failed     – the orchestrator stopped due to an unrecoverable error.
  * completed  – all turns finished successfully.
  */
-export type ResearchStatus = "idle" | "running" | "failed" | "completed";
+export type ResearchStatus = "idle" | "running" | "failed" | "completed" | "stopped";
 
 /**
  * Fine-grained step within a running (or just-finished) research loop.
@@ -39,6 +39,7 @@ export type ResearchStep =
   | "waiting_answer"
   | "refreshing_messages"
   | "completed"
+  | "stopped"
   | "failed";
 
 // ── State snapshot ────────────────────────────────────────────────────────────
@@ -60,8 +61,14 @@ export interface ResearchRuntimeState {
   /** Number of turns that have completed successfully so far. */
   completedCount: number;
 
-  /** Target number of turns for this run (fixed at 20 for MVP). */
-  targetCount: number;
+  /** Optional target count for bounded runs; omitted for continuous research. */
+  targetCount?: number;
+
+  /** Active NotebookLM conversation id, when known. */
+  activeConversationId?: string;
+
+  /** Hidden internal NotebookLM conversation ids, e.g. planner threads. */
+  hiddenConversationIds?: string[];
 
   /** ISO timestamp when this state entry was last mutated. */
   updatedAt: string;
@@ -85,6 +92,7 @@ export type ResearchEventType =
   | "progress"       // completedCount incremented
   | "error"          // run failed
   | "completed"      // run finished all turns
+  | "stopped"        // run stopped by user
   | "heartbeat";     // keep-alive (no state change)
 
 export interface ResearchRuntimeEvent {
@@ -124,14 +132,33 @@ export interface AskFnResult {
   success: boolean;
   answer?: string;
   error?: string;
+  conversationId?: string;
+}
+
+export interface ResearchDriverQuestionResult {
+  success: boolean;
+  question?: string;
+  error?: string;
+  plannerConversationId?: string;
+}
+
+export interface ResearchDriverAnswerResult {
+  success: boolean;
+  answer?: string;
+  error?: string;
+  conversationId?: string;
+}
+
+export interface ResearchDriver {
+  nextQuestion(notebookId: string): Promise<ResearchDriverQuestionResult>;
+  askQuestion(notebookId: string, question: string): Promise<ResearchDriverAnswerResult>;
+  getHiddenConversationIds(): string[];
 }
 
 // ── Orchestrator options ──────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
-  /**
-   * Number of research turns to execute. Defaults to 20.
-   */
+  /** Number of research turns to execute. If omitted, run continuously until stopped or failed. */
   targetCount?: number;
 
   /**

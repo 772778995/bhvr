@@ -31,3 +31,27 @@ test("extractChatResponseText falls back to longest chunk text when text is empt
 
   assert.equal(result, "Recovered answer from chunks");
 });
+
+test("mergeHistoryMessages flattens threads and excludes internal threads", () => {
+  const messages = __testOnly.mergeHistoryMessages(
+    [
+      [
+        { id: "a1", role: "assistant", content: "planner", createdAt: "2026-04-08T00:00:01.000Z", status: "done" },
+      ],
+      [
+        { id: "u1", role: "user", content: "real q1", createdAt: "2026-04-08T00:00:02.000Z", status: "done" },
+        { id: "s1", role: "assistant", content: "real a1", createdAt: "2026-04-08T00:00:03.000Z", status: "done" },
+      ],
+      [
+        { id: "u2", role: "user", content: "real q2", createdAt: "2026-04-08T00:00:04.000Z", status: "done" },
+      ],
+    ],
+    ["planner-thread"],
+    ["planner-thread", "visible-thread-1", "visible-thread-2"]
+  );
+
+  assert.deepEqual(
+    messages.map((message) => message.id),
+    ["u1", "s1", "u2"]
+  );
+});

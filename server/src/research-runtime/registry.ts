@@ -22,6 +22,7 @@ import type {
 
 const stateMap = new Map<string, ResearchRuntimeState>();
 const listenersMap = new Map<string, Set<RuntimeStateListener>>();
+const stopRequestedSet = new Set<string>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,6 @@ export function snapshot(notebookId: string): ResearchRuntimeState {
     status: "idle",
     step: "idle",
     completedCount: 0,
-    targetCount: 20,
     updatedAt: now(),
   };
 }
@@ -94,18 +94,20 @@ export function snapshot(notebookId: string): ResearchRuntimeState {
  *
  * @throws If a run is already in status "running" for this notebook.
  */
-export function start(notebookId: string, targetCount = 20): ResearchRuntimeState {
+export function start(notebookId: string, targetCount?: number): ResearchRuntimeState {
   const existing = stateMap.get(notebookId);
   if (existing?.status === "running") {
     throw new Error(`Research run already in progress for notebook ${notebookId}`);
   }
+
+  stopRequestedSet.delete(notebookId);
 
   const state: ResearchRuntimeState = {
     notebookId,
     status: "running",
     step: "starting",
     completedCount: 0,
-    targetCount,
+    ...(targetCount !== undefined ? { targetCount } : {}),
     updatedAt: now(),
   };
 
@@ -158,7 +160,6 @@ export function fail(notebookId: string, error: string): ResearchRuntimeState {
     ...(existing ?? {
       notebookId,
       completedCount: 0,
-      targetCount: 20,
     }),
     notebookId,
     status: "failed",
@@ -183,7 +184,6 @@ export function complete(notebookId: string): ResearchRuntimeState {
     ...(existing ?? {
       notebookId,
       completedCount: 0,
-      targetCount: 20,
     }),
     notebookId,
     status: "completed",
@@ -193,6 +193,40 @@ export function complete(notebookId: string): ResearchRuntimeState {
 
   stateMap.set(notebookId, state);
   broadcast(notebookId, "completed");
+  return { ...state };
+}
+
+export function requestStop(notebookId: string): ResearchRuntimeState {
+  const existing = stateMap.get(notebookId);
+  if (!existing) {
+    throw new Error(`No runtime state found for notebook ${notebookId}. Call start() first.`);
+  }
+
+  stopRequestedSet.add(notebookId);
+
+  return { ...existing };
+}
+
+export function shouldStop(notebookId: string): boolean {
+  return stopRequestedSet.has(notebookId);
+}
+
+export function stop(notebookId: string): ResearchRuntimeState {
+  const existing = stateMap.get(notebookId);
+  stopRequestedSet.delete(notebookId);
+
+  const state: ResearchRuntimeState = {
+    ...(existing ?? {
+      notebookId,
+      completedCount: 0,
+    }),
+    status: "stopped",
+    step: "stopped",
+    updatedAt: now(),
+  };
+
+  stateMap.set(notebookId, state);
+  broadcast(notebookId, "stopped");
   return { ...state };
 }
 

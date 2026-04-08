@@ -43,11 +43,13 @@ test("createNotebookConversationAsker uses send-message flow and preserves conve
     success: true,
     answer: "1. First question\n2. Second question",
     citations: [],
+    conversationId: "conv-1",
   });
   assert.deepEqual(second, {
     success: true,
     answer: "Second answer",
     citations: [],
+    conversationId: "conv-1",
   });
 
   assert.deepEqual(calls, [
@@ -100,5 +102,6 @@ test("createNotebookConversationAsker accepts fallback response text when primar
     success: true,
     answer: "1. Recovery question",
     citations: [],
+    conversationId: "conv-1",
   });
 });

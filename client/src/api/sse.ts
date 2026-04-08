@@ -18,6 +18,7 @@ export type ResearchEventType =
   | "progress"
   | "error"
   | "completed"
+  | "stopped"
   | "heartbeat";
 
 /**
@@ -99,6 +100,7 @@ export function subscribeResearchStream(
     "progress",
     "error",
     "completed",
+    "stopped",
     "heartbeat",
   ];
 

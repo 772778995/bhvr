@@ -116,6 +116,20 @@ function pushNotice(message: string, type: "info" | "error" = "info") {
   showToast(message, type);
 }
 
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+
+  for (const message of current) {
+    byId.set(message.id, message);
+  }
+
+  for (const message of incoming) {
+    byId.set(message.id, message);
+  }
+
+  return [...byId.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+}
+
 function onTopAction() {
   pushNotice("该操作暂未开放。");
 }
@@ -295,7 +309,7 @@ async function onSendMessage(content: string) {
 async function refreshMessages() {
   if (!notebookId.value) return;
   try {
-    messages.value = await notebooksApi.getMessages(notebookId.value);
+    messages.value = mergeMessages(messages.value, await notebooksApi.getMessages(notebookId.value));
   } catch (err) {
     pushNotice(err instanceof Error ? err.message : "刷新对话记录失败", "error");
   }
@@ -318,6 +332,10 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
 
   if (event.type === "completed") {
     // Final refresh of messages after research finishes.
+    void refreshMessages();
+  }
+
+  if (event.type === "stopped") {
     void refreshMessages();
   }
 
@@ -350,12 +368,17 @@ async function onStartResearch() {
   }
 
   try {
-    await notebooksApi.startResearch(notebookId.value);
-    researchState.value = {
-      ...researchState.value,
-      status: "running",
-      step: "starting",
-    };
+    if (researchState.value.status === "running") {
+      await notebooksApi.stopResearch(notebookId.value);
+      pushNotice("自动研究将在当前轮结束后停止");
+    } else {
+      await notebooksApi.startResearch(notebookId.value);
+      researchState.value = {
+        ...researchState.value,
+        status: "running",
+        step: "starting",
+      };
+    }
   } catch (err) {
     pushNotice(err instanceof Error ? err.message : "启动研究失败", "error");
   }
@@ -402,11 +425,10 @@ async function loadWorkbenchData() {
 
   connectSSE(notebookId.value);
 
-  const [notebookResult, sourcesResult, messagesResult, reportResult] = await Promise.allSettled([
+  const [notebookResult, sourcesResult, messagesResult] = await Promise.allSettled([
     notebooksApi.getNotebook(notebookId.value),
     notebooksApi.getSources(notebookId.value),
     notebooksApi.getMessages(notebookId.value),
-    notebooksApi.getReport(notebookId.value),
   ]);
 
   if (isStale()) {
@@ -431,8 +453,8 @@ async function loadWorkbenchData() {
 
   notebook.value = notebookResult.value;
   sources.value = sourcesResult.status === "fulfilled" ? sourcesResult.value : [];
-  messages.value = messagesResult.status === "fulfilled" ? messagesResult.value : [];
-  report.value = reportResult.status === "fulfilled" ? reportResult.value : null;
+  messages.value = messagesResult.status === "fulfilled" ? mergeMessages([], messagesResult.value) : [];
+  report.value = null;
 
   const partialFailure = sourcesResult.status === "rejected" || messagesResult.status === "rejected";
 

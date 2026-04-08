@@ -14,11 +14,10 @@
 
 import logger from "../lib/logger.js";
 import * as registry from "./registry.js";
-import type { AskFn, OrchestratorOptions } from "./types.js";
+import type { OrchestratorOptions, ResearchDriver } from "./types.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_TARGET_COUNT = 20;
 const DEFAULT_TURN_DELAY_MS = 2000;
 
 // ── Question generation ───────────────────────────────────────────────────────
@@ -105,10 +104,10 @@ function sleep(ms: number): Promise<void> {
  */
 export async function runAutoResearch(
   notebookId: string,
-  askFn: AskFn,
+  driver: ResearchDriver,
   options: OrchestratorOptions = {}
 ): Promise<void> {
-  const targetCount = options.targetCount ?? DEFAULT_TARGET_COUNT;
+  const targetCount = options.targetCount;
   const turnDelayMs = options.turnDelayMs ?? DEFAULT_TURN_DELAY_MS;
 
   logger.info({ notebookId, targetCount }, "orchestrator: starting auto-research loop");
@@ -122,50 +121,40 @@ export async function runAutoResearch(
     return;
   }
 
-  // Step 2: generate questions
-  registry.update(notebookId, { step: "generating_question" });
-
-  let questions: string[];
-
-  try {
-    const genPrompt = buildQuestionGenerationPrompt(targetCount);
-    const genResult = await askFn(notebookId, genPrompt);
-
-    if (!genResult.success || !genResult.answer) {
-      throw new Error(genResult.error ?? "Empty response from NotebookLM during question generation");
+  for (let i = 0; targetCount === undefined || i < targetCount; i++) {
+    if (registry.shouldStop(notebookId)) {
+      registry.stop(notebookId);
+      logger.info({ notebookId, completedCount: registry.get(notebookId)?.completedCount ?? 0 }, "orchestrator: auto-research stopped by request");
+      return;
     }
 
-    questions = parseQuestionList(genResult.answer);
+    registry.update(notebookId, { step: "generating_question" });
 
-    if (questions.length === 0) {
-      throw new Error(
-        `Could not parse any questions from NotebookLM response. ` +
-          `Raw: ${genResult.answer.substring(0, 300)}`
-      );
+    let question: string;
+    try {
+      const nextQuestion = await driver.nextQuestion(notebookId);
+      if (!nextQuestion.success || !nextQuestion.question) {
+        throw new Error(nextQuestion.error ?? "NotebookLM 未返回可用的下一问");
+      }
+
+      question = nextQuestion.question;
+      registry.update(notebookId, {
+        hiddenConversationIds: driver.getHiddenConversationIds(),
+        ...(nextQuestion.plannerConversationId ? { hiddenConversationIds: driver.getHiddenConversationIds() } : {}),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ notebookId, err }, "orchestrator: next-question generation failed");
+      registry.fail(notebookId, message);
+      return;
     }
 
-    logger.info({ notebookId, count: questions.length }, "orchestrator: questions parsed");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn({ notebookId, err }, "orchestrator: question generation failed, falling back to built-in prompts");
-    questions = buildFallbackQuestions(targetCount);
-    registry.update(notebookId, { step: "waiting_answer" });
-    logger.info({ notebookId, count: questions.length, fallback: true, reason: message }, "orchestrator: using fallback questions");
-  }
-
-  // Clamp to targetCount in case NotebookLM returned more
-  const turns = questions.slice(0, targetCount);
-
-  // Step 3: ask each question
-  for (let i = 0; i < turns.length; i++) {
-    const question = turns[i] as string;
-
-    logger.debug({ notebookId, turn: i + 1, total: turns.length }, "orchestrator: asking question");
+    logger.debug({ notebookId, turn: i + 1 }, "orchestrator: asking question");
 
     registry.update(notebookId, { step: "waiting_answer" });
 
     try {
-      const result = await askFn(notebookId, question);
+      const result = await driver.askQuestion(notebookId, question);
 
       if (!result.success) {
         // Non-fatal: log and continue with next question.
@@ -182,7 +171,15 @@ export async function runAutoResearch(
         registry.update(notebookId, {
           step: "refreshing_messages",
           completedCount: newCount,
+          ...(result.conversationId ? { activeConversationId: result.conversationId } : {}),
+          hiddenConversationIds: driver.getHiddenConversationIds(),
         });
+
+        if (registry.shouldStop(notebookId)) {
+          registry.stop(notebookId);
+          logger.info({ notebookId, completedCount: registry.get(notebookId)?.completedCount ?? 0 }, "orchestrator: auto-research stopped by request");
+          return;
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -192,12 +189,11 @@ export async function runAutoResearch(
     }
 
     // Delay between turns to avoid hammering NotebookLM
-    if (i < turns.length - 1) {
+    if (targetCount === undefined || i < targetCount - 1) {
       await sleep(turnDelayMs);
     }
   }
 
-  // Step 4: all turns done
   registry.complete(notebookId);
   logger.info(
     { notebookId, completedCount: registry.get(notebookId)?.completedCount ?? 0 },

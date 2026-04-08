@@ -17,10 +17,9 @@ const props = defineProps<Props>();
 
 const running = computed(() => props.researchState.status === "running");
 
-const toggleOn = computed(() => running.value || props.researchState.status === "completed");
+const toggleOn = computed(() => running.value);
 
 function handleToggle() {
-  if (running.value) return; // guard: don't re-trigger while running
   props.onStartResearch();
 }
 
@@ -28,7 +27,7 @@ const countLabel = computed(() => {
   const turns = Math.floor(props.messageCount / 2);
   if (turns <= 0 && !running.value) return "暂无问答数据";
   if (running.value) {
-    return `当前 ${turns} 轮问答${props.researchState.step === "waiting_answer" ? "，正在等待回答…" : ""}`;
+    return `已追加 ${turns} 轮问答${props.researchState.step === "waiting_answer" ? "，正在等待回答…" : ""}`;
   }
   return `共 ${turns} 轮问答`;
 });
@@ -47,8 +46,7 @@ const countLabel = computed(() => {
           type="button"
           role="switch"
           :aria-checked="toggleOn"
-          :disabled="running"
-          class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+          class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1"
           :class="toggleOn ? 'bg-[#3a2e20]' : 'bg-gray-300'"
           @click="handleToggle"
         >
