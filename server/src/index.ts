@@ -16,6 +16,19 @@ const app = new Hono();
 
 app.use(cors());
 
+app.onError((err, c) => {
+  logger.error({ err, path: c.req.path, method: c.req.method }, "Unhandled request error");
+
+  return c.json(
+    {
+      success: false,
+      message: err instanceof Error ? err.message : "Internal Server Error",
+      errorCode: "INTERNAL_SERVER_ERROR",
+    },
+    500
+  );
+});
+
 // Mount routes
 app.route("/api/auth", auth);
 app.route("/api/research", research);

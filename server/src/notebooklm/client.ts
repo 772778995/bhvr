@@ -636,6 +636,9 @@ export async function getNotebookDetail(notebookId: string): Promise<NotebookDet
     const notebook = await runNotebookRequest(async (client) => await client.notebooks.get(notebookId));
     return mapNotebook(notebook);
   } catch (err) {
+    if (isNotebookAuthError(err)) {
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
     logger.warn({ notebookId, err }, "getNotebookDetail: sdk.notebooks.get failed");
     throw new Error(`Failed to fetch notebook detail: ${message}`);
@@ -647,6 +650,9 @@ export async function getNotebookSources(notebookId: string): Promise<NotebookSo
     const sources = await runNotebookRequest(async (client) => await client.sources.list(notebookId));
     return sources.map(mapSource);
   } catch (err) {
+    if (isNotebookAuthError(err)) {
+      throw err;
+    }
     const message = err instanceof Error ? err.message : String(err);
     logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed");
     throw new Error(`Failed to fetch notebook sources: ${message}`);
