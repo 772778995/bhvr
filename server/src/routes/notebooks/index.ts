@@ -11,7 +11,6 @@ import {
   createNotebook,
   ensureNotebookAccessible,
   getNotebookDetail,
-  getNotebookMessages,
   getNotebookSources,
   getSourceProcessingStatus,
   isNotebookAuthError,
@@ -48,7 +47,7 @@ import {
   listSourceStateMap,
   mergeSourceStates,
 } from "../../source-state/service.js";
-import { insertChatMessage } from "../../db/chat-messages.js";
+import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 
 const notebooks = new Hono();
 
@@ -215,63 +214,54 @@ notebooks.get("/:id/sources/status", async (c) => {
 
 notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
-    return await withNotebookAuthHandling(async () => {
-      logger.info({ notebookId: id }, "messages: request received");
-      try {
-        const runtime = getRuntimeState(id);
-        logger.info(
-          {
-            notebookId: id,
-            activeConversationId: runtime?.activeConversationId ?? null,
-            hiddenConversationIds: runtime?.hiddenConversationIds ?? [],
-          },
-          "messages: runtime state"
-        );
-        const messages = await getNotebookMessages(id, {
-          hiddenThreadIds: runtime?.hiddenConversationIds,
-          activeThreadId: runtime?.activeConversationId,
-        });
-        logger.info({ notebookId: id, count: messages.length }, "messages: response sent");
-        return c.json(successResponse(messages));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.warn({ notebookId: id, err }, "messages: fetch failed");
-        return c.json(
-          {
-            success: false,
-            message: `获取对话记录失败: ${message}`,
-            errorCode: "MESSAGES_FETCH_FAILED",
-          },
-          502
-        );
-      }
-    });
+    try {
+      const records = await listChatMessages(id);
+      const messages = records.map((r) => ({
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+        status: "done",
+      }));
+      return c.json(successResponse(messages));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(
+        {
+          success: false,
+          message: `获取对话记录失败: ${message}`,
+          errorCode: "MESSAGES_FETCH_FAILED",
+        },
+        502
+      );
+    }
   });
 });
 
 // Backward-compatible alias for old client path.
 notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
-    return await withNotebookAuthHandling(async () => {
-      try {
-        const runtime = getRuntimeState(id);
-        const messages = await getNotebookMessages(id, {
-          hiddenThreadIds: runtime?.hiddenConversationIds,
-          activeThreadId: runtime?.activeConversationId,
-        });
-        return c.json(successResponse(messages));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return c.json(
-          {
-            success: false,
-            message: `获取对话记录失败: ${message}`,
-            errorCode: "MESSAGES_FETCH_FAILED",
-          },
-          502
-        );
-      }
-    });
+    try {
+      const records = await listChatMessages(id);
+      const messages = records.map((r) => ({
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+        status: "done",
+      }));
+      return c.json(successResponse(messages));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(
+        {
+          success: false,
+          message: `获取对话记录失败: ${message}`,
+          errorCode: "MESSAGES_FETCH_FAILED",
+        },
+        502
+      );
+    }
   });
 });
 
