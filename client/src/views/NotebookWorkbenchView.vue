@@ -381,7 +381,7 @@ async function loadWorkbenchData() {
   const [notebookResult, sourcesResult, messagesResult, reportResult] = await Promise.allSettled([
     notebooksApi.getNotebook(notebookId.value),
     notebooksApi.getSources(notebookId.value),
-    notebooksApi.getMessages(notebookId.value),
+    notebooksApi.getMessages(notebookId.value, (msg) => pushNotice(msg, "error")),
     notebooksApi.getReport(notebookId.value),
   ]);
 

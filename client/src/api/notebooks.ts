@@ -112,14 +112,20 @@ interface ApiResponse<T> {
   message?: string;
 }
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { ...(options?.headers as Record<string, string>) };
-  const method = options?.method?.toUpperCase() ?? "GET";
+interface RequestOptions extends RequestInit {
+  /** Called when the backend returns success:true but also includes a warning message. */
+  onWarning?: (message: string) => void;
+}
+
+async function request<T>(url: string, options?: RequestOptions): Promise<T> {
+  const { onWarning, ...fetchOptions } = options ?? {};
+  const headers: Record<string, string> = { ...(fetchOptions.headers as Record<string, string>) };
+  const method = fetchOptions.method?.toUpperCase() ?? "GET";
   if (method === "POST" || method === "PUT" || method === "PATCH") {
     headers["Content-Type"] ??= "application/json";
   }
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...fetchOptions, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
@@ -127,10 +133,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   const body = await res.json() as ApiResponse<T> | T;
   if (typeof body === "object" && body !== null && "success" in body) {
-    if (!(body as ApiResponse<T>).success) {
-      throw new Error((body as ApiResponse<T>).message ?? "请求失败");
+    const typed = body as ApiResponse<T>;
+    if (!typed.success) {
+      throw new Error(typed.message ?? "请求失败");
     }
-    return (body as ApiResponse<T>).data;
+    if (typed.message && onWarning) {
+      onWarning(typed.message);
+    }
+    return typed.data;
   }
 
   return body as T;
@@ -206,8 +216,8 @@ export const notebooksApi = {
   },
 
   /** Chat messages for a notebook. */
-  getMessages(id: string) {
-    return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
+  getMessages(id: string, onWarning?: (message: string) => void) {
+    return request<ChatMessage[]>(`/api/notebooks/${id}/messages`, { onWarning });
   },
 
   sendMessage(id: string, body: SendMessageRequest) {
