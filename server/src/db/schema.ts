@@ -3,6 +3,7 @@ import {
   text,
   integer,
   uniqueIndex,
+  index,
 } from "drizzle-orm/sqlite-core";
 
 export const researchReports = sqliteTable("research_reports", {
@@ -70,6 +71,29 @@ export const notebookSourceStates = sqliteTable(
     notebookSourceUnique: uniqueIndex("notebook_source_unique").on(
       table.notebookId,
       table.sourceId
+    ),
+  })
+);
+
+export const chatMessages = sqliteTable(
+  "chat_messages",
+  {
+    id: text("id")
+      .primaryKey()
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID()),
+    notebookId: text("notebook_id").notNull(),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    content: text("content").notNull(),
+    source: text("source", { enum: ["manual", "research"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    notebookIdIdx: index("chat_messages_notebook_id").on(
+      table.notebookId,
+      table.createdAt
     ),
   })
 );

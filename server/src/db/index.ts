@@ -57,6 +57,18 @@ await client.executeMultiple(`
 
   CREATE UNIQUE INDEX IF NOT EXISTS notebook_source_unique
   ON notebook_source_states (notebook_id, source_id);
+
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id TEXT PRIMARY KEY NOT NULL,
+    notebook_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS chat_messages_notebook_id
+  ON chat_messages (notebook_id, created_at ASC);
 `);
 
 logger.debug({ path: DB_PATH }, "Database ensured successfully");
