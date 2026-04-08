@@ -216,8 +216,8 @@ export const notebooksApi = {
   },
 
   /** Chat messages for a notebook. */
-  getMessages(id: string, onWarning?: (message: string) => void) {
-    return request<ChatMessage[]>(`/api/notebooks/${id}/messages`, { onWarning });
+  getMessages(id: string) {
+    return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
   },
 
   sendMessage(id: string, body: SendMessageRequest) {

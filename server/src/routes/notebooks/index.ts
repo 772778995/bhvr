@@ -212,13 +212,20 @@ notebooks.get("/:id/sources/status", async (c) => {
 notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
-      const result = await getNotebookMessages(id);
-      return c.json(
-        successResponse(
-          result.messages,
-          result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
-        )
-      );
+      try {
+        const messages = await getNotebookMessages(id);
+        return c.json(successResponse(messages));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json(
+          {
+            success: false,
+            message: `获取对话记录失败: ${message}`,
+            errorCode: "MESSAGES_FETCH_FAILED",
+          },
+          502
+        );
+      }
     });
   });
 });
@@ -227,13 +234,20 @@ notebooks.get("/:id/messages", async (c) => {
 notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
-      const result = await getNotebookMessages(id);
-      return c.json(
-        successResponse(
-          result.messages,
-          result.degraded ? "NotebookLM 未提供历史会话接口，当前为降级空结果" : undefined
-        )
-      );
+      try {
+        const messages = await getNotebookMessages(id);
+        return c.json(successResponse(messages));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json(
+          {
+            success: false,
+            message: `获取对话记录失败: ${message}`,
+            errorCode: "MESSAGES_FETCH_FAILED",
+          },
+          502
+        );
+      }
     });
   });
 });

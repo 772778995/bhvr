@@ -7,6 +7,8 @@ interface Props {
   report: NotebookReport | null;
   /** True when there are Q&A messages that can be compiled into a report. */
   hasResearchAssets: boolean;
+  /** Current number of conversation turns (Q&A pairs). */
+  messageCount: number;
   onStartResearch: () => void;
   onGenerateReport: () => void;
 }
@@ -23,13 +25,12 @@ function handleToggle() {
 }
 
 const countLabel = computed(() => {
-  const { completedCount, targetCount, status } = props.researchState;
-  if (status === "idle" && completedCount <= 0) return "暂无问答数据";
-  if (status === "running" && targetCount > 0) {
-    return `已完成 ${completedCount} / ${targetCount} 轮问答`;
+  const turns = Math.floor(props.messageCount / 2);
+  if (turns <= 0 && !running.value) return "暂无问答数据";
+  if (running.value) {
+    return `当前 ${turns} 轮问答${props.researchState.step === "waiting_answer" ? "，正在等待回答…" : ""}`;
   }
-  if (completedCount > 0) return `已完成 ${completedCount} 轮问答`;
-  return "暂无问答数据";
+  return `共 ${turns} 轮问答`;
 });
 </script>
 

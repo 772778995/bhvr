@@ -25,7 +25,7 @@ export {
   type NotebookDetail,
   type NotebookSource,
   type NotebookMessage,
-  type NotebookMessagesResult,
+
   type NotebookChatHistoryItem,
   type NotebookChatRequest,
   type NotebookChatResponse,

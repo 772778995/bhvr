@@ -12,7 +12,7 @@ interface Props {
 
 const props = defineProps<Props>();
 const draft = ref("");
-const listRef = ref<HTMLUListElement | null>(null);
+const scrollContainerRef = ref<HTMLDivElement | null>(null);
 
 function renderMarkdown(content: string): string {
   const raw = marked.parse(content);
@@ -38,13 +38,14 @@ function handleKeydown(event: KeyboardEvent) {
   handleSubmit();
 }
 
-// Auto-scroll to bottom when new messages arrive
+// Auto-scroll to bottom with smooth animation when messages change
 watch(
   () => props.messages.length,
   () => {
     void nextTick(() => {
-      if (listRef.value) {
-        listRef.value.scrollTop = listRef.value.scrollHeight;
+      const el = scrollContainerRef.value;
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
       }
     });
   },
@@ -55,7 +56,7 @@ watch(
   <section class="h-full bg-white border border-gray-200 rounded-lg p-4 flex flex-col min-h-0">
     <h2 class="mb-3 text-base font-semibold text-gray-900 shrink-0">对话</h2>
 
-    <div class="flex-1 min-h-0 overflow-y-auto">
+    <div ref="scrollContainerRef" class="flex-1 min-h-0 overflow-y-auto scroll-smooth">
       <div
         v-if="messages.length === 0"
         class="h-full flex items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 text-base leading-relaxed text-gray-500"
@@ -65,11 +66,10 @@ watch(
 
       <TransitionGroup
         v-else
-        ref="listRef"
         tag="ul"
         class="space-y-4 pr-1"
-        enter-active-class="transition-all duration-180 ease-out"
-        enter-from-class="opacity-0 translate-y-2"
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 translate-y-3"
         enter-to-class="opacity-100 translate-y-0"
       >
         <li v-for="message in messages" :key="message.id">

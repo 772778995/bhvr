@@ -85,11 +85,6 @@ export interface NotebookMessage {
   status: "done" | "streaming" | "sent";
 }
 
-export interface NotebookMessagesResult {
-  messages: NotebookMessage[];
-  degraded: boolean;
-}
-
 type NotebookHistoryThreadIdResponse = Array<Array<[string]>>;
 
 type NotebookHistoryUserMessageRecord = [
@@ -658,24 +653,19 @@ export async function getNotebookSources(notebookId: string): Promise<NotebookSo
   }
 }
 
-export async function getNotebookMessages(notebookId: string): Promise<NotebookMessagesResult> {
-  try {
-    const messages = await runNotebookRequest(async (client) => {
-      const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
-      const latestThreadId = threadIds[0];
+export async function getNotebookMessages(notebookId: string): Promise<NotebookMessage[]> {
+  const messages = await runNotebookRequest(async (client) => {
+    const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
+    const latestThreadId = threadIds[0];
 
-      if (!latestThreadId) {
-        return [];
-      }
+    if (!latestThreadId) {
+      return [];
+    }
 
-      return await listNotebookHistoryMessages(client, notebookId, latestThreadId);
-    });
+    return await listNotebookHistoryMessages(client, notebookId, latestThreadId);
+  });
 
-    return { messages, degraded: false };
-  } catch (err) {
-    logger.warn({ notebookId, err }, "getNotebookMessages: direct history read failed; returning degraded empty result");
-    return { messages: [], degraded: true };
-  }
+  return messages;
 }
 
 export async function askNotebookForResearch(

@@ -281,6 +281,16 @@ async function onSendMessage(content: string) {
   }
 }
 
+/** Refresh conversation messages from the backend. */
+async function refreshMessages() {
+  if (!notebookId.value) return;
+  try {
+    messages.value = await notebooksApi.getMessages(notebookId.value);
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "刷新对话记录失败", "error");
+  }
+}
+
 function handleResearchEvent(event: ResearchRuntimeEvent) {
   if (event.type === "heartbeat") {
     return;
@@ -290,7 +300,15 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
     researchState.value = payloadToState(event.payload);
   }
 
+  // Re-fetch messages whenever a Q&A turn completes (progress) or the
+  // orchestrator signals that messages should be refreshed.
+  if (event.type === "progress" || (event.payload?.step === "refreshing_messages")) {
+    void refreshMessages();
+  }
+
   if (event.type === "completed") {
+    // Final refresh of messages after research finishes.
+    void refreshMessages();
     void notebooksApi
       .getReport(notebookId.value)
       .then((value) => {
@@ -299,6 +317,10 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
       .catch(() => {
         // Ignore report refresh failures here; the page remains usable.
       });
+  }
+
+  if (event.type === "error" && event.payload?.lastError) {
+    pushNotice(event.payload.lastError, "error");
   }
 }
 
@@ -381,7 +403,7 @@ async function loadWorkbenchData() {
   const [notebookResult, sourcesResult, messagesResult, reportResult] = await Promise.allSettled([
     notebooksApi.getNotebook(notebookId.value),
     notebooksApi.getSources(notebookId.value),
-    notebooksApi.getMessages(notebookId.value, (msg) => pushNotice(msg, "error")),
+    notebooksApi.getMessages(notebookId.value),
     notebooksApi.getReport(notebookId.value),
   ]);
 
@@ -498,6 +520,7 @@ onUnmounted(() => {
                 :research-state="researchState"
                 :report="report"
                 :has-research-assets="hasResearchAssets"
+                :message-count="messages.length"
                 :on-start-research="onStartResearch"
                 :on-generate-report="onGenerateReport"
               />
