@@ -50,55 +50,73 @@ watch(
     });
   },
 );
+
+function scrollToBottom() {
+  void nextTick(() => {
+    const el = scrollContainerRef.value;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  });
+}
 </script>
 
 <template>
   <section class="h-full bg-white border border-gray-200 rounded-lg p-4 flex flex-col min-h-0">
     <h2 class="mb-3 text-base font-semibold text-gray-900 shrink-0">对话</h2>
 
-    <div ref="scrollContainerRef" class="flex-1 min-h-0 overflow-y-auto scroll-smooth">
-      <div
-        v-if="messages.length === 0"
-        class="h-full flex items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 text-base leading-relaxed text-gray-500"
-      >
-        还没有对话内容，输入问题即可开始。
-      </div>
+     <div ref="scrollContainerRef" class="flex-1 min-h-0 overflow-y-auto scroll-smooth relative">
+       <div
+         v-if="messages.length === 0"
+         class="h-full flex items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-4 text-base leading-relaxed text-gray-500"
+       >
+         还没有对话内容，输入问题即可开始。
+       </div>
 
-      <TransitionGroup
-        v-else
-        tag="ul"
-        class="space-y-4 pr-1"
-        enter-active-class="transition-all duration-300 ease-out"
-        enter-from-class="opacity-0 translate-y-3"
-        enter-to-class="opacity-100 translate-y-0"
-      >
-        <li v-for="message in messages" :key="message.id">
-          <div
-            class="max-w-[88%] px-3.5 py-2.5 text-base leading-relaxed"
-            :class="
-              message.role === 'user'
-                ? 'ml-auto rounded-2xl rounded-tr-sm bg-[#3a2e20] text-[#f5ede0]'
-                : 'rounded-2xl rounded-tl-sm bg-[#f8f3ea] text-[#2f271f] border border-[#e0d5c0]'
-            "
-          >
-            <!-- User messages: plain text -->
-            <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
-            <!-- Assistant messages: rendered Markdown -->
-            <div
-              v-else
-              class="prose-warm"
-              v-html="renderMarkdown(message.content)"
-            />
-          </div>
-          <p
-            class="mt-1 text-sm text-[#9a8a78]"
-            :class="message.role === 'user' ? 'text-right' : ''"
-          >
-            {{ message.createdAt }}
-          </p>
-        </li>
-      </TransitionGroup>
-    </div>
+       <TransitionGroup
+         v-else
+         tag="ul"
+         class="space-y-4 pr-1"
+         enter-active-class="transition-all duration-300 ease-out"
+         enter-from-class="opacity-0 translate-y-3"
+         enter-to-class="opacity-100 translate-y-0"
+       >
+         <li v-for="message in messages" :key="message.id">
+           <div
+             class="max-w-[90%] px-3.5 py-2.5 text-base leading-relaxed"
+             :class="
+               message.role === 'user'
+                 ? 'ml-auto rounded-2xl rounded-tr-sm bg-[#3a2e20] text-[#f5ede0]'
+                 : 'rounded-2xl rounded-tl-sm bg-[#f8f3ea] text-[#2f271f] border border-[#e0d5c0]'
+             "
+           >
+             <!-- User messages: plain text -->
+             <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
+             <!-- Assistant messages: rendered Markdown -->
+             <div
+               v-else
+               class="prose-warm"
+               v-html="renderMarkdown(message.content)"
+             />
+           </div>
+           <p
+             class="mt-1 text-sm text-[#9a8a78]"
+             :class="message.role === 'user' ? 'text-right' : ''"
+           >
+             {{ message.createdAt }}
+           </p>
+         </li>
+       </TransitionGroup>
+       
+       <!-- Scroll to bottom button -->
+       <button
+         v-if="messages.length > 0"
+         class="absolute bottom-2 right-2 rounded-md border border-[#d8cfbf] bg-transparent px-3 py-1.5 text-[0.95rem] text-[#6a5b49] transition-all duration-100 ease-in-out hover:bg-[#efe7d7] active:scale-95"
+         @click="scrollToBottom"
+       >
+         ⇩
+       </button>
+     </div>
 
     <div class="pt-3 mt-3 border-t border-gray-100 flex items-center gap-2 shrink-0">
       <textarea

@@ -36,6 +36,26 @@ function buildQuestionGenerationPrompt(count: number): string {
   );
 }
 
+function buildFallbackQuestions(count: number): string[] {
+  const templates = [
+    "这份资料最核心的研究问题是什么？请给出完整分析与依据。",
+    "这些来源中最关键的结论、观点或事实分别是什么？",
+    "不同来源之间有哪些一致、冲突或互补之处？",
+    "如果从背景、现状、趋势三个维度分析，这个主题应如何拆解？",
+    "这项主题背后的主要驱动因素、约束条件和风险分别是什么？",
+    "有哪些容易被忽略但实际影响较大的细节或边缘案例？",
+    "如果要向非专业读者解释，这个主题最重要的三个认识是什么？",
+    "当前材料支持哪些结论，又有哪些结论仍然证据不足？",
+    "从实践应用角度看，这些内容最值得采取的行动建议是什么？",
+    "如果继续深入研究，下一个最值得追问的问题是什么？",
+  ];
+
+  return Array.from({ length: count }, (_, index) => {
+    const base = templates[index % templates.length] ?? templates[0]!;
+    return count <= templates.length ? base : `${base}（第 ${index + 1} 轮）`;
+  });
+}
+
 /**
  * Parse a numbered list out of NotebookLM's plain-text response.
  * Accepts formats: "1. text", "1) text", "- text", "• text", "**1.** text".
@@ -127,9 +147,10 @@ export async function runAutoResearch(
     logger.info({ notebookId, count: questions.length }, "orchestrator: questions parsed");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error({ notebookId, err }, "orchestrator: question generation failed");
-    registry.fail(notebookId, message);
-    return;
+    logger.warn({ notebookId, err }, "orchestrator: question generation failed, falling back to built-in prompts");
+    questions = buildFallbackQuestions(targetCount);
+    registry.update(notebookId, { step: "waiting_answer" });
+    logger.info({ notebookId, count: questions.length, fallback: true, reason: message }, "orchestrator: using fallback questions");
   }
 
   // Clamp to targetCount in case NotebookLM returned more
