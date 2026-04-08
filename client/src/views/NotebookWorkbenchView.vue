@@ -29,7 +29,10 @@ const { showToast } = useToast();
 
 // ── Resizable panels ────────────────────────────────────────────────────────
 const LEFT_MIN = 200;
+const LEFT_MAX = 480;
 const RIGHT_MIN = 280;
+const RIGHT_MAX = 560;
+const CENTER_MIN = 320;
 const LEFT_INIT = 280;
 const RIGHT_INIT = 340;
 
@@ -37,12 +40,12 @@ const leftWidth = ref(LEFT_INIT);
 const rightWidth = ref(RIGHT_INIT);
 
 function onLeftDrag(delta: number) {
-  leftWidth.value = Math.max(LEFT_MIN, leftWidth.value + delta);
+  leftWidth.value = Math.min(LEFT_MAX, Math.max(LEFT_MIN, leftWidth.value + delta));
 }
 
 function onRightDrag(delta: number) {
   // Right divider: dragging right shrinks right panel, dragging left grows it
-  rightWidth.value = Math.max(RIGHT_MIN, rightWidth.value - delta);
+  rightWidth.value = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, rightWidth.value - delta));
 }
 
 const loading = ref(true);
@@ -480,7 +483,7 @@ onUnmounted(() => {
             <ResizeDivider @drag="onLeftDrag" />
 
             <!-- Center: Chat (flex-1) -->
-            <div class="flex-1 min-w-0">
+            <div class="flex-1 min-w-0" :style="{ minWidth: CENTER_MIN + 'px' }">
               <ChatPanel :messages="messages" :sending="sending" :on-send="onSendMessage" />
             </div>
 
