@@ -13,6 +13,7 @@
  */
 
 import logger from "../lib/logger.js";
+import { insertChatMessage } from "../db/chat-messages.js";
 import * as registry from "./registry.js";
 import type { OrchestratorOptions, ResearchDriver } from "./types.js";
 
@@ -176,6 +177,27 @@ export async function runAutoResearch(
         );
         const currentState = registry.get(notebookId);
         const newCount = (currentState?.completedCount ?? 0) + 1;
+
+        // Persist Q&A to DB so SSE-triggered refreshMessages() picks them up.
+        // Non-fatal: a failed write must not interrupt the research loop.
+        try {
+          await insertChatMessage({
+            id: crypto.randomUUID(),
+            notebookId,
+            role: "user",
+            content: question,
+            source: "research",
+          });
+          await insertChatMessage({
+            id: crypto.randomUUID(),
+            notebookId,
+            role: "assistant",
+            content: result.answer ?? "",
+            source: "research",
+          });
+        } catch (dbErr) {
+          logger.warn({ notebookId, turn: i + 1, err: dbErr }, "orchestrator: failed to persist Q&A to DB (non-fatal)");
+        }
 
         registry.update(notebookId, {
           step: "refreshing_messages",
