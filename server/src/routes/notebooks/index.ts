@@ -48,6 +48,7 @@ import {
   listSourceStateMap,
   mergeSourceStates,
 } from "../../source-state/service.js";
+import { insertChatMessage } from "../../db/chat-messages.js";
 
 const notebooks = new Hono();
 
@@ -312,6 +313,18 @@ notebooks.post("/:id/chat/messages", async (c) => {
       }
 
       try {
+        try {
+          await insertChatMessage({
+            id: crypto.randomUUID(),
+            notebookId: id,
+            role: "user",
+            content: content,
+            source: "manual",
+          });
+        } catch (dbErr) {
+          logger.warn({ err: dbErr, notebookId: id }, "failed to persist user chat message to DB");
+        }
+
         const response = await sendNotebookChatMessage(id, {
           prompt: content,
           ...(sourceIds.length > 0 ? { sourceIds } : {}),
@@ -320,6 +333,18 @@ notebooks.post("/:id/chat/messages", async (c) => {
             ? { conversationHistory: body.conversationHistory }
             : {}),
         });
+
+        try {
+          await insertChatMessage({
+            id: response.messageIds?.[1] ?? crypto.randomUUID(),
+            notebookId: id,
+            role: "assistant",
+            content: response.text,
+            source: "manual",
+          });
+        } catch (dbErr) {
+          logger.warn({ err: dbErr, notebookId: id }, "failed to persist assistant chat message to DB");
+        }
 
         const messageId = response.messageIds?.[1];
 
