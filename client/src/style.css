@@ -137,6 +137,157 @@ button {
   font-style: italic;
 }
 
+/* ── Tables ─────────────────────────────────────── */
+.prose-warm table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0;
+  font-size: 0.92em;
+}
+
+.prose-warm thead {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.prose-warm th {
+  font-weight: 600;
+  text-align: left;
+  padding: 0.45em 0.7em;
+  border-bottom: 2px solid #c8b89a;
+}
+
+.prose-warm td {
+  padding: 0.4em 0.7em;
+  border-bottom: 1px solid #ddd3c2;
+}
+
+.prose-warm tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Strikethrough ──────────────────────────────── */
+.prose-warm del {
+  text-decoration: line-through;
+  color: #9a8a78;
+}
+
+/* ── Task list checkboxes ───────────────────────── */
+.prose-warm ul:has(> li > input[type="checkbox"]) {
+  list-style: none;
+  padding-left: 0.3em;
+}
+
+.prose-warm input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1em;
+  height: 1em;
+  border: 1.5px solid #b0a08a;
+  border-radius: 3px;
+  vertical-align: -0.12em;
+  margin-right: 0.4em;
+  background-color: transparent;
+  cursor: default;
+  position: relative;
+}
+
+.prose-warm input[type="checkbox"]:checked {
+  background-color: #7b4a1e;
+  border-color: #7b4a1e;
+}
+
+.prose-warm input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 0.2em;
+  top: 0.02em;
+  width: 0.35em;
+  height: 0.6em;
+  border: solid #f5ede0;
+  border-width: 0 2px 2px 0;
+  transform: rotate(40deg);
+}
+
+/* ── Images ─────────────────────────────────────── */
+.prose-warm img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.5em 0;
+}
+
+/* ── highlight.js — warm paper theme ────────────── */
+.prose-warm .hljs {
+  color: #3d3327;
+  background: transparent;
+}
+
+.prose-warm .hljs-comment,
+.prose-warm .hljs-quote {
+  color: #9a8a78;
+  font-style: italic;
+}
+
+.prose-warm .hljs-keyword,
+.prose-warm .hljs-selector-tag,
+.prose-warm .hljs-built_in {
+  color: #8b4513;
+  font-weight: 600;
+}
+
+.prose-warm .hljs-string,
+.prose-warm .hljs-title,
+.prose-warm .hljs-attr {
+  color: #6b5b3a;
+}
+
+.prose-warm .hljs-number,
+.prose-warm .hljs-literal,
+.prose-warm .hljs-variable,
+.prose-warm .hljs-template-variable {
+  color: #9b5523;
+}
+
+.prose-warm .hljs-type,
+.prose-warm .hljs-class .hljs-title {
+  color: #5a6e3a;
+}
+
+.prose-warm .hljs-function,
+.prose-warm .hljs-name {
+  color: #614a2a;
+}
+
+.prose-warm .hljs-regexp,
+.prose-warm .hljs-link {
+  color: #8b5e3c;
+}
+
+.prose-warm .hljs-symbol,
+.prose-warm .hljs-bullet {
+  color: #a86b32;
+}
+
+.prose-warm .hljs-meta {
+  color: #8a7560;
+}
+
+.prose-warm .hljs-deletion {
+  background-color: rgba(180, 60, 40, 0.12);
+}
+
+.prose-warm .hljs-addition {
+  background-color: rgba(60, 120, 40, 0.12);
+}
+
+.prose-warm .hljs-emphasis {
+  font-style: italic;
+}
+
+.prose-warm .hljs-strong {
+  font-weight: 700;
+}
+
 /* ─── 全局滚动条 ──────────────────────────────────────────────────────────────
    细而暖，与书页背景融合，避免浏览器默认的灰色粗滚动条。
    ───────────────────────────────────────────────────────────────────────── */

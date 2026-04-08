@@ -29,10 +29,10 @@ const DEFAULT_TURN_DELAY_MS = 2000;
  */
 function buildQuestionGenerationPrompt(count: number): string {
   return (
-    `Based on the sources and documents in this notebook, please generate exactly ${count} ` +
-    `in-depth research questions that cover different aspects and angles of the material. ` +
-    `Format your response as a numbered list (1. Question one, 2. Question two, etc.). ` +
-    `Only output the numbered list, nothing else.`
+    `请根据本笔记本中的来源和文档，生成恰好 ${count} 个有深度的研究问题，` +
+    `覆盖材料的不同方面和角度。` +
+    `请以编号列表格式回复（1. 问题一，2. 问题二，以此类推）。` +
+    `只输出编号列表，不要输出其他内容。`
   );
 }
 

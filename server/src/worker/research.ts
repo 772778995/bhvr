@@ -159,14 +159,14 @@ async function compileSummary(
     .set({ status: "summarizing" })
     .where(eq(researchTasks.id, taskId));
 
-  const topicContext = topic ? `about "${topic}"` : "";
-  const summaryPrompt = `Based on all the sources and documents in this notebook, please compile a comprehensive research report ${topicContext}. The report should include:
-1. Executive Summary
-2. Key Findings (organized by theme)
-3. Detailed Analysis
-4. Conclusions and Recommendations
+  const topicContext = topic ? `关于「${topic}」` : "";
+  const summaryPrompt = `请根据本笔记本中的所有来源和文档，编写一份完整的研究报告${topicContext}。报告应包含以下部分：
+1. 摘要总结
+2. 关键发现（按主题组织）
+3. 详细分析
+4. 结论与建议
 
-Please be thorough and cite specific information from the sources where possible.`;
+请尽量详尽，并在可能的情况下引用来源中的具体信息。`;
 
   try {
     const summaryResult = await askNotebookWithRetry(taskId, notebookId, summaryPrompt, {
@@ -246,8 +246,8 @@ async function runResearch(taskId: string): Promise<void> {
         .set({ status: "generating_questions" })
         .where(eq(researchTasks.id, taskId));
 
-      const topicContext = topic ? `about "${topic}"` : "";
-      const generatePrompt = `Based on the uploaded documents/sources in this notebook, please generate exactly ${numQuestions} in-depth research questions ${topicContext}. These questions should cover different aspects and angles of the material. Format your response as a numbered list (1. Question one, 2. Question two, etc). Only output the numbered list, nothing else.`;
+      const topicContext = topic ? `关于「${topic}」` : "";
+      const generatePrompt = `请根据本笔记本中上传的文档和来源，生成恰好 ${numQuestions} 个有深度的研究问题${topicContext}。这些问题应覆盖材料的不同方面和角度。请以编号列表格式回复（1. 问题一，2. 问题二，以此类推）。只输出编号列表，不要输出其他内容。`;
 
       let generateResult: Awaited<ReturnType<typeof askNotebookWithRetry>>;
       try {

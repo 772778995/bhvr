@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, watch } from "vue";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { renderMarkdown } from "@/utils/markdown";
 import type { ChatMessage } from "@/api/notebooks";
 
 interface Props {
@@ -13,11 +12,6 @@ interface Props {
 const props = defineProps<Props>();
 const draft = ref("");
 const scrollContainerRef = ref<HTMLDivElement | null>(null);
-
-function renderMarkdown(content: string): string {
-  const raw = marked.parse(content);
-  return DOMPurify.sanitize(typeof raw === "string" ? raw : "");
-}
 
 function handleSubmit() {
   const value = draft.value.trim();
