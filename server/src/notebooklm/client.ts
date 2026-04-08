@@ -620,7 +620,7 @@ export function extractNotebookId(url: string): string {
 export async function askNotebook(notebookId: string, question: string): Promise<AskResult> {
   try {
     const quota = getQuotaStatus();
-    if (quota.remaining <= 0) {
+    if (quota.remaining !== null && quota.remaining <= 0) {
       return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
     }
 
@@ -806,12 +806,24 @@ export async function getNotebookMessages(
 ): Promise<NotebookMessage[]> {
   const messages = await runNotebookRequest(async (client) => {
     const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
+    logger.info(
+      {
+        notebookId,
+        threadCount: threadIds.length,
+        threadIds,
+        activeThreadId: options.activeThreadId ?? null,
+        hiddenThreadIds: options.hiddenThreadIds ?? [],
+      },
+      "getNotebookMessages: threads fetched"
+    );
+
     const orderedThreadIds = [
       ...(options.activeThreadId ? [options.activeThreadId] : []),
       ...threadIds.filter((threadId) => threadId !== options.activeThreadId),
     ];
 
     if (orderedThreadIds.length === 0) {
+      logger.info({ notebookId }, "getNotebookMessages: no threads found, returning empty");
       return [];
     }
 
@@ -819,7 +831,9 @@ export async function getNotebookMessages(
       orderedThreadIds.map(async (threadId) => await listNotebookHistoryMessages(client, notebookId, threadId))
     );
 
-    return mergeHistoryMessages(threadMessages, options.hiddenThreadIds ?? [], orderedThreadIds);
+    const merged = mergeHistoryMessages(threadMessages, options.hiddenThreadIds ?? [], orderedThreadIds);
+    logger.info({ notebookId, messageCount: merged.length }, "getNotebookMessages: merged");
+    return merged;
   });
 
   return messages;
@@ -832,7 +846,7 @@ export async function askNotebookForResearch(
 ): Promise<ResearchAskResult> {
   try {
     const quota = getQuotaStatus();
-    if (quota.remaining <= 0) {
+    if (quota.remaining !== null && quota.remaining <= 0) {
       return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
     }
 
@@ -860,11 +874,23 @@ export async function sendNotebookChatMessage(
 ): Promise<NotebookChatResponse> {
   try {
     const quota = getQuotaStatus();
-    if (quota.remaining <= 0) {
+    if (quota.remaining !== null && quota.remaining <= 0) {
       throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
     }
 
     consumeQuota();
+    const quotaAfter = getQuotaStatus();
+    logger.info(
+      {
+        notebookId,
+        promptChars: request.prompt.length,
+        hasConversationId: !!request.conversationId,
+        quotaUsed: quotaAfter.used,
+        quotaLimit: quotaAfter.limit ?? "unlimited",
+      },
+      "notebooklm: sending chat message"
+    );
+    const reqStart = Date.now();
     const result = await runNotebookRequest(async (client) => await client.generation.chat(notebookId, request.prompt, {
       sourceIds: request.sourceIds,
       conversationId: request.conversationId,
@@ -875,6 +901,11 @@ export async function sendNotebookChatMessage(
     if (!text) {
       throw new Error(extractNotebookChatError(result));
     }
+
+    logger.info(
+      { notebookId, responseChars: text.length, durationMs: Date.now() - reqStart },
+      "notebooklm: chat message received"
+    );
 
     return {
       text,

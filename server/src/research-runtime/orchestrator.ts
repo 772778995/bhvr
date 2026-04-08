@@ -130,6 +130,7 @@ export async function runAutoResearch(
 
     registry.update(notebookId, { step: "generating_question" });
 
+    const turnStart = Date.now();
     let question: string;
     try {
       const nextQuestion = await driver.nextQuestion(notebookId);
@@ -138,18 +139,22 @@ export async function runAutoResearch(
       }
 
       question = nextQuestion.question;
+      logger.info(
+        { notebookId, turn: i + 1, question: question.slice(0, 120) },
+        "orchestrator: question generated"
+      );
       registry.update(notebookId, {
         hiddenConversationIds: driver.getHiddenConversationIds(),
         ...(nextQuestion.plannerConversationId ? { hiddenConversationIds: driver.getHiddenConversationIds() } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error({ notebookId, err }, "orchestrator: next-question generation failed");
+      logger.error({ notebookId, turn: i + 1, err }, "orchestrator: next-question generation failed");
       registry.fail(notebookId, message);
       return;
     }
 
-    logger.debug({ notebookId, turn: i + 1 }, "orchestrator: asking question");
+    logger.info({ notebookId, turn: i + 1 }, "orchestrator: asking question");
 
     registry.update(notebookId, { step: "waiting_answer" });
 
@@ -165,9 +170,14 @@ export async function runAutoResearch(
         );
         registry.update(notebookId, { step: "refreshing_messages" });
       } else {
-        logger.debug({ notebookId, turn: i + 1 }, "orchestrator: answer received");
+        const turnMs = Date.now() - turnStart;
+        logger.info(
+          { notebookId, turn: i + 1, answerChars: result.answer?.length ?? 0, turnMs },
+          "orchestrator: answer received"
+        );
         const currentState = registry.get(notebookId);
         const newCount = (currentState?.completedCount ?? 0) + 1;
+
         registry.update(notebookId, {
           step: "refreshing_messages",
           completedCount: newCount,
