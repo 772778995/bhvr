@@ -252,17 +252,8 @@ async function onSendMessage(content: string) {
     return;
   }
 
-  const optimisticMessage: ChatMessage = {
-    id: crypto.randomUUID(),
-    role: "user",
-    content: trimmedContent,
-    createdAt: new Date().toISOString(),
-    status: "done",
-  };
-
   sending.value = true;
   startLoading('正在发送消息...');
-  messages.value = [...messages.value, optimisticMessage];
 
   try {
     const result = await notebooksApi.sendMessage(notebookId.value, {
@@ -273,14 +264,12 @@ async function onSendMessage(content: string) {
         : {}),
     });
 
-    messages.value = [...messages.value, result.message];
     activeConversationId.value = result.conversationId;
-    conversationHistory.value = messages.value.map((message) => ({
-      role: message.role,
-      message: message.content,
-    }));
+    conversationHistory.value = result.message
+      ? [...conversationHistory.value, { role: "user" as const, message: trimmedContent }, { role: "assistant" as const, message: result.message.content }]
+      : conversationHistory.value;
+    await refreshMessages();
   } catch (err) {
-    messages.value = messages.value.filter((message) => message.id !== optimisticMessage.id);
     pushNotice(err instanceof Error ? err.message : "发送消息失败", "error");
   } finally {
     sending.value = false;
