@@ -28,6 +28,7 @@ import {
   setReportError,
   upsertReport,
 } from "../../report/service.js";
+import { createNotebookConversationAsker } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
 import { get as getRuntimeState } from "../../research-runtime/registry.js";
 import {
@@ -385,15 +386,27 @@ notebooks.post("/:id/research/start", async (c) => {
         409
       );
     }
-
+    
     return await withNotebookAuthHandling(async () => {
       const sources = await getNotebookSources(id);
-      const sourceIds = sources.map((source) => source.id);
+      const enabledMap = await listSourceStateMap(id);
+      const mergedSources = mergeSourceStates(sources, enabledMap);
+      const sourceIds = listEnabledSourceIds(mergedSources);
+
+      if (sources.length === 0) {
+        return c.json(
+          {
+            success: false,
+            message: "该笔记本暂无来源，请先添加来源后再开始自动研究",
+            errorCode: "NO_SOURCES",
+          },
+          400
+        );
+      }
 
       void runAutoResearch(
         id,
-        (notebookId, prompt) =>
-          askNotebookForResearch(notebookId, prompt, sourceIds)
+        createNotebookConversationAsker(id, sourceIds, sendNotebookChatMessage)
       ).catch((err) => {
         void err;
       });

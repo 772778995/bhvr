@@ -227,12 +227,15 @@ test("GET /api/notebooks/:id/messages remains available when auth requires re-lo
 
   const response = await notebooks.request(`http://localhost/${notebookId}/messages`);
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
-    success: true,
-    data: [],
-    message: "NotebookLM 未提供历史会话接口，当前为降级空结果",
-  });
+  assert.equal(response.status, 502);
+  const body = await response.json() as {
+    success: boolean;
+    errorCode: string;
+    message: string;
+  };
+  assert.equal(body.success, false);
+  assert.equal(body.errorCode, "MESSAGES_FETCH_FAILED");
+  assert.match(body.message, /^获取对话记录失败:/);
 });
 
 test("GET /api/notebooks/:id/research/stream remains available when auth requires re-login", async () => {
