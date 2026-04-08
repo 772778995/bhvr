@@ -78,6 +78,19 @@ test("formatEmptyChatResponseError includes structural response hints", () => {
   assert.match(result, /firstChunk=text:0,response:0,error:false,code:none,rawData:undefined/);
 });
 
+test("extractNotebookChatError prefers chunk error code details over empty response", () => {
+  const result = __testOnly.extractNotebookChatError({
+    chunks: [
+      {
+        isError: true,
+        errorCode: 8,
+      },
+    ],
+  });
+
+  assert.equal(result, "NotebookLM 错误: Resource exhausted (code: 8)");
+});
+
 test("mergeHistoryMessages flattens threads and excludes internal threads", () => {
   const messages = __testOnly.mergeHistoryMessages(
     [

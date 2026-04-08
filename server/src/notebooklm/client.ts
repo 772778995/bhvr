@@ -12,6 +12,7 @@ import {
   SearchSourceType,
   SourceType,
   SourceStatus,
+  getErrorCode,
 } from "notebooklm-kit";
 import type { Notebook, Source } from "notebooklm-kit";
 import type {
@@ -521,6 +522,25 @@ function formatEmptyChatResponseError(result: {
   return `Empty response from NotebookLM (${details.join(", ")})`;
 }
 
+function extractNotebookChatError(result: {
+  chunks?: Array<{ isError?: boolean; errorCode?: number }>;
+  text?: string;
+  rawData?: unknown;
+  conversationId?: string;
+  messageIds?: [string, string];
+}): string {
+  const errorChunk = result.chunks?.find((chunk) => chunk.isError && typeof chunk.errorCode === "number");
+  if (errorChunk?.errorCode !== undefined) {
+    const definition = getErrorCode(errorChunk.errorCode);
+    if (definition) {
+      return `NotebookLM 错误: ${definition.message} (code: ${definition.code})`;
+    }
+    return `NotebookLM 错误: code ${errorChunk.errorCode}`;
+  }
+
+  return formatEmptyChatResponseError(result);
+}
+
 export const __testOnly = {
   get importPlaywright() {
     return testHooks.importPlaywright;
@@ -532,6 +552,7 @@ export const __testOnly = {
   extractChatResponseText,
   buildChatContextItems,
   formatEmptyChatResponseError,
+  extractNotebookChatError,
   mergeHistoryMessages,
 };
 
@@ -818,7 +839,7 @@ export async function askNotebookForResearch(
     const text = extractChatResponseText(result);
 
     if (!text) {
-      return { success: false, error: formatEmptyChatResponseError(result) };
+      return { success: false, error: extractNotebookChatError(result) };
     }
 
     return { success: true, answer: text, citations: result.citations || [] };
@@ -848,7 +869,7 @@ export async function sendNotebookChatMessage(
     const text = extractChatResponseText(result);
 
     if (!text) {
-      throw new Error(formatEmptyChatResponseError(result));
+      throw new Error(extractNotebookChatError(result));
     }
 
     return {
