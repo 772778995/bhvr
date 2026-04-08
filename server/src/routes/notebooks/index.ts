@@ -29,6 +29,7 @@ import {
   upsertReport,
 } from "../../report/service.js";
 import { createNotebookConversationAsker } from "../../research-runtime/chat-asker.js";
+import { getLiveMessages } from "../../research-runtime/live-messages.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
 import { get as getRuntimeState } from "../../research-runtime/registry.js";
 import {
@@ -214,6 +215,11 @@ notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
       try {
+        const liveMessages = getLiveMessages(id);
+        if (liveMessages.length > 0) {
+          return c.json(successResponse(liveMessages));
+        }
+
         const messages = await getNotebookMessages(id);
         return c.json(successResponse(messages));
       } catch (err) {
@@ -236,6 +242,11 @@ notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
       try {
+        const liveMessages = getLiveMessages(id);
+        if (liveMessages.length > 0) {
+          return c.json(successResponse(liveMessages));
+        }
+
         const messages = await getNotebookMessages(id);
         return c.json(successResponse(messages));
       } catch (err) {

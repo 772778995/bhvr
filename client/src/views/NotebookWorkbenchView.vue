@@ -319,14 +319,6 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
   if (event.type === "completed") {
     // Final refresh of messages after research finishes.
     void refreshMessages();
-    void notebooksApi
-      .getReport(notebookId.value)
-      .then((value) => {
-        report.value = value;
-      })
-      .catch(() => {
-        // Ignore report refresh failures here; the page remains usable.
-      });
   }
 
   if (event.type === "error" && event.payload?.lastError) {

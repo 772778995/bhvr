@@ -5,6 +5,7 @@ import type {
   ResearchAskResult,
 } from "../notebooklm/client.js";
 import type { AskFn } from "./types.js";
+import { appendAssistantMessage, appendUserMessage, clearLiveMessages } from "./live-messages.js";
 
 type SendNotebookChatMessage = (
   notebookId: string,
@@ -19,8 +20,12 @@ export function createNotebookConversationAsker(
   let conversationId: string | undefined;
   let conversationHistory: NotebookChatHistoryItem[] = [];
 
+  clearLiveMessages(notebookId);
+
   return async (_targetNotebookId: string, prompt: string): Promise<ResearchAskResult> => {
     try {
+      appendUserMessage(notebookId, prompt);
+
       const response = await sendMessage(notebookId, {
         prompt,
         ...(sourceIds.length > 0 ? { sourceIds } : {}),
@@ -32,6 +37,7 @@ export function createNotebookConversationAsker(
         return { success: false, error: "Empty response from NotebookLM" };
       }
 
+      appendAssistantMessage(notebookId, response.text);
       conversationId = response.conversationId ?? conversationId;
       conversationHistory = [
         ...conversationHistory,
