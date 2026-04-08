@@ -81,3 +81,24 @@ test("createNotebookConversationAsker maps send-message failures to unsuccessful
     error: "backend exploded",
   });
 });
+
+test("createNotebookConversationAsker accepts fallback response text when primary text is empty", async () => {
+  const ask = createNotebookConversationAsker(
+    "nb-1",
+    [],
+    async () => ({
+      text: "1. Recovery question",
+      conversationId: "conv-1",
+      messageIds: ["conv-1", "msg-1"],
+      citations: [],
+    })
+  );
+
+  const result = await ask("nb-1", "Generate questions");
+
+  assert.deepEqual(result, {
+    success: true,
+    answer: "1. Recovery question",
+    citations: [],
+  });
+});

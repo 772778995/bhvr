@@ -409,6 +409,33 @@ export async function disposeClient(): Promise<void> {
   await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
 }
 
+function extractChatResponseText(result: {
+  text?: string;
+  rawData?: unknown;
+  chunks?: Array<{ text?: string; response?: string }>;
+}): string {
+  if (typeof result.text === "string" && result.text.trim().length > 0) {
+    return result.text.trim();
+  }
+
+  const rawData = result.rawData;
+  if (Array.isArray(rawData) && rawData.length > 0) {
+    const first = rawData[0];
+    if (Array.isArray(first) && typeof first[0] === "string" && first[0].trim().length > 0) {
+      return first[0].trim();
+    }
+    if (typeof first === "string" && first.trim().length > 0) {
+      return first.trim();
+    }
+  }
+
+  const longestChunk = (result.chunks ?? [])
+    .map((chunk) => (chunk.text && chunk.text.trim()) || (chunk.response && chunk.response.trim()) || "")
+    .sort((a, b) => b.length - a.length)[0];
+
+  return longestChunk?.trim() ?? "";
+}
+
 export const __testOnly = {
   get importPlaywright() {
     return testHooks.importPlaywright;
@@ -417,6 +444,7 @@ export const __testOnly = {
     testHooks.importPlaywright = value;
   },
   silentRefreshForTests: silentRefresh,
+  extractChatResponseText,
 };
 
 export async function getAuthStatus(): Promise<AuthStatus> {
@@ -689,12 +717,13 @@ export async function askNotebookForResearch(
     const result = await runNotebookRequest(
       async (client) => await client.generation.chat(notebookId, prompt, sourceIds?.length ? { sourceIds } : undefined)
     );
+    const text = extractChatResponseText(result);
 
-    if (!result?.text) {
+    if (!text) {
       return { success: false, error: "Empty response from NotebookLM" };
     }
 
-    return { success: true, answer: result.text, citations: result.citations || [] };
+    return { success: true, answer: text, citations: result.citations || [] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("expired") || message.includes("401")) disposeClient();
@@ -718,13 +747,14 @@ export async function sendNotebookChatMessage(
       conversationId: request.conversationId,
       conversationHistory: request.conversationHistory,
     }));
+    const text = extractChatResponseText(result);
 
-    if (!result?.text) {
+    if (!text) {
       throw new Error("Empty response from NotebookLM");
     }
 
     return {
-      text: result.text,
+      text,
       conversationId: result.conversationId,
       messageIds: result.messageIds,
       citations: result.citations || [],
