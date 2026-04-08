@@ -88,7 +88,7 @@ test("extractNotebookChatError prefers chunk error code details over empty respo
     ],
   });
 
-  assert.equal(result, "NotebookLM 错误: Resource exhausted (code: 8)");
+  assert.equal(result, "您已达到每日对话次数上限，改日再来吧！");
 });
 
 test("mergeHistoryMessages flattens threads and excludes internal threads", () => {

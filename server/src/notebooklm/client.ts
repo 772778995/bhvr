@@ -531,6 +531,10 @@ function extractNotebookChatError(result: {
 }): string {
   const errorChunk = result.chunks?.find((chunk) => chunk.isError && typeof chunk.errorCode === "number");
   if (errorChunk?.errorCode !== undefined) {
+    if (errorChunk.errorCode === 8) {
+      return "您已达到每日对话次数上限，改日再来吧！";
+    }
+
     const definition = getErrorCode(errorChunk.errorCode);
     if (definition) {
       return `NotebookLM 错误: ${definition.message} (code: ${definition.code})`;
