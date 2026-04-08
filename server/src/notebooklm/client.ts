@@ -813,3 +813,20 @@ export async function addDiscoveredSources(
 export async function getSourceProcessingStatus(notebookId: string): Promise<SourceProcessingStatus> {
   return await runNotebookRequest(async (client) => await client.sources.status(notebookId));
 }
+
+export interface CreateNotebookInput {
+  title: string;
+}
+
+export async function createNotebook(input: CreateNotebookInput): Promise<NotebookDetail> {
+  try {
+    const notebook = await runNotebookRequest(async (client) =>
+      await client.notebooks.create({ title: input.title })
+    );
+    return mapNotebook(notebook);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ input, err }, "createNotebook: sdk.notebooks.create failed");
+    throw new Error(`Failed to create notebook: ${message}`);
+  }
+}

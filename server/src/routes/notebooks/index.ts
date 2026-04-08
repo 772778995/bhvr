@@ -6,6 +6,7 @@ import {
   addSourceFromText,
   addSourceFromUrl,
   askNotebookForResearch,
+  createNotebook,
   ensureNotebookAccessible,
   getNotebookDetail,
   getNotebookMessages,
@@ -85,6 +86,18 @@ notebooks.get("/", async (c) => {
   return await withNotebookAuthHandling(async () => {
     const response = await listNotebooks();
     return c.json(successResponse(response));
+  });
+});
+
+notebooks.post("/", async (c) => {
+  return await withNotebookAuthHandling(async () => {
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
+    const rawTitle = body["title"];
+    const title = typeof rawTitle === "string" && rawTitle.trim()
+      ? rawTitle.trim()
+      : "新笔记本";
+    const notebook = await createNotebook({ title });
+    return c.json(successResponse(notebook), 201);
   });
 });
 

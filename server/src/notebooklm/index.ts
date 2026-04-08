@@ -18,6 +18,7 @@ export {
   addDiscoveredSources,
   getSourceProcessingStatus,
   sendNotebookChatMessage,
+  createNotebook,
   // Types
   type AuthStatus,
   type AskResult,
@@ -32,6 +33,7 @@ export {
   type AccessCheckResult,
   type SourceAddResponse,
   type SourceSearchInput,
+  type CreateNotebookInput,
 } from "./client.js";
 
 export {

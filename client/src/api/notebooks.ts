@@ -141,6 +141,13 @@ export const notebooksApi = {
     return request<Notebook[]>("/api/notebooks");
   },
 
+  createNotebook(body: { title: string }) {
+    return request<Notebook>("/api/notebooks", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
   getNotebook(id: string) {
     return request<Notebook>(`/api/notebooks/${id}`);
   },
