@@ -85,7 +85,20 @@ onUnmounted(() => {
           authBannerVariant(authStatus) === 'error' && 'border-red-200 bg-red-50 text-red-700',
         ]"
       >
-        {{ authBannerMessage(authStatus) }}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>{{ authBannerMessage(authStatus) }}</span>
+          <router-link
+            to="/settings/accounts"
+            :class="[
+              'text-sm underline underline-offset-2 transition-colors',
+              authStatus?.status !== 'ready'
+                ? 'text-amber-700'
+                : 'text-[#2c2c2c] opacity-60',
+            ]"
+          >
+            管理账号
+          </router-link>
+        </div>
       </div>
 
       <CreateTaskForm @created="onTaskCreated" />

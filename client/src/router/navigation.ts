@@ -25,5 +25,10 @@ export function createAppRoutes({
       name: "notebook-workbench",
       component: notebookWorkbenchView,
     },
+    {
+      path: "/settings/accounts",
+      name: "accounts-settings",
+      component: () => import("@/views/AccountsView.vue"),
+    },
   ];
 }

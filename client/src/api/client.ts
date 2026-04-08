@@ -99,4 +99,24 @@ export const api = {
   getAuthStatus() {
     return request<AuthStatus>("/api/auth/status");
   },
+
+  listAccounts() {
+    return request<AccountsListResponse>("/api/auth/accounts");
+  },
+
+  triggerLogin(accountId: string) {
+    return request<{ message: string }>(`/api/auth/accounts/${accountId}/login`, {
+      method: "POST",
+    });
+  },
+
+  deleteAccount(accountId: string) {
+    return request<{ message: string }>(`/api/auth/accounts/${accountId}`, {
+      method: "DELETE",
+    });
+  },
 };
+
+export interface AccountsListResponse {
+  accounts: AuthStatus[];
+}
