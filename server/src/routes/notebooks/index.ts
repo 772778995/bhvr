@@ -250,30 +250,54 @@ notebooks.post("/:id/chat/messages", async (c) => {
       const enabledMap = await listSourceStateMap(id);
       const mergedSources = mergeSourceStates(sources, enabledMap);
       const sourceIds = listEnabledSourceIds(mergedSources);
-      const response = await sendNotebookChatMessage(id, {
-        prompt: content,
-        ...(sourceIds.length > 0 ? { sourceIds } : {}),
-        ...(body.conversationId ? { conversationId: body.conversationId } : {}),
-        ...(body.conversationHistory?.length
-          ? { conversationHistory: body.conversationHistory }
-          : {}),
-      });
 
-      const messageId = response.messageIds?.[1];
-
-      return c.json(
-        successResponse({
-          conversationId: response.conversationId ?? null,
-          message: {
-            id: messageId ?? crypto.randomUUID(),
-            role: "assistant" as const,
-            content: response.text,
-            createdAt: new Date().toISOString(),
-            status: "done" as const,
+      if (sources.length === 0) {
+        return c.json(
+          {
+            success: false,
+            message: "该笔记本暂无来源，请先添加来源后再对话",
+            errorCode: "NO_SOURCES",
           },
-          ...(response.messageIds ? { messageIds: response.messageIds } : {}),
-        })
-      );
+          400
+        );
+      }
+
+      try {
+        const response = await sendNotebookChatMessage(id, {
+          prompt: content,
+          ...(sourceIds.length > 0 ? { sourceIds } : {}),
+          ...(body.conversationId ? { conversationId: body.conversationId } : {}),
+          ...(body.conversationHistory?.length
+            ? { conversationHistory: body.conversationHistory }
+            : {}),
+        });
+
+        const messageId = response.messageIds?.[1];
+
+        return c.json(
+          successResponse({
+            conversationId: response.conversationId ?? null,
+            message: {
+              id: messageId ?? crypto.randomUUID(),
+              role: "assistant" as const,
+              content: response.text,
+              createdAt: new Date().toISOString(),
+              status: "done" as const,
+            },
+            ...(response.messageIds ? { messageIds: response.messageIds } : {}),
+          })
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json(
+          {
+            success: false,
+            message,
+            errorCode: "CHAT_FAILED",
+          },
+          502
+        );
+      }
     });
   });
 });
