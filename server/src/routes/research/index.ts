@@ -33,7 +33,7 @@ research.post("/", async (c) => {
   }
 
   const quota = getQuotaStatus();
-  if (quota.remaining <= 0) {
+  if (quota.remaining !== null && quota.remaining <= 0) {
     return c.json(
       {
         error: `Daily NotebookLM quota exceeded (${quota.limit}/day). Try again tomorrow.`,

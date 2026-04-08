@@ -1,15 +1,29 @@
-const DAILY_LIMIT = 50;
+/**
+ * Optional daily quota tracker for NotebookLM API calls.
+ *
+ * By default there is NO limit — the quota is unlimited.
+ * Set the DAILY_QUOTA_LIMIT environment variable to an integer to impose a
+ * per-day cap (resets at midnight UTC). A value of 0 also means unlimited.
+ *
+ * Example: DAILY_QUOTA_LIMIT=50 limits to 50 calls per day.
+ */
+
+const _raw = process.env.DAILY_QUOTA_LIMIT;
+const DAILY_LIMIT: number | null =
+  _raw && parseInt(_raw, 10) > 0 ? parseInt(_raw, 10) : null; // null = unlimited
 
 type QuotaState = {
   date: string;
   used: number;
 };
 
-type QuotaStatus = {
+export type QuotaStatus = {
   date: string;
   used: number;
-  limit: number;
-  remaining: number;
+  /** Daily limit, or null when unlimited. */
+  limit: number | null;
+  /** Remaining calls today, or null when unlimited. */
+  remaining: number | null;
 };
 
 let state: QuotaState = {
@@ -31,24 +45,24 @@ function rolloverIfNeeded(now: Date = new Date()): void {
 export function getQuotaStatus(now: Date = new Date()): QuotaStatus {
   rolloverIfNeeded(now);
 
+  const remaining =
+    DAILY_LIMIT !== null ? Math.max(DAILY_LIMIT - state.used, 0) : null;
+
   return {
     date: state.date,
     used: state.used,
     limit: DAILY_LIMIT,
-    remaining: Math.max(DAILY_LIMIT - state.used, 0),
+    remaining,
   };
 }
 
 export function canConsumeQuota(now: Date = new Date()): boolean {
-  return getQuotaStatus(now).remaining > 0;
+  if (DAILY_LIMIT === null) return true; // unlimited
+  return getQuotaStatus(now).remaining! > 0;
 }
 
 export function consumeQuota(now: Date = new Date()): QuotaStatus {
   rolloverIfNeeded(now);
-
-  if (state.used < DAILY_LIMIT) {
-    state.used += 1;
-  }
-
+  state.used += 1;
   return getQuotaStatus(now);
 }
