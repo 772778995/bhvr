@@ -56,6 +56,27 @@ test("buildChatContextItems uses sources for a new conversation", () => {
   ]);
 });
 
+test("formatEmptyChatResponseError includes structural response hints", () => {
+  const result = __testOnly.formatEmptyChatResponseError({
+    text: "",
+    conversationId: "conv-1",
+    messageIds: ["conv-1", "msg-1"],
+    rawData: [[""], null, { some: "value" }],
+    chunks: [
+      {
+        text: "",
+        response: "",
+      },
+    ],
+  });
+
+  assert.match(result, /Empty response from NotebookLM/);
+  assert.match(result, /conversationId=conv-1/);
+  assert.match(result, /messageIds=conv-1,msg-1/);
+  assert.match(result, /rawData=array\(3\)/);
+  assert.match(result, /chunks=1/);
+});
+
 test("mergeHistoryMessages flattens threads and excludes internal threads", () => {
   const messages = __testOnly.mergeHistoryMessages(
     [

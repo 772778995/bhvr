@@ -482,6 +482,33 @@ function buildChatContextItems(request: {
   return (request.sourceIds ?? []).map((sourceId) => [[sourceId]]);
 }
 
+function summarizeUnknownShape(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+  if (value === null) {
+    return "null";
+  }
+  return typeof value;
+}
+
+function formatEmptyChatResponseError(result: {
+  text?: string;
+  rawData?: unknown;
+  chunks?: Array<{ text?: string; response?: string }>;
+  conversationId?: string;
+  messageIds?: [string, string];
+}): string {
+  const details = [
+    result.conversationId ? `conversationId=${result.conversationId}` : "conversationId=none",
+    result.messageIds ? `messageIds=${result.messageIds.join(",")}` : "messageIds=none",
+    `rawData=${summarizeUnknownShape(result.rawData)}`,
+    `chunks=${result.chunks?.length ?? 0}`,
+  ];
+
+  return `Empty response from NotebookLM (${details.join(", ")})`;
+}
+
 export const __testOnly = {
   get importPlaywright() {
     return testHooks.importPlaywright;
@@ -492,6 +519,7 @@ export const __testOnly = {
   silentRefreshForTests: silentRefresh,
   extractChatResponseText,
   buildChatContextItems,
+  formatEmptyChatResponseError,
   mergeHistoryMessages,
 };
 
@@ -778,7 +806,7 @@ export async function askNotebookForResearch(
     const text = extractChatResponseText(result);
 
     if (!text) {
-      return { success: false, error: "Empty response from NotebookLM" };
+      return { success: false, error: formatEmptyChatResponseError(result) };
     }
 
     return { success: true, answer: text, citations: result.citations || [] };
@@ -808,7 +836,7 @@ export async function sendNotebookChatMessage(
     const text = extractChatResponseText(result);
 
     if (!text) {
-      throw new Error("Empty response from NotebookLM");
+      throw new Error(formatEmptyChatResponseError(result));
     }
 
     return {
