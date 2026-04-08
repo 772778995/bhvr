@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Source } from "@/api/notebooks";
+import SourceFavicon from '@/components/notebook-workbench/SourceFavicon.vue'
 
 interface Props {
   sources: Source[];
@@ -62,9 +63,10 @@ function typeLabel(type: string): string {
           :title="source.title"
           target="_blank"
           rel="noopener noreferrer"
-          class="block truncate text-base font-medium text-blue-700 hover:underline"
+          class="flex items-center gap-1.5 min-w-0 text-base font-medium text-blue-700 hover:underline"
         >
-          {{ source.title }}
+          <SourceFavicon :url="source.url" :size="16" />
+          <span class="truncate">{{ source.title }}</span>
         </a>
         <p v-else class="truncate text-base font-medium text-gray-900" :title="source.title">
           {{ source.title }}

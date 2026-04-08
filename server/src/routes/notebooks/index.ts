@@ -1,5 +1,7 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
+import type { SSEStreamingApi } from "hono/streaming";
+import logger from "../../lib/logger.js";
 import {
   addDiscoveredSources,
   addSourceFromFile,
@@ -213,15 +215,26 @@ notebooks.get("/:id/sources/status", async (c) => {
 notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
+      logger.info({ notebookId: id }, "messages: request received");
       try {
         const runtime = getRuntimeState(id);
+        logger.info(
+          {
+            notebookId: id,
+            activeConversationId: runtime?.activeConversationId ?? null,
+            hiddenConversationIds: runtime?.hiddenConversationIds ?? [],
+          },
+          "messages: runtime state"
+        );
         const messages = await getNotebookMessages(id, {
           hiddenThreadIds: runtime?.hiddenConversationIds,
           activeThreadId: runtime?.activeConversationId,
         });
+        logger.info({ notebookId: id, count: messages.length }, "messages: response sent");
         return c.json(successResponse(messages));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        logger.warn({ notebookId: id, err }, "messages: fetch failed");
         return c.json(
           {
             success: false,
@@ -341,6 +354,7 @@ notebooks.post("/:id/chat/messages", async (c) => {
 notebooks.get("/:id/research/stream", async (c) => {
   return await withNotebookId(c, (id) =>
     streamSSE(c, async (stream) => {
+      logger.info({ notebookId: id }, "sse: client connected to research stream");
       const stopHeartbeat = startHeartbeat(stream);
       const unsubscribe = attachRegistrySubscription(stream, id);
 
@@ -351,6 +365,7 @@ notebooks.get("/:id/research/stream", async (c) => {
       } finally {
         stopHeartbeat();
         unsubscribe();
+        logger.info({ notebookId: id }, "sse: client disconnected from research stream");
       }
     })
   );
@@ -510,6 +525,191 @@ notebooks.post("/:id/report/generate", async (c) => {
         })
       );
     });
+  });
+});
+
+// SSE streaming helper functions
+
+async function emitProgress(stream: SSEStreamingApi, step: string, message: string): Promise<void> {
+  try {
+    await stream.writeSSE({ event: 'progress', data: JSON.stringify({ step, message }) });
+  } catch { /* stream closed */ }
+}
+
+async function emitComplete(stream: SSEStreamingApi, result: object): Promise<void> {
+  try {
+    await stream.writeSSE({ event: 'complete', data: JSON.stringify(result) });
+  } catch { /* stream closed */ }
+}
+
+async function pollUntilReady(
+  notebookId: string,
+  stream: SSEStreamingApi,
+  timeoutMs = 90000,
+  pollIntervalMs = 2000
+): Promise<boolean> {
+  const start = Date.now();
+  let pollCount = 0;
+  while (Date.now() - start < timeoutMs) {
+    pollCount++;
+    await new Promise<void>(resolve => setTimeout(resolve, pollIntervalMs));
+    try {
+      const status = await getSourceProcessingStatus(notebookId);
+      if (status.allReady) return true;
+      await emitProgress(stream, 'processing', `正在处理来源 (第${pollCount}次检查)...`);
+    } catch {
+      await emitProgress(stream, 'processing', `检查状态失败，继续等待... (${pollCount})`);
+    }
+  }
+  return false;
+}
+
+// SSE streaming source endpoints
+
+notebooks.post("/:id/sources/stream/add/url", async (c) => {
+  const id = parseNotebookIdOrNull(c.req.param("id"));
+  if (!id) return c.json(invalidNotebookIdResponse(), 400);
+
+  const parsed = parseUrlBody(await c.req.json().catch(() => ({})));
+  if (!parsed.ok) return c.json({ success: false, message: parsed.message }, 400);
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await emitProgress(stream, 'init', '正在准备连接...');
+      await emitProgress(stream, 'submitting', '正在提交网页来源...');
+
+      const result = await addSourceFromUrl(id, parsed.value);
+
+      await emitProgress(stream, 'submitted', `来源已提交 (共${result.sourceIds.length}个)，等待处理...`);
+
+      const ready = await pollUntilReady(id, stream);
+
+      if (ready) {
+        await emitComplete(stream, { success: true, result });
+      } else {
+        await emitComplete(stream, { success: false, timedOut: true, error: '来源处理超时，请稍后刷新查看状态' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await emitComplete(stream, { success: false, error: message });
+    }
+  });
+});
+
+notebooks.post("/:id/sources/stream/add/text", async (c) => {
+  const id = parseNotebookIdOrNull(c.req.param("id"));
+  if (!id) return c.json(invalidNotebookIdResponse(), 400);
+
+  const parsed = parseTextBody(await c.req.json().catch(() => ({})));
+  if (!parsed.ok) return c.json({ success: false, message: parsed.message }, 400);
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await emitProgress(stream, 'init', '正在准备连接...');
+      await emitProgress(stream, 'submitting', '正在提交文本来源...');
+
+      const result = await addSourceFromText(id, parsed.value);
+
+      await emitProgress(stream, 'submitted', `来源已提交，等待处理...`);
+
+      const ready = await pollUntilReady(id, stream);
+
+      if (ready) {
+        await emitComplete(stream, { success: true, result });
+      } else {
+        await emitComplete(stream, { success: false, timedOut: true, error: '来源处理超时，请稍后刷新查看状态' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await emitComplete(stream, { success: false, error: message });
+    }
+  });
+});
+
+notebooks.post("/:id/sources/stream/add/file", async (c) => {
+  const id = parseNotebookIdOrNull(c.req.param("id"));
+  if (!id) return c.json(invalidNotebookIdResponse(), 400);
+
+  const formData = await c.req.formData().catch(() => null);
+  if (!formData) return c.json({ success: false, message: "Invalid multipart form data" }, 400);
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) return c.json({ success: false, message: "file is required" }, 400);
+
+  const content = Buffer.from(await file.arrayBuffer());
+  const fileInfo = { fileName: file.name, mimeType: file.type || undefined, content };
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await emitProgress(stream, 'init', '正在准备连接...');
+      await emitProgress(stream, 'submitting', `正在上传文件 "${file.name}"...`);
+
+      const result = await addSourceFromFile(id, fileInfo);
+
+      await emitProgress(stream, 'submitted', `文件已上传，等待处理...`);
+
+      const ready = await pollUntilReady(id, stream);
+
+      if (ready) {
+        await emitComplete(stream, { success: true, result });
+      } else {
+        await emitComplete(stream, { success: false, timedOut: true, error: '来源处理超时，请稍后刷新查看状态' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await emitComplete(stream, { success: false, error: message });
+    }
+  });
+});
+
+notebooks.post("/:id/sources/stream/search-and-add", async (c) => {
+  const id = parseNotebookIdOrNull(c.req.param("id"));
+  if (!id) return c.json(invalidNotebookIdResponse(), 400);
+
+  const parsed = parseSearchBody(await c.req.json().catch(() => ({})));
+  if (!parsed.ok) return c.json({ success: false, message: parsed.message }, 400);
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await emitProgress(stream, 'searching', '正在搜索网络来源...');
+
+      const searchResult = await searchWebSources(id, parsed.value);
+
+      const webSources = searchResult.web.map(item => ({ title: item.title, url: item.url }));
+      const driveSources = searchResult.drive.map(item => ({
+        fileId: item.fileId,
+        title: item.title,
+        mimeType: item.mimeType,
+      }));
+
+      const totalFound = webSources.length + driveSources.length;
+
+      if (totalFound === 0) {
+        await emitComplete(stream, { success: false, error: '未找到可添加来源，请调整搜索词后重试。' });
+        return;
+      }
+
+      await emitProgress(stream, 'found', `找到 ${totalFound} 条来源，正在添加...`);
+
+      const addResult = await addDiscoveredSources(id, {
+        sessionId: searchResult.sessionId,
+        ...(webSources.length ? { webSources } : {}),
+        ...(driveSources.length ? { driveSources } : {}),
+      });
+
+      await emitProgress(stream, 'added', `已添加 ${addResult.sourceIds.length} 个来源，等待处理...`);
+
+      const ready = await pollUntilReady(id, stream);
+
+      if (ready) {
+        await emitComplete(stream, { success: true, result: addResult });
+      } else {
+        await emitComplete(stream, { success: false, timedOut: true, error: '来源处理超时，请稍后刷新查看状态' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await emitComplete(stream, { success: false, error: message });
+    }
   });
 });
 

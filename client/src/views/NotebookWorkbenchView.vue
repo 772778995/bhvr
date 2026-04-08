@@ -9,6 +9,7 @@ import {
   type ResearchState,
   type SendMessageHistoryItem,
   type Source,
+  type SourceAddResponse,
 } from "@/api/notebooks";
 import {
   payloadToState,
@@ -23,9 +24,13 @@ import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue
 import ResizeDivider from "@/components/notebook-workbench/ResizeDivider.vue";
 import AppToast from "@/components/ui/AppToast.vue";
 import { useToast } from "@/composables/useToast";
+import { useGlobalLoader } from "@/composables/useGlobalLoader";
+import FullscreenLoader from "@/components/ui/FullscreenLoader.vue";
+import { streamPostSSE } from "@/api/source-stream";
 
 const route = useRoute();
 const { showToast } = useToast();
+const { visible: loaderVisible, loaderTitle, entries: loaderEntries, startLoading, addEntry, stopLoading } = useGlobalLoader();
 
 // ── Resizable panels ────────────────────────────────────────────────────────
 const LEFT_MIN = 200;
@@ -75,7 +80,6 @@ const researchState = ref<ResearchState>({
 
 const report = ref<NotebookReport | null>(null);
 const addSourceOpen = ref(false);
-const addSourceBusy = ref(false);
 const sending = ref(false);
 const activeConversationId = ref<string | null>(null);
 const conversationHistory = ref<SendMessageHistoryItem[]>([]);
@@ -149,119 +153,96 @@ async function refreshSources() {
   sources.value = await notebooksApi.getSources(notebookId.value);
 }
 
-async function waitForSourcesReady(timeoutMs = 60000): Promise<boolean> {
-  if (!notebookId.value) {
-    return false;
-  }
-
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const status = await notebooksApi.getSourceProcessingStatus(notebookId.value);
-    if (status.allReady) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-
-  return false;
-}
-
 async function handleSourceAdded(closeDialog = true) {
-  const ready = await waitForSourcesReady();
   await refreshSources();
   if (closeDialog) {
     addSourceOpen.value = false;
   }
-  if (!ready) {
-    pushNotice("来源已提交，仍在处理中。列表已刷新。请稍后重试查看完整状态。");
-  }
 }
 
 async function onAddSourceUrl(payload: { url: string; title?: string }) {
-  if (!notebookId.value) {
-    return;
-  }
-
-  addSourceBusy.value = true;
-  try {
-    await notebooksApi.addSourceFromUrl(notebookId.value, payload);
-    await handleSourceAdded();
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "添加网站来源失败", "error");
-  } finally {
-    addSourceBusy.value = false;
+  if (!notebookId.value) return;
+  addSourceOpen.value = false;
+  startLoading('正在添加网页来源...');
+  const result = await streamPostSSE<SourceAddResponse>(
+    `/api/notebooks/${notebookId.value}/sources/stream/add/url`,
+    payload,
+    (p) => addEntry('info', p.message)
+  );
+  stopLoading();
+  if (result.success) {
+    await refreshSources();
+  } else if (result.timedOut) {
+    await refreshSources();
+    pushNotice('来源已提交，仍在处理中。列表已刷新，请稍后查看完整状态。');
+  } else {
+    pushNotice(result.error ?? '添加网站来源失败', 'error');
   }
 }
 
 async function onAddSourceText(payload: { title: string; content: string }) {
-  if (!notebookId.value) {
-    return;
-  }
-
-  addSourceBusy.value = true;
-  try {
-    await notebooksApi.addSourceFromText(notebookId.value, payload);
-    await handleSourceAdded();
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "添加文本来源失败", "error");
-  } finally {
-    addSourceBusy.value = false;
+  if (!notebookId.value) return;
+  addSourceOpen.value = false;
+  startLoading('正在添加文本来源...');
+  const result = await streamPostSSE<SourceAddResponse>(
+    `/api/notebooks/${notebookId.value}/sources/stream/add/text`,
+    payload,
+    (p) => addEntry('info', p.message)
+  );
+  stopLoading();
+  if (result.success) {
+    await refreshSources();
+  } else if (result.timedOut) {
+    await refreshSources();
+    pushNotice('来源已提交，仍在处理中。列表已刷新，请稍后查看完整状态。');
+  } else {
+    pushNotice(result.error ?? '添加文本来源失败', 'error');
   }
 }
 
 async function onAddSourceFile(file: File) {
-  if (!notebookId.value) {
-    return;
-  }
-
-  addSourceBusy.value = true;
-  try {
-    await notebooksApi.addSourceFromFile(notebookId.value, file);
-    await handleSourceAdded();
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "上传文件来源失败", "error");
-  } finally {
-    addSourceBusy.value = false;
+  if (!notebookId.value) return;
+  addSourceOpen.value = false;
+  startLoading('正在上传文件来源...');
+  const formData = new FormData();
+  formData.append('file', file);
+  const result = await streamPostSSE<SourceAddResponse>(
+    `/api/notebooks/${notebookId.value}/sources/stream/add/file`,
+    formData,
+    (p) => addEntry('info', p.message)
+  );
+  stopLoading();
+  if (result.success) {
+    await refreshSources();
+  } else if (result.timedOut) {
+    await refreshSources();
+    pushNotice('来源已提交，仍在处理中。列表已刷新，请稍后查看完整状态。');
+  } else {
+    pushNotice(result.error ?? '上传文件来源失败', 'error');
   }
 }
 
 async function onSearchAndAddSources(payload: {
   query: string;
-  sourceType: "web" | "drive";
-  mode: "fast" | "deep";
+  sourceType: 'web' | 'drive';
+  mode: 'fast' | 'deep';
 }) {
-  if (!notebookId.value) {
-    return;
-  }
-
-  addSourceBusy.value = true;
-
-  try {
-    const searchResult = await notebooksApi.searchSources(notebookId.value, payload);
-
-    const webSources = searchResult.web.map((item) => ({ title: item.title, url: item.url }));
-    const driveSources = searchResult.drive.map((item) => ({
-      fileId: item.fileId,
-      title: item.title,
-      mimeType: item.mimeType,
-    }));
-
-    if (webSources.length === 0 && driveSources.length === 0) {
-      pushNotice("未找到可添加来源，请调整搜索词后重试。");
-      return;
-    }
-
-    await notebooksApi.addDiscoveredSources(notebookId.value, {
-      sessionId: searchResult.sessionId,
-      ...(webSources.length ? { webSources } : {}),
-      ...(driveSources.length ? { driveSources } : {}),
-    });
-
-    await handleSourceAdded();
-  } catch (e) {
-    pushNotice(e instanceof Error ? e.message : "搜索并添加来源失败", "error");
-  } finally {
-    addSourceBusy.value = false;
+  if (!notebookId.value) return;
+  addSourceOpen.value = false;
+  startLoading('正在搜索并添加来源...');
+  const result = await streamPostSSE(
+    `/api/notebooks/${notebookId.value}/sources/stream/search-and-add`,
+    payload,
+    (p) => addEntry('info', p.message)
+  );
+  stopLoading();
+  if (result.success) {
+    await refreshSources();
+  } else if (result.timedOut) {
+    await refreshSources();
+    pushNotice('来源已提交，仍在处理中。列表已刷新，请稍后查看完整状态。');
+  } else if (result.error) {
+    pushNotice(result.error, 'error');
   }
 }
 
@@ -280,6 +261,7 @@ async function onSendMessage(content: string) {
   };
 
   sending.value = true;
+  startLoading('正在发送消息...');
   messages.value = [...messages.value, optimisticMessage];
 
   try {
@@ -302,6 +284,7 @@ async function onSendMessage(content: string) {
     pushNotice(err instanceof Error ? err.message : "发送消息失败", "error");
   } finally {
     sending.value = false;
+    stopLoading();
   }
 }
 
@@ -390,6 +373,7 @@ async function onGenerateReport() {
   }
 
   try {
+    startLoading('正在生成报告...');
     await notebooksApi.generateReport(notebookId.value);
     pushNotice("报告生成请求已提交，请稍候...");
 
@@ -405,6 +389,8 @@ async function onGenerateReport() {
     }, 3000);
   } catch (err) {
     pushNotice(err instanceof Error ? err.message : "生成报告失败", "error");
+  } finally {
+    stopLoading();
   }
 }
 
@@ -489,6 +475,7 @@ onUnmounted(() => {
 <template>
   <div class="h-full overflow-hidden bg-[#e9dfcf] text-[#2f271f]">
     <AppToast />
+    <FullscreenLoader :visible="loaderVisible" :title="loaderTitle" :entries="loaderEntries" />
     <div class="h-full bg-[linear-gradient(180deg,_rgba(248,242,231,0.98),_rgba(237,228,212,0.98))]">
       <div v-if="loading" class="h-full flex items-center justify-center text-base text-[#6f6354]">
         正在加载工作台...
@@ -554,7 +541,7 @@ onUnmounted(() => {
 
         <AddSourceDialog
           :open="addSourceOpen"
-          :busy="addSourceBusy"
+          :busy="false"
           :on-close="onCloseAddSourceDialog"
           :on-add-url="onAddSourceUrl"
           :on-add-text="onAddSourceText"
