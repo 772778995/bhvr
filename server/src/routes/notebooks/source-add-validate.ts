@@ -103,9 +103,18 @@ export function parseSearchBody(
   return { ok: true, value: { query, sourceType, mode } };
 }
 
+type DiscoveredWebSource = { url: string; title: string; id?: string; type?: string };
+type DiscoveredDriveSource = { fileId: string; mimeType: string; title: string; id?: string };
+
+export type ParsedDiscoveredSources = {
+  sessionId: string;
+  webSources?: DiscoveredWebSource[];
+  driveSources?: DiscoveredDriveSource[];
+};
+
 export function parseDiscoveredSourcesBody(
   body: unknown,
-): ParseResult<{ sessionId: string; sourceIds: string[] }> {
+): ParseResult<ParsedDiscoveredSources> {
   const obj = asObject(body);
   if (!obj) {
     return { ok: false, message: "Invalid request body" };
@@ -116,18 +125,64 @@ export function parseDiscoveredSourcesBody(
     return { ok: false, message: "sessionId is required" };
   }
 
-  if (!Array.isArray(obj.sourceIds)) {
-    return { ok: false, message: "sourceIds is required" };
+  const hasWeb = Object.hasOwn(obj, "webSources");
+  const hasDrive = Object.hasOwn(obj, "driveSources");
+
+  if (!hasWeb && !hasDrive) {
+    return { ok: false, message: "webSources or driveSources is required" };
   }
 
-  const sourceIds = obj.sourceIds.map((value) => asTrimmedString(value));
-  if (sourceIds.length === 0) {
-    return { ok: false, message: "sourceIds must contain at least one id" };
+  let webSources: DiscoveredWebSource[] | undefined;
+  if (hasWeb) {
+    if (!Array.isArray(obj.webSources)) {
+      return { ok: false, message: "webSources must be an array" };
+    }
+    const parsed: DiscoveredWebSource[] = [];
+    for (const item of obj.webSources) {
+      const o = asObject(item);
+      if (!o) return { ok: false, message: "webSources items must be objects" };
+      const url = asTrimmedString(o.url);
+      const title = asTrimmedString(o.title);
+      if (!url || !isHttpUrl(url)) return { ok: false, message: "webSources items must have a valid url" };
+      if (!title) return { ok: false, message: "webSources items must have a title" };
+      const id = asTrimmedString(o.id);
+      const type = asTrimmedString(o.type);
+      parsed.push({ url, title, ...(id ? { id } : {}), ...(type ? { type } : {}) });
+    }
+    webSources = parsed;
   }
 
-  if (sourceIds.some((value) => !value)) {
-    return { ok: false, message: "sourceIds must contain non-empty strings" };
+  let driveSources: DiscoveredDriveSource[] | undefined;
+  if (hasDrive) {
+    if (!Array.isArray(obj.driveSources)) {
+      return { ok: false, message: "driveSources must be an array" };
+    }
+    const parsed: DiscoveredDriveSource[] = [];
+    for (const item of obj.driveSources) {
+      const o = asObject(item);
+      if (!o) return { ok: false, message: "driveSources items must be objects" };
+      const fileId = asTrimmedString(o.fileId);
+      const mimeType = asTrimmedString(o.mimeType);
+      const title = asTrimmedString(o.title);
+      if (!fileId) return { ok: false, message: "driveSources items must have a fileId" };
+      if (!mimeType) return { ok: false, message: "driveSources items must have a mimeType" };
+      if (!title) return { ok: false, message: "driveSources items must have a title" };
+      const id = asTrimmedString(o.id);
+      parsed.push({ fileId, mimeType, title, ...(id ? { id } : {}) });
+    }
+    driveSources = parsed;
   }
 
-  return { ok: true, value: { sessionId, sourceIds } };
+  if ((webSources?.length ?? 0) === 0 && (driveSources?.length ?? 0) === 0) {
+    return { ok: false, message: "webSources or driveSources must contain at least one item" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      sessionId,
+      ...(webSources ? { webSources } : {}),
+      ...(driveSources ? { driveSources } : {}),
+    },
+  };
 }
