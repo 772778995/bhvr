@@ -9,6 +9,7 @@ import {
   addSourceFromUrl,
   askNotebookForResearch,
   createNotebook,
+  deleteSource,
   ensureNotebookAccessible,
   getNotebookDetail,
   getNotebookSources,
@@ -48,6 +49,7 @@ import {
   listEnabledSourceIds,
   listSourceStateMap,
   mergeSourceStates,
+  deleteSourceState,
 } from "../../source-state/service.js";
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 
@@ -210,6 +212,22 @@ notebooks.get("/:id/sources/status", async (c) => {
     return await withNotebookAuthHandling(async () => {
       const result = await getSourceProcessingStatus(id);
       return c.json(successResponse(result));
+    });
+  });
+});
+
+notebooks.delete("/:id/sources/:sourceId", async (c) => {
+  return await withNotebookId(c, async (notebookId) => {
+    const sourceId = c.req.param("sourceId");
+    return await withNotebookAuthHandling(async () => {
+      await deleteSource(notebookId, sourceId);
+      // Clean up local source state (best-effort, non-fatal)
+      try {
+        await deleteSourceState(notebookId, sourceId);
+      } catch (err) {
+        logger.warn({ notebookId, sourceId, err }, "Failed to clean up source state");
+      }
+      return c.body(null, 204);
     });
   });
 });

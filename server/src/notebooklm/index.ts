@@ -17,6 +17,7 @@ export {
   searchWebSources,
   addDiscoveredSources,
   getSourceProcessingStatus,
+  deleteSource,
   sendNotebookChatMessage,
   createNotebook,
   // Types

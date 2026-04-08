@@ -994,6 +994,10 @@ export async function getSourceProcessingStatus(notebookId: string): Promise<Sou
   return await runNotebookRequest(async (client) => await client.sources.status(notebookId));
 }
 
+export async function deleteSource(notebookId: string, sourceId: string): Promise<void> {
+  await runNotebookRequest(async (client) => await client.sources.delete(notebookId, sourceId));
+}
+
 export interface CreateNotebookInput {
   title: string;
 }

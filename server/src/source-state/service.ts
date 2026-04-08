@@ -37,6 +37,20 @@ export async function listSourceStateMap(
   return new Map(rows.map((r) => [r.sourceId, r.enabled]));
 }
 
+export async function deleteSourceState(
+  notebookId: string,
+  sourceId: string
+): Promise<void> {
+  await db
+    .delete(notebookSourceStates)
+    .where(
+      and(
+        eq(notebookSourceStates.notebookId, notebookId),
+        eq(notebookSourceStates.sourceId, sourceId)
+      )
+    );
+}
+
 export async function setSourceEnabled(
   notebookId: string,
   sourceId: string,

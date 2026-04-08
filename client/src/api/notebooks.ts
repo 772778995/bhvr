@@ -129,6 +129,11 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
     throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
   }
 
+  // 204 No Content — nothing to parse
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
   const body = await res.json() as ApiResponse<T> | T;
   if (typeof body === "object" && body !== null && "success" in body) {
     const typed = body as ApiResponse<T>;
@@ -211,6 +216,12 @@ export const notebooksApi = {
 
   getSourceProcessingStatus(id: string) {
     return request<SourceProcessingStatus>(`/api/notebooks/${id}/sources/status`);
+  },
+
+  deleteSource(notebookId: string, sourceId: string) {
+    return request<void>(`/api/notebooks/${notebookId}/sources/${sourceId}`, {
+      method: "DELETE",
+    });
   },
 
   /** Chat messages for a notebook. */
