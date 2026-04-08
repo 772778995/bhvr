@@ -492,18 +492,30 @@ function summarizeUnknownShape(value: unknown): string {
   return typeof value;
 }
 
+function summarizeChunk(chunk: { text?: string; response?: string; isError?: boolean; errorCode?: number; rawData?: unknown }): string {
+  return [
+    `text:${chunk.text?.length ?? 0}`,
+    `response:${chunk.response?.length ?? 0}`,
+    `error:${chunk.isError ? "true" : "false"}`,
+    `code:${chunk.errorCode ?? "none"}`,
+    `rawData:${summarizeUnknownShape(chunk.rawData)}`,
+  ].join(",");
+}
+
 function formatEmptyChatResponseError(result: {
   text?: string;
   rawData?: unknown;
-  chunks?: Array<{ text?: string; response?: string }>;
+  chunks?: Array<{ text?: string; response?: string; isError?: boolean; errorCode?: number; rawData?: unknown }>;
   conversationId?: string;
   messageIds?: [string, string];
 }): string {
+  const firstChunk = result.chunks?.[0];
   const details = [
     result.conversationId ? `conversationId=${result.conversationId}` : "conversationId=none",
     result.messageIds ? `messageIds=${result.messageIds.join(",")}` : "messageIds=none",
     `rawData=${summarizeUnknownShape(result.rawData)}`,
     `chunks=${result.chunks?.length ?? 0}`,
+    `firstChunk=${firstChunk ? summarizeChunk(firstChunk) : "none"}`,
   ];
 
   return `Empty response from NotebookLM (${details.join(", ")})`;

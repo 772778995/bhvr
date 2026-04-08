@@ -75,6 +75,7 @@ test("formatEmptyChatResponseError includes structural response hints", () => {
   assert.match(result, /messageIds=conv-1,msg-1/);
   assert.match(result, /rawData=array\(3\)/);
   assert.match(result, /chunks=1/);
+  assert.match(result, /firstChunk=text:0,response:0,error:false,code:none,rawData:undefined/);
 });
 
 test("mergeHistoryMessages flattens threads and excludes internal threads", () => {
