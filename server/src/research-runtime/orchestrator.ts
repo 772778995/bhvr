@@ -145,7 +145,6 @@ export async function runAutoResearch(
       );
       registry.update(notebookId, {
         hiddenConversationIds: driver.getHiddenConversationIds(),
-        ...(nextQuestion.plannerConversationId ? { hiddenConversationIds: driver.getHiddenConversationIds() } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
