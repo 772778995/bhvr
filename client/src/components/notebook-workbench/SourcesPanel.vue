@@ -5,6 +5,7 @@ import SourceIcon from '@/components/notebook-workbench/SourceIcon.vue'
 interface Props {
   sources: Source[];
   onAddSource: () => void;
+  onDeleteSource?: (sourceId: string) => void;
 }
 
 defineProps<Props>();
@@ -55,20 +56,31 @@ function typeLabel(type: string): string {
       <li
         v-for="source in sources"
         :key="source.id"
-        class="border border-gray-200 rounded-md p-3 transition-colors duration-100 hover:border-gray-300 hover:bg-gray-50"
+        class="group relative border border-gray-200 rounded-md p-3 transition-colors duration-100 hover:border-gray-300 hover:bg-gray-50"
       >
+        <button
+          v-if="onDeleteSource"
+          type="button"
+          class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-100 hover:bg-gray-200 hover:text-gray-700"
+          title="删除来源"
+          @click.stop.prevent="onDeleteSource(source.id)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+            <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+          </svg>
+        </button>
         <a
           v-if="canOpen(source)"
           :href="source.url"
           :title="source.title"
           target="_blank"
           rel="noopener noreferrer"
-          class="flex items-center gap-1.5 min-w-0 text-base font-medium text-blue-700 hover:underline"
+          class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-blue-700 hover:underline"
         >
           <SourceIcon :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </a>
-        <p v-else class="flex items-center gap-1.5 min-w-0 text-base font-medium text-gray-900" :title="source.title">
+        <p v-else class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-gray-900" :title="source.title">
           <SourceIcon :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </p>

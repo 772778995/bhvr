@@ -20,8 +20,11 @@ import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
 import StudioPanel from "@/components/notebook-workbench/StudioPanel.vue";
+import ReportListPanel from "@/components/notebook-workbench/ReportListPanel.vue";
+import ReportDetailPanel from "@/components/notebook-workbench/ReportDetailPanel.vue";
 import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue";
 import ResizeDivider from "@/components/notebook-workbench/ResizeDivider.vue";
+import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
 import { useToast } from "@/composables/useToast";
 import { useGlobalLoader } from "@/composables/useGlobalLoader";
@@ -33,12 +36,12 @@ const { showToast } = useToast();
 const { visible: loaderVisible, loaderTitle, entries: loaderEntries, startLoading, addEntry, stopLoading } = useGlobalLoader();
 
 // ── Resizable panels ────────────────────────────────────────────────────────
-const LEFT_MIN = 200;
-const LEFT_MAX = 480;
+const LEFT_MIN = 320;
+const LEFT_MAX = 600;
+const LEFT_INIT = 400;
 const RIGHT_MIN = 280;
 const RIGHT_MAX = 560;
 const CENTER_MIN = 320;
-const LEFT_INIT = 280;
 const RIGHT_INIT = 340;
 
 const leftWidth = ref(
@@ -59,10 +62,31 @@ function onLeftDrag(delta: number) {
 }
 
 function onRightDrag(delta: number) {
-  // Right divider: dragging right shrinks right panel, dragging left grows it
   rightWidth.value = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, rightWidth.value - delta));
 }
 
+// ── Left tab state ──────────────────────────────────────────────────────────
+const activeLeftTab = ref<'sources' | 'chat'>('sources');
+
+// ── Center panel state ──────────────────────────────────────────────────────
+const reportView = ref<'list' | 'detail'>('list');
+const reports = ref<NotebookReport[]>([]);
+const selectedReportId = ref<string | null>(null);
+
+const selectedReport = computed(() => {
+  if (!selectedReportId.value) return null;
+  return reports.value.find((r) => r.id === selectedReportId.value) ?? null;
+});
+
+// ── Delete confirmation ─────────────────────────────────────────────────────
+const showDeleteConfirm = ref(false);
+const pendingDeleteId = ref<string | null>(null);
+
+// ── Source delete confirmation ──────────────────────────────────────────────
+const showSourceDeleteConfirm = ref(false);
+const pendingDeleteSource = ref<{ id: string; title: string } | null>(null);
+
+// ── Core data ───────────────────────────────────────────────────────────────
 const loading = ref(true);
 const error = ref("");
 const activeRequestId = ref(0);
@@ -78,7 +102,6 @@ const researchState = ref<ResearchState>({
   targetCount: 0,
 });
 
-const report = ref<NotebookReport | null>(null);
 const addSourceOpen = ref(false);
 const sending = ref(false);
 const activeConversationId = ref<string | null>(null);
@@ -113,7 +136,9 @@ function resetPanelData() {
     completedCount: 0,
     targetCount: 0,
   };
-  report.value = null;
+  reports.value = [];
+  selectedReportId.value = null;
+  reportView.value = 'list';
 }
 
 function pushNotice(message: string, type: "info" | "error" = "info") {
@@ -287,6 +312,84 @@ async function refreshMessages() {
   }
 }
 
+// ── Reports ─────────────────────────────────────────────────────────────────
+async function refreshReports() {
+  if (!notebookId.value) return;
+  try {
+    reports.value = await notebooksApi.listReports(notebookId.value);
+  } catch {
+    // Silently fail – user can retry via generate
+  }
+}
+
+function onSelectReport(reportId: string) {
+  selectedReportId.value = reportId;
+  reportView.value = 'detail';
+}
+
+function onBackToList() {
+  selectedReportId.value = null;
+  reportView.value = 'list';
+}
+
+function onRequestDeleteReport(reportId: string) {
+  pendingDeleteId.value = reportId;
+  showDeleteConfirm.value = true;
+}
+
+async function doDeleteReport() {
+  if (!notebookId.value || !pendingDeleteId.value) return;
+  showDeleteConfirm.value = false;
+  try {
+    await notebooksApi.deleteReport(notebookId.value, pendingDeleteId.value);
+    // If we were viewing the deleted report, go back to list
+    if (selectedReportId.value === pendingDeleteId.value) {
+      selectedReportId.value = null;
+      reportView.value = 'list';
+    }
+    pushNotice("报告已删除");
+    await refreshReports();
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "删除报告失败", "error");
+  } finally {
+    pendingDeleteId.value = null;
+  }
+}
+
+function onCancelDelete() {
+  showDeleteConfirm.value = false;
+  pendingDeleteId.value = null;
+}
+
+// ── Source deletion ─────────────────────────────────────────────────────────
+function onRequestDeleteSource(sourceId: string) {
+  const source = sources.value.find((s) => s.id === sourceId);
+  if (!source) return;
+  pendingDeleteSource.value = { id: source.id, title: source.title };
+  showSourceDeleteConfirm.value = true;
+}
+
+async function doDeleteSource() {
+  if (!notebookId.value || !pendingDeleteSource.value) return;
+  showSourceDeleteConfirm.value = false;
+  const { id, title } = pendingDeleteSource.value;
+  try {
+    await notebooksApi.deleteSource(notebookId.value, id);
+    pushNotice(`来源「${title}」已删除`);
+    await refreshSources();
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "删除来源失败", "error");
+  } finally {
+    pendingDeleteSource.value = null;
+  }
+}
+
+function onCancelSourceDelete() {
+  showSourceDeleteConfirm.value = false;
+  pendingDeleteSource.value = null;
+}
+
+// ── Research ────────────────────────────────────────────────────────────────
 function handleResearchEvent(event: ResearchRuntimeEvent) {
   if (event.type === "heartbeat") {
     return;
@@ -296,14 +399,11 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
     researchState.value = payloadToState(event.payload);
   }
 
-  // Re-fetch messages whenever a Q&A turn completes (progress) or the
-  // orchestrator signals that messages should be refreshed.
   if (event.type === "progress" || (event.payload?.step === "refreshing_messages")) {
     void refreshMessages();
   }
 
   if (event.type === "completed") {
-    // Final refresh of messages after research finishes.
     void refreshMessages();
   }
 
@@ -366,15 +466,9 @@ async function onGenerateReport() {
     await notebooksApi.generateReport(notebookId.value);
     pushNotice("报告生成请求已提交，请稍候...");
 
+    // Refresh reports list after a brief delay to allow backend processing
     setTimeout(() => {
-      void notebooksApi
-        .getReport(notebookId.value)
-        .then((value) => {
-          report.value = value;
-        })
-        .catch(() => {
-          // Ignore delayed refresh failure; user can retry manually.
-        });
+      void refreshReports();
     }, 3000);
   } catch (err) {
     pushNotice(err instanceof Error ? err.message : "生成报告失败", "error");
@@ -383,6 +477,7 @@ async function onGenerateReport() {
   }
 }
 
+// ── Data loading ────────────────────────────────────────────────────────────
 async function loadWorkbenchData() {
   const requestId = ++activeRequestId.value;
   const isStale = () => requestId !== activeRequestId.value;
@@ -429,13 +524,15 @@ async function loadWorkbenchData() {
   notebook.value = notebookResult.value;
   sources.value = sourcesResult.status === "fulfilled" ? sourcesResult.value : [];
   messages.value = messagesResult.status === "fulfilled" ? mergeMessages([], messagesResult.value) : [];
-  report.value = null;
 
   const partialFailure = sourcesResult.status === "rejected" || messagesResult.status === "rejected";
 
   if (partialFailure) {
     pushNotice("部分区域加载失败，已展示可用内容。");
   }
+
+  // Load reports list (non-blocking)
+  void refreshReports();
 
   loading.value = false;
 }
@@ -491,34 +588,78 @@ onUnmounted(() => {
 
         <div class="min-h-0 flex-1 overflow-hidden p-3 sm:p-4 lg:p-5">
           <div class="flex h-full min-h-0 gap-0">
-            <!-- Left: Sources -->
+            <!-- ─── Left: Tabbed (Sources / Chat) ─── -->
             <div
-              class="shrink-0 min-w-0"
+              class="shrink-0 min-w-0 flex flex-col"
               :style="{ width: leftWidth + 'px' }"
             >
-              <SourcesPanel
-                :sources="sources"
-                :on-add-source="onAddSource"
-              />
+              <!-- Tab bar -->
+              <div class="shrink-0 flex border-b border-[#d8cfbe] mb-0">
+                <button
+                  type="button"
+                  class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
+                  :class="activeLeftTab === 'sources'
+                    ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
+                    : 'text-[#9a8a78] hover:text-[#6a5b49]'"
+                  @click="activeLeftTab = 'sources'"
+                >
+                  来源
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
+                  :class="activeLeftTab === 'chat'
+                    ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
+                    : 'text-[#9a8a78] hover:text-[#6a5b49]'"
+                  @click="activeLeftTab = 'chat'"
+                >
+                  对话
+                </button>
+              </div>
+
+              <!-- Tab content -->
+              <div class="flex-1 min-h-0 pt-2">
+                <SourcesPanel
+                  v-show="activeLeftTab === 'sources'"
+                  :sources="sources"
+                  :on-add-source="onAddSource"
+                  :on-delete-source="onRequestDeleteSource"
+                />
+                <ChatPanel
+                  v-show="activeLeftTab === 'chat'"
+                  :messages="messages"
+                  :sending="sending"
+                  :on-send="onSendMessage"
+                />
+              </div>
             </div>
 
             <ResizeDivider @drag="onLeftDrag" />
 
-            <!-- Center: Chat (flex-1) -->
+            <!-- ─── Center: Reports (list / detail) ─── -->
             <div class="flex-1 min-w-0" :style="{ minWidth: CENTER_MIN + 'px' }">
-              <ChatPanel :messages="messages" :sending="sending" :on-send="onSendMessage" />
+              <ReportListPanel
+                v-if="reportView === 'list'"
+                :reports="reports"
+                :on-select="onSelectReport"
+                :on-delete="onRequestDeleteReport"
+              />
+              <ReportDetailPanel
+                v-else-if="reportView === 'detail' && selectedReport"
+                :report="selectedReport"
+                :on-back="onBackToList"
+              />
             </div>
 
             <ResizeDivider @drag="onRightDrag" />
 
-            <!-- Right: Studio -->
+            <!-- ─── Right: Studio (research controls only) ─── -->
             <div
               class="shrink-0 min-w-0"
               :style="{ width: rightWidth + 'px' }"
             >
               <StudioPanel
                 :research-state="researchState"
-                :report="report"
                 :has-research-assets="hasResearchAssets"
                 :message-count="messages.length"
                 :on-start-research="onStartResearch"
@@ -536,6 +677,26 @@ onUnmounted(() => {
           :on-add-text="onAddSourceText"
           :on-search="onSearchAndAddSources"
           :on-pick-file="onAddSourceFile"
+        />
+
+        <ConfirmDialog
+          :visible="showDeleteConfirm"
+          title="删除报告"
+          message="确定要删除这份报告吗？此操作不可撤销。"
+          confirm-text="删除"
+          :danger="true"
+          @confirm="doDeleteReport"
+          @cancel="onCancelDelete"
+        />
+
+        <ConfirmDialog
+          :visible="showSourceDeleteConfirm"
+          title="删除来源"
+          :message="`确定要删除来源「${pendingDeleteSource?.title ?? ''}」吗？此操作不可撤销。`"
+          confirm-text="删除"
+          :danger="true"
+          @confirm="doDeleteSource"
+          @cancel="onCancelSourceDelete"
         />
       </div>
     </div>
