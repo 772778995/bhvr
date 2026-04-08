@@ -36,8 +36,18 @@ const CENTER_MIN = 320;
 const LEFT_INIT = 280;
 const RIGHT_INIT = 340;
 
-const leftWidth = ref(LEFT_INIT);
-const rightWidth = ref(RIGHT_INIT);
+const leftWidth = ref(
+  Number(localStorage.getItem('notebook-left-width')) || LEFT_INIT
+);
+const rightWidth = ref(
+  Number(localStorage.getItem('notebook-right-width')) || RIGHT_INIT
+);
+
+// Persist widths to localStorage when they change
+watch([leftWidth, rightWidth], ([newLeftWidth, newRightWidth]) => {
+  localStorage.setItem('notebook-left-width', newLeftWidth.toString());
+  localStorage.setItem('notebook-right-width', newRightWidth.toString());
+});
 
 function onLeftDrag(delta: number) {
   leftWidth.value = Math.min(LEFT_MAX, Math.max(LEFT_MIN, leftWidth.value + delta));
