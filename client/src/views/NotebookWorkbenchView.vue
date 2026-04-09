@@ -509,7 +509,8 @@ function startSourcePolling() {
     }
     try {
       const status = await notebooksApi.getSourceProcessingStatus(notebookId.value);
-      if (status.allReady) {
+      // allReady：所有来源处理成功；processing.length === 0：没有进行中的来源（可能有 failed）
+      if (status.allReady || status.processing.length === 0) {
         await refreshSources();
         stopSourcePolling();
       }

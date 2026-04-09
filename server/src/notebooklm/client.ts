@@ -790,15 +790,29 @@ export async function getNotebookDetail(notebookId: string): Promise<NotebookDet
 }
 
 export async function getNotebookSources(notebookId: string): Promise<NotebookSource[]> {
+  const attempt = async () =>
+    runNotebookRequest(async (client) => await client.sources.list(notebookId));
+
   try {
-    const sources = await runNotebookRequest(async (client) => await client.sources.list(notebookId));
-    return sources.map(mapSource);
+    try {
+      const sources = await attempt();
+      return sources.map(mapSource);
+    } catch (firstErr) {
+      if (isNotebookAuthError(firstErr)) {
+        throw firstErr;
+      }
+      // 瞬时网络抖动（fetch failed）：等 1 秒后重试一次
+      logger.warn({ notebookId, firstErr }, "getNotebookSources: first attempt failed, retrying in 1s");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const sources = await attempt();
+      return sources.map(mapSource);
+    }
   } catch (err) {
     if (isNotebookAuthError(err)) {
       throw err;
     }
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed");
+    logger.warn({ notebookId, err }, "getNotebookSources: sdk.sources.list failed after retry");
     throw new Error(`Failed to fetch notebook sources: ${message}`);
   }
 }
