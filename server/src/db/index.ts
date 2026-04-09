@@ -61,6 +61,24 @@ await client.executeMultiple(`
 
   CREATE INDEX IF NOT EXISTS chat_messages_notebook_id
   ON chat_messages (notebook_id, created_at ASC);
+
+  CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL,
+    artifact_id TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'creating',
+    title TEXT,
+    content_json TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_artifact_id
+  ON artifacts (artifact_id);
+
+  CREATE INDEX IF NOT EXISTS idx_artifacts_notebook
+  ON artifacts (notebook_id);
 `);
 
 // Migrate research_reports: old schema had notebook_id as PK, new schema has id as PK

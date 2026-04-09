@@ -31,12 +31,15 @@ function typeLabel(type: string): string {
 </script>
 
 <template>
-  <section class="h-full min-h-0 bg-white border border-gray-200 rounded-lg p-4 flex flex-col overflow-hidden">
+  <section class="h-full min-h-0 bg-[#f8f3ea] border border-[#d8cfbe] rounded-lg p-4 flex flex-col overflow-hidden">
     <div class="flex items-center justify-between mb-3 shrink-0">
-      <h2 class="text-base font-semibold text-gray-900">来源</h2>
+      <h2
+        class="text-base font-semibold text-[#2f271f]"
+        style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
+      >来源</h2>
       <button
         type="button"
-        class="px-2.5 py-1.5 text-sm rounded-md bg-gray-900 text-white transition-all duration-100 hover:bg-gray-800 active:scale-95"
+        class="px-2.5 py-1.5 text-sm rounded-md bg-[#3a2e20] text-[#f8f3ea] transition-all duration-100 hover:bg-[#2a1e10] active:scale-95"
         @click="onAddSource"
       >
         添加
@@ -45,7 +48,7 @@ function typeLabel(type: string): string {
 
     <div
       v-if="sources.length === 0"
-      class="rounded-md border border-dashed border-gray-300 bg-gray-50 p-4 text-base leading-relaxed text-gray-500"
+      class="rounded-md border border-dashed border-[#c4b89a] bg-[#fffbf4] p-4 text-base leading-relaxed text-[#9a8a78]"
     >
       暂无来源，请添加后开始对话。
     </div>
@@ -61,12 +64,12 @@ function typeLabel(type: string): string {
       <li
         v-for="source in sources"
         :key="source.id"
-        class="group relative border border-gray-200 rounded-md p-3 transition-colors duration-100 hover:border-gray-300 hover:bg-gray-50"
+        class="group relative border border-[#ddd3c2] rounded-md p-3 bg-[#fffbf4] transition-colors duration-100 hover:border-[#c4b89a] hover:bg-[#fdf7ed]"
       >
         <button
           v-if="onDeleteSource"
           type="button"
-          class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-100 hover:bg-gray-200 hover:text-gray-700"
+          class="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-[#9a8a78] opacity-0 group-hover:opacity-100 transition-opacity duration-100 hover:bg-[#e4dac8] hover:text-[#564738]"
           title="删除来源"
           @click.stop.prevent="onDeleteSource(source.id)"
         >
@@ -80,16 +83,16 @@ function typeLabel(type: string): string {
           :title="source.title"
           target="_blank"
           rel="noopener noreferrer"
-          class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-blue-700 hover:underline"
+          class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-[#5a4a3a] hover:text-[#3a2e20] hover:underline"
         >
           <SourceIcon :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </a>
-        <p v-else class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-gray-900" :title="source.title">
+        <p v-else class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-[#2f271f]" :title="source.title">
           <SourceIcon :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </p>
-        <p class="mt-1 text-sm text-gray-500">{{ typeLabel(source.type) }} · {{ source.status }}</p>
+        <p class="mt-1 text-sm text-[#9a8a78]">{{ typeLabel(source.type) }} · {{ source.status }}</p>
       </li>
     </TransitionGroup>
   </section>

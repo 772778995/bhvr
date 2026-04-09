@@ -21,6 +21,9 @@ import {
   createArtifact,
   getArtifact,
   listArtifacts,
+  ArtifactType,
+  ArtifactState,
+  type Artifact,
 } from "../../notebooklm/index.js";
 import {
   attachRegistrySubscription,
@@ -36,6 +39,14 @@ import {
   setReportError,
 } from "../../report/service.js";
 import { countChatMessages } from "../../db/chat-messages.js";
+import {
+  insertArtifact as dbInsertArtifact,
+  getArtifactByArtifactId,
+  markArtifactReady,
+  markArtifactFailed,
+  listArtifactsByNotebookId,
+  type ArtifactRecord,
+} from "../../db/artifacts.js";
 import { createNotebookConversationAsker, createNotebookResearchDriver } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
 import { get as getRuntimeState, requestStop } from "../../research-runtime/registry.js";
@@ -648,6 +659,62 @@ notebooks.post("/:id/report/generate", async (c) => {
 // Artifact routes
 // ---------------------------------------------------------------------------
 
+// Maps ArtifactType numeric value → DB string key
+const ARTIFACT_TYPE_TO_STRING: Partial<Record<number, string>> = {
+  [ArtifactType.AUDIO]: "audio",
+  [ArtifactType.VIDEO]: "video",
+  [ArtifactType.SLIDE_DECK]: "slide_deck",
+  [ArtifactType.MIND_MAP]: "mind_map",
+  [ArtifactType.REPORT]: "report",
+  [ArtifactType.FLASHCARDS]: "flashcards",
+  [ArtifactType.QUIZ]: "quiz",
+  [ArtifactType.INFOGRAPHIC]: "infographic",
+};
+
+// Maps DB string key → ArtifactType numeric value
+const ARTIFACT_TYPE_TO_NUM: Record<string, number> = {
+  audio: ArtifactType.AUDIO,
+  video: ArtifactType.VIDEO,
+  slide_deck: ArtifactType.SLIDE_DECK,
+  mind_map: ArtifactType.MIND_MAP,
+  report: ArtifactType.REPORT,
+  flashcards: ArtifactType.FLASHCARDS,
+  quiz: ArtifactType.QUIZ,
+  infographic: ArtifactType.INFOGRAPHIC,
+};
+
+// Maps DB state string → ArtifactState numeric value
+const ARTIFACT_STATE_TO_NUM: Record<string, number> = {
+  creating: ArtifactState.CREATING,
+  ready: ArtifactState.READY,
+  failed: ArtifactState.FAILED,
+};
+
+/** Convert a DB ArtifactRecord to the API response shape (matches SDK Artifact). */
+function dbRecordToApiArtifact(record: ArtifactRecord): Record<string, unknown> {
+  const contentData = record.contentJson
+    ? (JSON.parse(record.contentJson) as Record<string, unknown>)
+    : {};
+  return {
+    artifactId: record.artifactId,
+    type: ARTIFACT_TYPE_TO_NUM[record.artifactType] ?? 0,
+    state: ARTIFACT_STATE_TO_NUM[record.state] ?? 0,
+    title: record.title ?? undefined,
+    createdAt: record.createdAt.toISOString(),
+    ...contentData,
+  };
+}
+
+/** Extract storable content fields from a READY SDK Artifact. */
+function extractArtifactContent(artifact: Artifact): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  const a = artifact as unknown as Record<string, unknown>;
+  for (const key of ["audioData", "duration", "content", "questions", "totalQuestions", "flashcards", "csv"]) {
+    if (a[key] !== undefined) data[key] = a[key];
+  }
+  return data;
+}
+
 notebooks.post("/:id/artifacts", async (c) => {
   return await withNotebookId(c, async (id) => {
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
@@ -662,6 +729,20 @@ notebooks.post("/:id/artifacts", async (c) => {
     return await withNotebookAuthHandling(async () => {
       try {
         const result = await createArtifact(id, type, options);
+        // Persist to DB (non-fatal — creation may be async on NLM side)
+        if (result.artifactId) {
+          dbInsertArtifact({
+            notebookId: id,
+            artifactId: result.artifactId,
+            artifactType: type,
+            state: result.state === "ready" ? "ready" : "creating",
+          }).catch((dbErr) =>
+            logger.warn(
+              { dbErr, notebookId: id, artifactId: result.artifactId },
+              "artifact DB insert failed (non-fatal)"
+            )
+          );
+        }
         return c.json(successResponse(result));
       } catch (err) {
         logger.error({ err, notebookId: id, type }, "createArtifact failed");
@@ -679,9 +760,37 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
   return await withNotebookId(c, async (id) => {
     const artifactId = c.req.param("artifactId");
 
+    // DB cache: if already READY with full content, skip SDK call entirely
+    const dbRecord = await getArtifactByArtifactId(artifactId).catch(() => null);
+    if (dbRecord && dbRecord.state === "ready" && dbRecord.contentJson) {
+      return c.json(successResponse(dbRecordToApiArtifact(dbRecord)));
+    }
+
     return await withNotebookAuthHandling(async () => {
       try {
         const artifact = await getArtifact(id, artifactId);
+
+        // Persist state transitions (non-fatal fire-and-forget)
+        if (artifact.state === ArtifactState.READY) {
+          const upsertReady = async () => {
+            if (!dbRecord) {
+              const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
+              await dbInsertArtifact({ notebookId: id, artifactId, artifactType: typeStr, state: "creating" });
+            }
+            await markArtifactReady(artifactId, {
+              title: artifact.title ?? null,
+              contentJson: JSON.stringify(extractArtifactContent(artifact)),
+            });
+          };
+          upsertReady().catch((dbErr) =>
+            logger.warn({ dbErr, artifactId }, "artifact DB ready update failed (non-fatal)")
+          );
+        } else if (artifact.state === ArtifactState.FAILED && dbRecord) {
+          markArtifactFailed(artifactId).catch((dbErr) =>
+            logger.warn({ dbErr, artifactId }, "artifact DB failed update failed (non-fatal)")
+          );
+        }
+
         return c.json(successResponse(artifact));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -694,13 +803,64 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
 notebooks.get("/:id/artifacts", async (c) => {
   return await withNotebookId(c, async (id) => {
     return await withNotebookAuthHandling(async () => {
+      // Step 1: DB list (always available — historical persistence even after NLM session expires)
+      const dbRecords = await listArtifactsByNotebookId(id).catch(
+        () => [] as ArtifactRecord[]
+      );
+      const dbByArtifactId = new Map(dbRecords.map((r) => [r.artifactId, r]));
+
+      // Step 2: SDK list (may fail; non-auth errors → fall back to DB-only)
+      let sdkArtifacts: Artifact[] = [];
       try {
-        const artifacts = await listArtifacts(id);
-        return c.json(successResponse(artifacts));
+        sdkArtifacts = await listArtifacts(id);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return c.json({ success: false, message, errorCode: "ARTIFACTS_FETCH_FAILED" }, 502);
+        if (isNotebookAuthError(err)) throw err; // let withNotebookAuthHandling handle 401
+        logger.warn({ err, notebookId: id }, "listArtifacts SDK failed, falling back to DB");
       }
+      const sdkByArtifactId = new Map(sdkArtifacts.map((a) => [a.artifactId, a]));
+
+      // Step 3: Merge — DB READY records are authoritative; SDK provides live state
+      const merged: unknown[] = [];
+
+      for (const artifact of sdkArtifacts) {
+        const dbRec = dbByArtifactId.get(artifact.artifactId);
+        if (dbRec && dbRec.state === "ready" && dbRec.contentJson) {
+          // DB has full content — use it (avoids redundant SDK payload)
+          merged.push(dbRecordToApiArtifact(dbRec));
+        } else {
+          merged.push(artifact);
+          // Background: persist READY state into DB
+          if (artifact.state === ArtifactState.READY) {
+            const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
+            const persist = async () => {
+              if (!dbRec) {
+                await dbInsertArtifact({
+                  notebookId: id,
+                  artifactId: artifact.artifactId,
+                  artifactType: typeStr,
+                  state: "creating",
+                });
+              }
+              await markArtifactReady(artifact.artifactId, {
+                title: artifact.title ?? null,
+                contentJson: JSON.stringify(extractArtifactContent(artifact)),
+              });
+            };
+            persist().catch((dbErr) =>
+              logger.warn({ dbErr, artifactId: artifact.artifactId }, "bg artifact DB update failed")
+            );
+          }
+        }
+      }
+
+      // DB-only items: SDK no longer returns them but we keep them (historical persistence)
+      for (const dbRec of dbRecords) {
+        if (!sdkByArtifactId.has(dbRec.artifactId)) {
+          merged.push(dbRecordToApiArtifact(dbRec));
+        }
+      }
+
+      return c.json(successResponse(merged));
     });
   });
 });

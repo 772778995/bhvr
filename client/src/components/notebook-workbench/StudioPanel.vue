@@ -220,6 +220,9 @@ const artifacts: ArtifactDef[] = [
 
 /** Tracks in-flight generation for each artifact key. */
 const generating = reactive<Record<string, boolean>>({});
+
+/** True when any artifact is currently being generated. Disables all other cards. */
+const generatingAny = computed(() => Object.values(generating).some(Boolean));
 /** Track active poll timers so we can clean them up on unmount. */
 const pollTimers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -453,7 +456,7 @@ async function handleGenerateReport() {
             v-for="art in artifacts"
             :key="art.key"
             type="button"
-            :disabled="generating[art.key]"
+            :disabled="generatingAny"
             class="group relative flex flex-col items-center gap-1.5 rounded-md border bg-[#fffbf4] border-[#ddd3c2] px-2 py-3 text-[#2f271f] transition-all duration-150 ease-in-out hover:shadow-md hover:-translate-y-0.5 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60"
             @click="handleArtifactClick(art)"
           >
