@@ -231,7 +231,7 @@ test("GET /api/notebooks/:id returns 401 with explicit errorCode on unrecoverabl
   }
 });
 
-test("GET /api/notebooks/:id/report remains available when auth requires re-login", async () => {
+test("GET /api/notebooks/:id/entries remains available when auth requires re-login", async () => {
   writeAuthMeta({
     accountId: "default",
     status: "reauth_required",
@@ -239,26 +239,32 @@ test("GET /api/notebooks/:id/report remains available when auth requires re-logi
   });
 
   const notebookId = crypto.randomUUID();
-  const generatedAt = new Date("2026-04-07T12:30:00.000Z");
-  const { createReport } = await import("../../report/service.js");
+  const { insertReportEntry } = await import("../../db/report-entries.js");
   const routeModule = await import("./index.js");
   const notebooks = routeModule.default;
 
-  const report = await createReport(notebookId, "cached report", generatedAt);
+  const entry = await insertReportEntry({
+    notebookId,
+    title: "cached report",
+    content: "cached report content",
+    state: "ready",
+  });
 
-  const response = await notebooks.request(`http://localhost/${notebookId}/report`);
+  const response = await notebooks.request(`http://localhost/${notebookId}/entries`);
 
   assert.equal(response.status, 200);
   const body = await response.json() as {
     success: boolean;
-    data: { id: string; notebookId: string; title: string; content: string; generatedAt: string };
+    data: Array<{ id: string; entryType: string; title: string; content: string; state: string }>;
   };
   assert.equal(body.success, true);
-  assert.equal(body.data.notebookId, notebookId);
-  assert.equal(body.data.content, "cached report");
-  assert.equal(body.data.generatedAt, generatedAt.toISOString());
-  assert.equal(body.data.id, report.id);
-  assert.ok(body.data.title);
+  assert.ok(Array.isArray(body.data));
+  const found = body.data.find((e) => e.id === entry.id);
+  assert.ok(found, "inserted entry should appear in entries list");
+  assert.equal(found!.content, "cached report content");
+  assert.equal(found!.title, "cached report");
+  assert.equal(found!.entryType, "research_report");
+  assert.equal(found!.state, "ready");
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {

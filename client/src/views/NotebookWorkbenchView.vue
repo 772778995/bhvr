@@ -3,10 +3,9 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   notebooksApi,
-  type Artifact,
   type ChatMessage,
   type Notebook,
-  type NotebookReport,
+  type ReportEntry,
   type ResearchState,
   type SendMessageHistoryItem,
   type Source,
@@ -71,17 +70,13 @@ const activeCenterTab = ref<'chat' | 'reports'>('chat');
 
 // ── Center panel state ──────────────────────────────────────────────────────
 const reportView = ref<'list' | 'detail'>('list');
-const reports = ref<NotebookReport[]>([]);
-const selectedReportId = ref<string | null>(null);
+const selectedEntry = ref<ReportEntry | null>(null);
 
-const selectedArtifact = ref<Artifact | null>(null);
-/** Incremented to trigger ReportListPanel to re-fetch the SDK artifact list. */
+/** Incremented to trigger ReportListPanel to re-fetch. */
 const artifactRefreshKey = ref(0);
 
-const selectedReport = computed(() => {
-  if (!selectedReportId.value) return null;
-  return reports.value.find((r) => r.id === selectedReportId.value) ?? null;
-});
+/** Cache of the unified entries list so we can look up entries by ID. */
+const cachedEntries = ref<ReportEntry[]>([]);
 
 // ── Delete confirmation ─────────────────────────────────────────────────────
 const showDeleteConfirm = ref(false);
@@ -147,9 +142,8 @@ function resetPanelData() {
     completedCount: 0,
     targetCount: 0,
   };
-  reports.value = [];
-  selectedReportId.value = null;
-  selectedArtifact.value = null;
+  selectedEntry.value = null;
+  cachedEntries.value = [];
   reportView.value = 'list';
 }
 
@@ -318,32 +312,36 @@ async function refreshMessages() {
 async function refreshReports() {
   if (!notebookId.value) return;
   try {
-    reports.value = await notebooksApi.listReports(notebookId.value);
+    cachedEntries.value = await notebooksApi.listEntries(notebookId.value);
   } catch {
-    // Silently fail – user can retry via generate
+    // Silently fail – user can retry
   }
 }
 
-function onSelectReport(reportId: string) {
-  selectedReportId.value = reportId;
-  selectedArtifact.value = null;
+function onSelectEntry(entryId: string) {
+  const entry = cachedEntries.value.find((e) => e.id === entryId);
+  if (!entry) {
+    // Cache may be stale — refresh and retry once
+    void refreshReports().then(() => {
+      const retried = cachedEntries.value.find((e) => e.id === entryId);
+      if (retried) {
+        selectedEntry.value = retried;
+        reportView.value = 'detail';
+      }
+    });
+    return;
+  }
+  selectedEntry.value = entry;
   reportView.value = 'detail';
 }
 
-async function onSelectArtifact(artifactId: string) {
-  if (!notebookId.value) return;
-  try {
-    selectedArtifact.value = await notebooksApi.getArtifact(notebookId.value, artifactId);
-    selectedReportId.value = null;
-    reportView.value = 'detail';
-  } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "获取产物详情失败", "error");
-  }
+/** Sync parent cache when ReportListPanel finishes a fetch. */
+function onEntriesLoaded(entries: ReportEntry[]) {
+  cachedEntries.value = entries;
 }
 
 function onBackToList() {
-  selectedReportId.value = null;
-  selectedArtifact.value = null;
+  selectedEntry.value = null;
   reportView.value = 'list';
 }
 
@@ -356,16 +354,17 @@ async function doDeleteReport() {
   if (!notebookId.value || !pendingDeleteId.value) return;
   showDeleteConfirm.value = false;
   try {
-    await notebooksApi.deleteReport(notebookId.value, pendingDeleteId.value);
-    // If we were viewing the deleted report, go back to list
-    if (selectedReportId.value === pendingDeleteId.value) {
-      selectedReportId.value = null;
+    await notebooksApi.deleteEntry(notebookId.value, pendingDeleteId.value);
+    // If we were viewing the deleted item, go back to list
+    if (selectedEntry.value?.id === pendingDeleteId.value) {
+      selectedEntry.value = null;
       reportView.value = 'list';
     }
-    pushNotice("报告已删除");
+    pushNotice("已删除");
     await refreshReports();
+    artifactRefreshKey.value++;
   } catch (err) {
-    pushNotice(err instanceof Error ? err.message : "删除报告失败", "error");
+    pushNotice(err instanceof Error ? err.message : "删除失败", "error");
   } finally {
     pendingDeleteId.value = null;
   }
@@ -654,17 +653,16 @@ onUnmounted(() => {
                   <ReportListPanel
                     v-if="reportView === 'list'"
                     :notebook-id="notebookId"
-                    :reports="reports"
                     :refresh-key="artifactRefreshKey"
-                    :on-select="onSelectReport"
-                    :on-select-artifact="onSelectArtifact"
+                    :on-select="onSelectEntry"
+                    :on-select-artifact="onSelectEntry"
                     :on-delete="onRequestDeleteReport"
+                    :on-entries-loaded="onEntriesLoaded"
                   />
                   <ReportDetailPanel
-                    v-else-if="reportView === 'detail' && (selectedReport || selectedArtifact)"
+                    v-else-if="reportView === 'detail' && selectedEntry"
                     :notebook-id="notebookId"
-                    :report="selectedReport ?? undefined"
-                    :artifact="selectedArtifact ?? undefined"
+                    :entry="selectedEntry ?? undefined"
                     :on-back="onBackToList"
                   />
                 </template>

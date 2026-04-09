@@ -44,16 +44,6 @@ export interface ResearchState {
   lastError?: string;
 }
 
-/** Stored research report for a notebook. */
-export interface NotebookReport {
-  id: string;
-  notebookId: string;
-  title: string;
-  content: string | null;
-  generatedAt: string | null;
-  errorMessage?: string | null;
-}
-
 /** Start-research request body. */
 export interface StartResearchRequest {
   topic?: string;
@@ -219,6 +209,30 @@ export interface CreateArtifactResponse {
   state: string;
 }
 
+/**
+ * Unified entry returned by GET /api/notebooks/:id/entries.
+ * Covers both locally-generated research reports and Studio artifacts.
+ */
+export interface ReportEntry {
+  id: string;
+  entryType: "research_report" | "artifact";
+  title: string | null;
+  state: "creating" | "ready" | "failed";
+  /** Markdown content — research_report only */
+  content?: string | null;
+  errorMessage?: string | null;
+  /** NotebookLM SDK artifact ID — artifact only */
+  artifactId?: string | null;
+  /** SDK artifact type string — artifact only */
+  artifactType?: string | null;
+  /** Small structured content (quiz questions, flashcards, etc.) — artifact only */
+  contentJson?: Record<string, unknown> | null;
+  /** Absolute URL to download/stream the file (audio, PDF) — artifact only */
+  fileUrl?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const notebooksApi = {
   getNotebooks() {
     return request<Notebook[]>("/api/notebooks");
@@ -321,28 +335,6 @@ export const notebooksApi = {
     });
   },
 
-  /** Fetch the latest stored report for a notebook (backward-compatible). */
-  getReport(id: string) {
-    return request<NotebookReport | null>(`/api/notebooks/${id}/report`);
-  },
-
-  /** List all reports for a notebook. */
-  listReports(id: string) {
-    return request<NotebookReport[]>(`/api/notebooks/${id}/reports`);
-  },
-
-  /** Fetch a single report by its ID. */
-  getReportById(id: string, reportId: string) {
-    return request<NotebookReport>(`/api/notebooks/${id}/reports/${reportId}`);
-  },
-
-  /** Delete a report by its ID. */
-  deleteReport(id: string, reportId: string) {
-    return request<{ deleted: boolean }>(`/api/notebooks/${id}/reports/${reportId}`, {
-      method: "DELETE",
-    });
-  },
-
   /** Trigger report generation from completed Q&A answers. */
   generateReport(id: string, presetId?: string) {
     return request<GenerateReportResponse>(`/api/notebooks/${id}/report/generate`, {
@@ -368,8 +360,19 @@ export const notebooksApi = {
     return request<Artifact>(`/api/notebooks/${id}/artifacts/${artifactId}`);
   },
 
-  /** List all artifacts for a notebook. */
-  listArtifacts(id: string) {
-    return request<Artifact[]>(`/api/notebooks/${id}/artifacts`);
+  // -------------------------------------------------------------------------
+  // Unified entries (research_reports + artifacts merged)
+  // -------------------------------------------------------------------------
+
+  /** List all entries (reports + artifacts) for a notebook, newest first. */
+  listEntries(id: string) {
+    return request<ReportEntry[]>(`/api/notebooks/${id}/entries`);
+  },
+
+  /** Delete a unified entry (report or artifact). */
+  deleteEntry(id: string, entryId: string) {
+    return request<{ id: string }>(`/api/notebooks/${id}/entries/${entryId}`, {
+      method: "DELETE",
+    });
   },
 };

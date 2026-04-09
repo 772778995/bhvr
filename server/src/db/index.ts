@@ -2,12 +2,16 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { mkdirSync } from "node:fs";
 import * as schema from "./schema.js";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { resolveDatabasePath } from "./path.js";
 import logger from "../lib/logger.js";
 
 const DB_PATH = resolveDatabasePath();
 mkdirSync(dirname(DB_PATH), { recursive: true });
+
+// Ensure data/files/ directory exists (used for audio/PDF artifact storage)
+const filesDir = process.env.DATA_FILES_DIR || resolve(dirname(DB_PATH), "files");
+mkdirSync(filesDir, { recursive: true });
 
 const client = createClient({
   url: `file:${DB_PATH}`,
@@ -89,6 +93,28 @@ await client.executeMultiple(`
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS report_entries (
+    id TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL,
+    entry_type TEXT NOT NULL,
+    title TEXT,
+    state TEXT NOT NULL DEFAULT 'ready',
+    content TEXT,
+    error_message TEXT,
+    artifact_id TEXT,
+    artifact_type TEXT,
+    content_json TEXT,
+    file_path TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_report_entries_notebook
+  ON report_entries (notebook_id);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_report_entries_artifact_id
+  ON report_entries (artifact_id) WHERE artifact_id IS NOT NULL;
 `);
 
 // Add preset_id column to research_tasks if it doesn't exist yet (idempotent migration)
@@ -251,6 +277,32 @@ if (!hasIdColumn && tableInfo.rows.length > 0) {
   `);
 }
 // else: table already has 'id' column — new schema, nothing to do
+
+// One-time migration: seed report_entries from existing research_reports and artifacts
+// Uses INSERT OR IGNORE so it is safe to run on every startup.
+{
+  const entriesInfo = await client.execute("PRAGMA table_info(report_entries)");
+  if (entriesInfo.rows.length > 0) {
+    // Migrate research_reports → report_entries
+    await client.execute(`
+      INSERT OR IGNORE INTO report_entries (id, notebook_id, entry_type, title, state, content, error_message, created_at, updated_at)
+      SELECT id, notebook_id, 'research_report', title,
+             CASE WHEN error_message IS NOT NULL THEN 'failed' ELSE 'ready' END,
+             content, error_message,
+             COALESCE(generated_at, updated_at), updated_at
+      FROM research_reports
+    `);
+
+    // Migrate artifacts → report_entries
+    await client.execute(`
+      INSERT OR IGNORE INTO report_entries (id, notebook_id, entry_type, title, state, artifact_id, artifact_type, content_json, created_at, updated_at)
+      SELECT id, notebook_id, 'artifact', title, state, artifact_id, artifact_type, content_json, created_at, updated_at
+      FROM artifacts
+    `);
+
+    logger.debug("report_entries one-time migration from legacy tables complete");
+  }
+}
 
 logger.debug({ path: DB_PATH }, "Database ensured successfully");
 

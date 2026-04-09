@@ -20,7 +20,6 @@ import {
   searchWebSources,
   createArtifact,
   getArtifact,
-  listArtifacts,
   ArtifactType,
   ArtifactState,
   type Artifact,
@@ -30,26 +29,24 @@ import {
   startHeartbeat,
 } from "./sse.js";
 import { parseNotebookIdOrNull } from "./validate.js";
-import {
-  clearReportError,
-  createReport,
-  deleteReportById,
-  getReportById,
-  listReportsByNotebookId,
-  setReportError,
-} from "../../report/service.js";
 import { countChatMessages } from "../../db/chat-messages.js";
 import { eq } from "drizzle-orm";
 import db from "../../db/index.js";
 import { summaryPresets } from "../../db/schema.js";
 import {
-  insertArtifact as dbInsertArtifact,
-  getArtifactByArtifactId,
-  markArtifactReady,
-  markArtifactFailed,
-  listArtifactsByNotebookId,
-  type ArtifactRecord,
-} from "../../db/artifacts.js";
+  insertArtifactEntry,
+  markArtifactEntryReady,
+  markArtifactEntryFailed,
+  listEntriesByNotebookId,
+  getEntryByArtifactId,
+  deleteEntryById,
+  insertReportEntry,
+  type ReportEntryRecord,
+} from "../../db/report-entries.js";
+import { writeFile, unlink } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { resolveFilesDir } from "../../lib/files-dir.js";
 import { createNotebookConversationAsker, createNotebookResearchDriver } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
 import { get as getRuntimeState, requestStop } from "../../research-runtime/registry.js";
@@ -72,6 +69,20 @@ import {
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 
 const notebooks = new Hono();
+
+// ---------------------------------------------------------------------------
+// File storage helpers
+// ---------------------------------------------------------------------------
+
+/** Write a base64 string to data/files/ and return the relative filename. */
+async function writeBase64File(base64: string, filename: string): Promise<string> {
+  const dir = resolveFilesDir();
+  mkdirSync(dir, { recursive: true });
+  const fullPath = resolve(dir, filename);
+  const buffer = Buffer.from(base64, "base64");
+  await writeFile(fullPath, buffer);
+  return filename;
+}
 
 async function withNotebookId(
   c: Context,
@@ -520,79 +531,6 @@ notebooks.post("/:id/research/stop", async (c) => {
   });
 });
 
-notebooks.get("/:id/report", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const reports = await listReportsByNotebookId(id);
-    // Return the latest report with content (backward-compatible)
-    const row = reports.find((r) => r.content && r.generatedAt);
-    if (!row) {
-      return c.json(successResponse(null));
-    }
-
-    return c.json(
-      successResponse({
-        id: row.id,
-        notebookId: row.notebookId,
-        title: row.title,
-        content: row.content,
-        generatedAt: row.generatedAt!.toISOString(),
-      })
-    );
-  });
-});
-
-notebooks.get("/:id/reports", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const reports = await listReportsByNotebookId(id);
-    return c.json(
-      successResponse(
-        reports.map((r) => ({
-          id: r.id,
-          notebookId: r.notebookId,
-          title: r.title,
-          content: r.content,
-          generatedAt: r.generatedAt?.toISOString() ?? null,
-          errorMessage: r.errorMessage ?? null,
-        }))
-      )
-    );
-  });
-});
-
-notebooks.get("/:id/reports/:reportId", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const reportId = c.req.param("reportId");
-    const row = await getReportById(reportId);
-    if (!row || row.notebookId !== id) {
-      return c.json({ success: false, message: "报告不存在", errorCode: "NOT_FOUND" }, 404);
-    }
-
-    return c.json(
-      successResponse({
-        id: row.id,
-        notebookId: row.notebookId,
-        title: row.title,
-        content: row.content,
-        generatedAt: row.generatedAt?.toISOString() ?? null,
-        errorMessage: row.errorMessage ?? null,
-      })
-    );
-  });
-});
-
-notebooks.delete("/:id/reports/:reportId", async (c) => {
-  return await withNotebookId(c, async (id) => {
-    const reportId = c.req.param("reportId");
-    const row = await getReportById(reportId);
-    if (!row || row.notebookId !== id) {
-      return c.json({ success: false, message: "报告不存在", errorCode: "NOT_FOUND" }, 404);
-    }
-
-    await deleteReportById(reportId);
-    return c.json(successResponse({ deleted: true }));
-  });
-});
-
 notebooks.post("/:id/report/generate", async (c) => {
   return await withNotebookId(c, async (id) => {
     const msgCount = await countChatMessages(id);
@@ -656,7 +594,6 @@ notebooks.post("/:id/report/generate", async (c) => {
     return await withNotebookAuthHandling(async () => {
       const result = await askNotebookForResearch(id, summaryPrompt);
       if (!result.success || !result.answer) {
-        await setReportError(id, result.error ?? "报告生成失败");
         return c.json(
           {
             success: false,
@@ -667,8 +604,16 @@ notebooks.post("/:id/report/generate", async (c) => {
         );
       }
 
-      await createReport(id, result.answer, new Date());
-      await clearReportError(id);
+      // Extract title from the first heading line, or use a default
+      const titleMatch = result.answer.match(/^#+\s+(.+)/m);
+      const title = titleMatch?.[1]?.trim() ?? "研究报告";
+
+      await insertReportEntry({
+        notebookId: id,
+        title,
+        content: result.answer,
+        state: "ready",
+      });
 
       return c.json(
         successResponse({
@@ -714,18 +659,25 @@ const ARTIFACT_STATE_TO_NUM: Record<string, number> = {
   failed: ArtifactState.FAILED,
 };
 
-/** Convert a DB ArtifactRecord to the API response shape (matches SDK Artifact). */
-function dbRecordToApiArtifact(record: ArtifactRecord): Record<string, unknown> {
-  const contentData = record.contentJson
-    ? (JSON.parse(record.contentJson) as Record<string, unknown>)
-    : {};
+/** Convert a ReportEntryRecord to the API response shape (matches SDK Artifact). */
+function entryToApiArtifact(entry: ReportEntryRecord): Record<string, unknown> {
+  let contentData: Record<string, unknown> = {};
+  if (entry.contentJson) {
+    try {
+      contentData = JSON.parse(entry.contentJson) as Record<string, unknown>;
+    } catch {
+      logger.warn({ entryId: entry.id, artifactId: entry.artifactId }, "entryToApiArtifact: invalid JSON in contentJson, returning empty content");
+    }
+  }
+  // Spread contentData FIRST so that our authoritative fields (type, state, title, etc.)
+  // always win over anything that might be stored inside contentJson.
   return {
-    artifactId: record.artifactId,
-    type: ARTIFACT_TYPE_TO_NUM[record.artifactType] ?? 0,
-    state: ARTIFACT_STATE_TO_NUM[record.state] ?? 0,
-    title: record.title ?? undefined,
-    createdAt: record.createdAt.toISOString(),
     ...contentData,
+    artifactId: entry.artifactId,
+    type: ARTIFACT_TYPE_TO_NUM[entry.artifactType ?? ''] ?? 0,
+    state: ARTIFACT_STATE_TO_NUM[entry.state] ?? 0,
+    title: entry.title ?? undefined,
+    createdAt: entry.createdAt.toISOString(),
   };
 }
 
@@ -753,19 +705,22 @@ notebooks.post("/:id/artifacts", async (c) => {
     return await withNotebookAuthHandling(async () => {
       try {
         const result = await createArtifact(id, type, options);
-        // Persist to DB (non-fatal — creation may be async on NLM side)
+        // Persist to report_entries before returning response
         if (result.artifactId) {
-          dbInsertArtifact({
-            notebookId: id,
-            artifactId: result.artifactId,
-            artifactType: type,
-            state: result.state === "ready" ? "ready" : "creating",
-          }).catch((dbErr) =>
+          const initState = result.state === "ready" ? "ready" : "creating";
+          try {
+            await insertArtifactEntry({
+              notebookId: id,
+              artifactId: result.artifactId,
+              artifactType: type,
+              state: initState as "creating" | "ready" | "failed",
+            });
+          } catch (dbErr) {
             logger.warn(
               { dbErr, notebookId: id, artifactId: result.artifactId },
-              "artifact DB insert failed (non-fatal)"
-            )
-          );
+              "report_entries insert failed (non-fatal)"
+            );
+          }
         }
         return c.json(successResponse(result));
       } catch (err) {
@@ -784,34 +739,50 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
   return await withNotebookId(c, async (id) => {
     const artifactId = c.req.param("artifactId");
 
-    // DB cache: if already READY with full content, skip SDK call entirely
-    const dbRecord = await getArtifactByArtifactId(artifactId).catch(() => null);
-    if (dbRecord && dbRecord.state === "ready" && dbRecord.contentJson) {
-      return c.json(successResponse(dbRecordToApiArtifact(dbRecord)));
+    // Cache: if report_entries already has a READY entry with full content, skip SDK call
+    const cachedEntry = await getEntryByArtifactId(artifactId).catch(() => null);
+    if (cachedEntry && cachedEntry.state === "ready" && cachedEntry.contentJson) {
+      return c.json(successResponse(entryToApiArtifact(cachedEntry)));
     }
 
     return await withNotebookAuthHandling(async () => {
       try {
         const artifact = await getArtifact(id, artifactId);
 
-        // Persist state transitions (non-fatal fire-and-forget)
+        // Persist state transitions to report_entries (non-fatal fire-and-forget)
         if (artifact.state === ArtifactState.READY) {
           const upsertReady = async () => {
-            if (!dbRecord) {
-              const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
-              await dbInsertArtifact({ notebookId: id, artifactId, artifactType: typeStr, state: "creating" });
+            const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
+            const rawContent = extractArtifactContent(artifact);
+            // Handle audio: write MP3 to file, strip audioData from JSON
+            let filePath: string | null = null;
+            if (typeStr === "audio" && typeof rawContent["audioData"] === "string") {
+              const fname = `audio-${crypto.randomUUID()}.mp3`;
+              try {
+                filePath = await writeBase64File(rawContent["audioData"] as string, fname);
+              } catch (fe) {
+                logger.warn({ fe, artifactId }, "Failed to write audio file");
+              }
+              delete rawContent["audioData"];
             }
-            await markArtifactReady(artifactId, {
+            const contentJsonStr = JSON.stringify(rawContent);
+            // Ensure entry exists before marking ready
+            const existingEntry = await getEntryByArtifactId(artifactId);
+            if (!existingEntry) {
+              await insertArtifactEntry({ notebookId: id, artifactId, artifactType: typeStr, title: artifact.title ?? null });
+            }
+            await markArtifactEntryReady(artifactId, {
               title: artifact.title ?? null,
-              contentJson: JSON.stringify(extractArtifactContent(artifact)),
+              contentJson: contentJsonStr,
+              filePath,
             });
           };
           upsertReady().catch((dbErr) =>
-            logger.warn({ dbErr, artifactId }, "artifact DB ready update failed (non-fatal)")
+            logger.warn({ dbErr, artifactId }, "artifact entry ready update failed (non-fatal)")
           );
-        } else if (artifact.state === ArtifactState.FAILED && dbRecord) {
-          markArtifactFailed(artifactId).catch((dbErr) =>
-            logger.warn({ dbErr, artifactId }, "artifact DB failed update failed (non-fatal)")
+        } else if (artifact.state === ArtifactState.FAILED) {
+          markArtifactEntryFailed(artifactId).catch((dbErr) =>
+            logger.warn({ dbErr, artifactId }, "artifact entry failed update failed (non-fatal)")
           );
         }
 
@@ -824,68 +795,76 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
   });
 });
 
-notebooks.get("/:id/artifacts", async (c) => {
+// ---------------------------------------------------------------------------
+// Unified entries API
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/notebooks/:id/entries
+ * Returns all report_entries for this notebook (research reports + artifacts), newest first.
+ * Each entry includes a computed fileUrl when a file_path is present.
+ */
+notebooks.get("/:id/entries", async (c) => {
   return await withNotebookId(c, async (id) => {
-    return await withNotebookAuthHandling(async () => {
-      // Step 1: DB list (always available — historical persistence even after NLM session expires)
-      const dbRecords = await listArtifactsByNotebookId(id).catch(
-        () => [] as ArtifactRecord[]
-      );
-      const dbByArtifactId = new Map(dbRecords.map((r) => [r.artifactId, r]));
-
-      // Step 2: SDK list (may fail; non-auth errors → fall back to DB-only)
-      let sdkArtifacts: Artifact[] = [];
-      try {
-        sdkArtifacts = await listArtifacts(id);
-      } catch (err) {
-        if (isNotebookAuthError(err)) throw err; // let withNotebookAuthHandling handle 401
-        logger.warn({ err, notebookId: id }, "listArtifacts SDK failed, falling back to DB");
-      }
-      const sdkByArtifactId = new Map(sdkArtifacts.map((a) => [a.artifactId, a]));
-
-      // Step 3: Merge — DB READY records are authoritative; SDK provides live state
-      const merged: unknown[] = [];
-
-      for (const artifact of sdkArtifacts) {
-        const dbRec = dbByArtifactId.get(artifact.artifactId);
-        if (dbRec && dbRec.state === "ready" && dbRec.contentJson) {
-          // DB has full content — use it (avoids redundant SDK payload)
-          merged.push(dbRecordToApiArtifact(dbRec));
-        } else {
-          merged.push(artifact);
-          // Background: persist READY state into DB
-          if (artifact.state === ArtifactState.READY) {
-            const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
-            const persist = async () => {
-              if (!dbRec) {
-                await dbInsertArtifact({
-                  notebookId: id,
-                  artifactId: artifact.artifactId,
-                  artifactType: typeStr,
-                  state: "creating",
-                });
-              }
-              await markArtifactReady(artifact.artifactId, {
-                title: artifact.title ?? null,
-                contentJson: JSON.stringify(extractArtifactContent(artifact)),
-              });
-            };
-            persist().catch((dbErr) =>
-              logger.warn({ dbErr, artifactId: artifact.artifactId }, "bg artifact DB update failed")
-            );
+    try {
+      const rows = await listEntriesByNotebookId(id);
+      const entries = rows.map((r) => {
+        let contentJson: unknown = null;
+        if (r.contentJson) {
+          try {
+            contentJson = JSON.parse(r.contentJson) as unknown;
+          } catch {
+            logger.warn({ entryId: r.id }, "GET entries: invalid JSON in contentJson, returning null");
           }
         }
-      }
+        return {
+          id: r.id,
+          entryType: r.entryType,
+          title: r.title,
+          state: r.state,
+          content: r.content,
+          errorMessage: r.errorMessage,
+          artifactId: r.artifactId,
+          artifactType: r.artifactType,
+          contentJson,
+          fileUrl: r.filePath ? `/api/files/${r.filePath}` : null,
+          createdAt: r.createdAt.toISOString(),
+          updatedAt: r.updatedAt.toISOString(),
+        };
+      });
+      return c.json(successResponse(entries));
+    } catch (err) {
+      logger.error({ err, notebookId: id }, "listEntriesByNotebookId failed");
+      return c.json({ success: false, message: "Failed to list entries", errorCode: "INTERNAL_SERVER_ERROR" }, 500);
+    }
+  });
+});
 
-      // DB-only items: SDK no longer returns them but we keep them (historical persistence)
-      for (const dbRec of dbRecords) {
-        if (!sdkByArtifactId.has(dbRec.artifactId)) {
-          merged.push(dbRecordToApiArtifact(dbRec));
-        }
+/**
+ * DELETE /api/notebooks/:id/entries/:entryId
+ * Deletes a report_entry. If the entry has an associated file, deletes the file too.
+ */
+notebooks.delete("/:id/entries/:entryId", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const entryId = c.req.param("entryId");
+    try {
+      const deleted = await deleteEntryById(entryId, id);
+      if (!deleted) {
+        return c.json({ success: false, message: "Entry not found", errorCode: "NOT_FOUND" }, 404);
       }
-
-      return c.json(successResponse(merged));
-    });
+      // Clean up associated file (non-fatal)
+      if (deleted.filePath) {
+        const dir = resolveFilesDir();
+        const fullPath = resolve(dir, deleted.filePath);
+        unlink(fullPath).catch((e) =>
+          logger.warn({ e, filePath: deleted.filePath }, "Failed to delete artifact file (non-fatal)")
+        );
+      }
+      return c.json(successResponse({ id: entryId }));
+    } catch (err) {
+      logger.error({ err, entryId }, "deleteEntryById failed");
+      return c.json({ success: false, message: "Failed to delete entry", errorCode: "INTERNAL_SERVER_ERROR" }, 500);
+    }
   });
 });
 

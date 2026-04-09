@@ -64,6 +64,56 @@ export const artifacts = sqliteTable(
   })
 );
 
+/**
+ * Unified table for all persisted "output" items:
+ *  - entry_type = 'research_report' → locally generated research reports
+ *  - entry_type = 'artifact'        → NotebookLM Studio artifacts (quiz, flashcards, audio, etc.)
+ *
+ * Binary content (audio MP3, slides PDF) is written to the local filesystem under
+ * data/files/ and only the relative filename is stored in file_path.
+ * Small structured content (quiz questions, flashcards) stays in content_json.
+ */
+export const reportEntries = sqliteTable(
+  "report_entries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    notebookId: text("notebook_id").notNull(),
+    /** 'research_report' | 'artifact' */
+    entryType: text("entry_type").notNull(),
+    /** Display title */
+    title: text("title"),
+    /** 'creating' | 'ready' | 'failed' */
+    state: text("state").notNull().default("ready"),
+    /** Markdown content — research_report only */
+    content: text("content"),
+    /** Error details when state = 'failed' */
+    errorMessage: text("error_message"),
+    /** NotebookLM SDK artifact ID — artifact only */
+    artifactId: text("artifact_id"),
+    /** SDK artifact type string — artifact only */
+    artifactType: text("artifact_type"),
+    /** Small structured content as JSON (quiz, flashcards, etc.) — artifact only */
+    contentJson: text("content_json"),
+    /** Relative filename under data/files/ (audio, PDF, etc.) — artifact only */
+    filePath: text("file_path"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    notebookIdx: index("idx_report_entries_notebook").on(table.notebookId),
+    // Note: the raw SQL CREATE TABLE uses a partial unique index with
+    // WHERE artifact_id IS NOT NULL, which Drizzle sqlite-core cannot express.
+    // Use a plain index here so drizzle-kit won't generate an incorrect unique constraint.
+    artifactIdIdx: index("idx_report_entries_artifact_id").on(table.artifactId),
+  })
+);
+
 export const researchReports = sqliteTable(
   "research_reports",
   {
