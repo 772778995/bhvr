@@ -508,10 +508,12 @@ function startSourcePolling() {
       return;
     }
     try {
-      const status = await notebooksApi.getSourceProcessingStatus(notebookId.value);
-      // allReady：所有来源处理成功；processing.length === 0：没有进行中的来源（可能有 failed）
-      if (status.allReady || status.processing.length === 0) {
-        await refreshSources();
+      // 直接用 getSources() 检查来源状态，避免依赖可能不稳定的 getSourceProcessingStatus
+      const latestSources = await notebooksApi.getSources(notebookId.value);
+      const stillProcessing = latestSources.some((s) => s.status === "processing");
+      if (!stillProcessing) {
+        // 所有来源已结束（ready 或 failed），直接更新列表并停止轮询
+        sources.value = latestSources;
         stopSourcePolling();
       }
     } catch {

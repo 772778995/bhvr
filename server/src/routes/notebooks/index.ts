@@ -798,9 +798,13 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
               filePath,
             });
           };
-          upsertReady().catch((dbErr) =>
-            logger.warn({ dbErr, artifactId }, "artifact entry ready update failed (non-fatal)")
-          );
+          // 必须 await：音频文件写磁盘 + DB 更新完成后才能返回响应
+          // 否则前端轮询收到 READY 立即调 listEntries，file_path 还是 null，音频不可用
+          try {
+            await upsertReady();
+          } catch (dbErr) {
+            logger.warn({ dbErr, artifactId }, "artifact entry ready update failed (non-fatal)");
+          }
         } else if (artifact.state === ArtifactState.FAILED) {
           markArtifactEntryFailed(artifactId).catch((dbErr) =>
             logger.warn({ dbErr, artifactId }, "artifact entry failed update failed (non-fatal)")
@@ -810,6 +814,29 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
         return c.json(successResponse(artifact));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+
+        // If the SDK confirms the artifact is not in the notebook's artifact list at all,
+        // it is permanently gone (e.g., NotebookLM expired it after a server restart).
+        // Mark as failed in DB and return a FAILED state to the frontend so polling stops.
+        if (message.includes("not found in list")) {
+          logger.warn({ artifactId, notebookId: id }, "Artifact not found in NotebookLM list — marking as failed");
+          try {
+            await markArtifactEntryFailed(artifactId);
+          } catch (dbErr) {
+            logger.warn({ dbErr, artifactId }, "Failed to mark artifact as failed in DB");
+          }
+          const failedEntry = await getEntryByArtifactId(artifactId).catch(() => null);
+          if (failedEntry) {
+            return c.json(successResponse(entryToApiArtifact(failedEntry)));
+          }
+          // No DB entry — return a minimal failed response so frontend stops polling
+          return c.json(successResponse({
+            artifactId,
+            type: 0,
+            state: ArtifactState.FAILED,
+          }));
+        }
+
         return c.json({ success: false, message, errorCode: "ARTIFACT_FETCH_FAILED" }, 502);
       }
     });
