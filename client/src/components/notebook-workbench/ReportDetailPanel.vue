@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
 import {
   type NotebookReport,
   type Artifact,
   type ArtifactTypeValue,
+  type QuizQuestion,
   ArtifactType,
   ArtifactState,
   notebooksApi,
@@ -50,30 +51,131 @@ function downloadMarkdown() {
 }
 
 // ---------------------------------------------------------------------------
-// Artifact detail: fetch full content for REPORT type
+// Artifact full data (replaces the old `artifactContent: string | null`)
 // ---------------------------------------------------------------------------
 
-const artifactContent = ref<string | null>(null);
+const fullArtifact = ref<Artifact | null>(null);
 const artifactContentLoading = ref(false);
 
+// REPORT: rendered HTML
 const artifactRenderedHtml = computed(() => {
-  if (!artifactContent.value) return "";
-  return renderMarkdown(artifactContent.value);
+  if (!fullArtifact.value?.content) return "";
+  return renderMarkdown(fullArtifact.value.content);
 });
 
+// AUDIO: blob URL management
+const audioBlobUrl = ref<string | null>(null);
+
+function base64ToBlob(b64: string, mime: string): Blob {
+  const byteChars = atob(b64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+function revokeAudioBlobUrl() {
+  if (audioBlobUrl.value) {
+    URL.revokeObjectURL(audioBlobUrl.value);
+    audioBlobUrl.value = null;
+  }
+}
+
+function downloadAudio() {
+  if (!audioBlobUrl.value) return;
+  const a = document.createElement("a");
+  a.href = audioBlobUrl.value;
+  const title = props.artifact?.title || "audio";
+  a.download = title + ".mp3";
+  a.click();
+}
+
+onUnmounted(() => {
+  revokeAudioBlobUrl();
+});
+
+// QUIZ: interaction state
+interface QuizState {
+  /** Index of selected answer per question (-1 = not answered). */
+  selected: number[];
+  answeredCount: number;
+  correctCount: number;
+}
+
+const quizState = ref<QuizState>({ selected: [], answeredCount: 0, correctCount: 0 });
+
+function initQuizState(questions: QuizQuestion[]) {
+  quizState.value = {
+    selected: questions.map(() => -1),
+    answeredCount: 0,
+    correctCount: 0,
+  };
+}
+
+function selectQuizOption(qIndex: number, optIndex: number, correctAnswer: number) {
+  if (quizState.value.selected[qIndex] !== -1) return; // already answered
+  quizState.value.selected[qIndex] = optIndex;
+  quizState.value.answeredCount++;
+  if (optIndex === correctAnswer) quizState.value.correctCount++;
+}
+
+// FLASHCARDS: navigation + flip state
+const flashcardIndex = ref(0);
+const flashcardFlipped = ref<boolean[]>([]);
+
+function initFlashcards(count: number) {
+  flashcardIndex.value = 0;
+  flashcardFlipped.value = Array(count).fill(false);
+}
+
+function flipCard(idx: number) {
+  flashcardFlipped.value[idx] = !flashcardFlipped.value[idx];
+}
+
+function prevCard() {
+  if (flashcardIndex.value > 0) flashcardIndex.value--;
+}
+
+function nextCard(total: number) {
+  if (flashcardIndex.value < total - 1) flashcardIndex.value++;
+}
+
+// ---------------------------------------------------------------------------
+// Fetch full artifact data for READY artifacts of any supported type
+// ---------------------------------------------------------------------------
+
 async function fetchArtifactContent() {
-  artifactContent.value = null;
+  fullArtifact.value = null;
+  revokeAudioBlobUrl();
+
   if (!props.artifact) return;
-  if (props.artifact.type !== ArtifactType.REPORT) return;
   if (props.artifact.state !== ArtifactState.READY) return;
+
+  // Only fetch types we can display
+  const fetchableTypes: ArtifactTypeValue[] = [
+    ArtifactType.REPORT,
+    ArtifactType.AUDIO,
+    ArtifactType.QUIZ,
+    ArtifactType.FLASHCARDS,
+  ];
+  if (!fetchableTypes.includes(props.artifact.type)) return;
 
   artifactContentLoading.value = true;
   try {
     const full = await notebooksApi.getArtifact(props.notebookId, props.artifact.artifactId);
-    // The full artifact may carry a `content` field (not in the base type, but returned by the API)
-    const anyFull = full as Artifact & { content?: string };
-    if (anyFull.content) {
-      artifactContent.value = anyFull.content;
+    fullArtifact.value = full;
+
+    // Post-process per type
+    if (full.type === ArtifactType.AUDIO && full.audioData) {
+      const blob = base64ToBlob(full.audioData, "audio/mp3");
+      audioBlobUrl.value = URL.createObjectURL(blob);
+    }
+
+    if (full.type === ArtifactType.QUIZ && full.questions) {
+      initQuizState(full.questions);
+    }
+
+    if (full.type === ArtifactType.FLASHCARDS && full.flashcards) {
+      initFlashcards(full.flashcards.length);
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -161,6 +263,13 @@ function formatTime(raw: string | null | undefined): string {
     return raw;
   }
 }
+
+function formatDuration(seconds: number | undefined): string {
+  if (!seconds) return "";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 </script>
 
 <template>
@@ -181,7 +290,7 @@ function formatTime(raw: string | null | undefined): string {
 
       <div class="flex-1" />
 
-      <!-- Download button — only for local reports with content -->
+      <!-- Download .md — only for local reports with content -->
       <button
         v-if="report?.content"
         type="button"
@@ -193,6 +302,20 @@ function formatTime(raw: string | null | undefined): string {
           <line x1="8" y1="2" x2="8" y2="14" />
         </svg>
         <span>下载 .md</span>
+      </button>
+
+      <!-- Download MP3 — only for AUDIO with a blob URL -->
+      <button
+        v-if="artifact && artifact.type === ArtifactType.AUDIO && audioBlobUrl"
+        type="button"
+        class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
+        @click="downloadAudio"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 10 8 14 12 10" />
+          <line x1="8" y1="2" x2="8" y2="14" />
+        </svg>
+        <span>下载 MP3</span>
       </button>
     </div>
 
@@ -311,17 +434,223 @@ function formatTime(raw: string | null | undefined): string {
           </div>
         </div>
 
-        <!-- Content for REPORT type -->
-        <template v-if="artifact.type === 1 && artifact.state === 2">
-          <div v-if="artifactContentLoading" class="mt-5 text-sm text-[#9a8a78] animate-pulse">
-            加载报告内容…
-          </div>
-          <div v-else-if="artifactContent" class="mt-5 prose-warm" v-html="artifactRenderedHtml" />
+        <!-- Loading indicator -->
+        <div v-if="artifactContentLoading" class="mt-5 text-sm text-[#9a8a78] animate-pulse">
+          加载内容…
+        </div>
+
+        <!-- ── REPORT content ── -->
+        <template v-else-if="artifact.type === ArtifactType.REPORT && artifact.state === ArtifactState.READY">
+          <div v-if="fullArtifact?.content" class="mt-5 prose-warm" v-html="artifactRenderedHtml" />
+          <p v-else class="mt-5 text-sm text-[#9a8a78]">报告内容为空。</p>
         </template>
 
-        <!-- Informational note for non-content types -->
+        <!-- ── AUDIO preview ── -->
+        <template v-else-if="artifact.type === ArtifactType.AUDIO && artifact.state === ArtifactState.READY">
+          <div class="mt-5 rounded-lg border border-[#ddd3c2] bg-[#fffbf4] px-5 py-5">
+            <p class="text-sm text-[#6a5b49] mb-3 font-medium">音频概述</p>
+
+            <!-- Duration hint -->
+            <p v-if="fullArtifact?.duration" class="text-xs text-[#9a8a78] mb-3">
+              时长：{{ formatDuration(fullArtifact.duration) }}
+            </p>
+
+            <!-- Audio player -->
+            <audio
+              v-if="audioBlobUrl"
+              :src="audioBlobUrl"
+              controls
+              class="w-full"
+              style="accent-color: #6a5b49;"
+            />
+            <p v-else class="text-sm text-[#9a8a78]">音频数据不可用。</p>
+          </div>
+        </template>
+
+        <!-- ── QUIZ preview ── -->
+        <template v-else-if="artifact.type === ArtifactType.QUIZ && artifact.state === ArtifactState.READY">
+          <div class="mt-5">
+            <!-- Progress bar -->
+            <div v-if="fullArtifact?.questions" class="mb-4 flex items-center gap-3">
+              <span class="text-sm text-[#6a5b49] font-medium">
+                答对 {{ quizState.correctCount }} / 已答 {{ quizState.answeredCount }} / 共 {{ fullArtifact.questions.length }} 题
+              </span>
+            </div>
+
+            <!-- Question cards -->
+            <div
+              v-if="fullArtifact?.questions && fullArtifact.questions.length > 0"
+              class="flex flex-col gap-4"
+            >
+              <div
+                v-for="(q, qIdx) in fullArtifact.questions"
+                :key="qIdx"
+                class="rounded-lg border border-[#ddd3c2] bg-[#fffbf4] px-5 py-4"
+              >
+                <!-- Question -->
+                <p class="text-base text-[#2f271f] leading-relaxed mb-3">
+                  <span class="text-xs text-[#9a8a78] mr-2 font-medium">Q{{ qIdx + 1 }}</span>
+                  {{ q.question }}
+                </p>
+
+                <!-- Options -->
+                <div class="flex flex-col gap-2">
+                  <button
+                    v-for="(opt, optIdx) in q.options"
+                    :key="optIdx"
+                    type="button"
+                    :disabled="quizState.selected[qIdx] !== -1"
+                    :class="[
+                      'w-full text-left px-4 py-2.5 rounded border text-base leading-relaxed transition-colors duration-150',
+                      quizState.selected[qIdx] === -1
+                        ? 'border-[#ddd3c2] text-[#2f271f] hover:bg-[#efe7d7] cursor-pointer'
+                        : quizState.selected[qIdx] === optIdx
+                          ? optIdx === q.correctAnswer
+                            ? 'bg-emerald-100 border-emerald-400 text-emerald-900 cursor-default'
+                            : 'bg-red-100 border-red-400 text-red-900 cursor-default'
+                          : optIdx === q.correctAnswer && quizState.selected[qIdx] !== -1
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800 cursor-default'
+                            : 'border-[#ddd3c2] text-[#9a8a78] cursor-default',
+                    ]"
+                    @click="selectQuizOption(qIdx, optIdx, q.correctAnswer)"
+                  >
+                    <span class="font-medium mr-2 text-xs">{{ String.fromCharCode(65 + optIdx) }}.</span>
+                    {{ opt }}
+                  </button>
+                </div>
+
+                <!-- Explanation -->
+                <p
+                  v-if="quizState.selected[qIdx] !== -1 && q.explanation"
+                  class="mt-3 text-sm text-[#6a5b49] leading-relaxed border-t border-[#e0d5c0] pt-3"
+                >
+                  <span class="font-medium">解析：</span>{{ q.explanation }}
+                </p>
+              </div>
+            </div>
+
+            <p v-else class="text-sm text-[#9a8a78]">暂无题目数据。</p>
+          </div>
+        </template>
+
+        <!-- ── FLASHCARDS preview ── -->
+        <template v-else-if="artifact.type === ArtifactType.FLASHCARDS && artifact.state === ArtifactState.READY">
+          <div class="mt-5">
+            <div v-if="fullArtifact?.flashcards && fullArtifact.flashcards.length > 0">
+              <!-- Navigation -->
+              <div class="flex items-center justify-between mb-4">
+                <span class="text-sm text-[#6a5b49] font-medium">
+                  第 {{ flashcardIndex + 1 }} / {{ fullArtifact.flashcards.length }} 张
+                </span>
+                <div class="flex gap-2">
+                  <button
+                    type="button"
+                    :disabled="flashcardIndex === 0"
+                    class="px-3 py-1.5 rounded border border-[#ddd3c2] text-sm text-[#6a5b49] hover:bg-[#efe7d7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-100"
+                    @click="prevCard"
+                  >
+                    上一张
+                  </button>
+                  <button
+                    type="button"
+                    :disabled="flashcardIndex === fullArtifact.flashcards.length - 1"
+                    class="px-3 py-1.5 rounded border border-[#ddd3c2] text-sm text-[#6a5b49] hover:bg-[#efe7d7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-100"
+                    @click="nextCard(fullArtifact!.flashcards!.length)"
+                  >
+                    下一张
+                  </button>
+                </div>
+              </div>
+
+              <!-- Flip card -->
+              <div
+                style="perspective: 600px; height: 220px;"
+                class="cursor-pointer select-none"
+                @click="flipCard(flashcardIndex)"
+              >
+                <div
+                  :style="{
+                    position: 'relative',
+                    width: '100%',
+                    height: '100%',
+                    transformStyle: 'preserve-3d',
+                    transition: 'transform 0.45s ease',
+                    transform: flashcardFlipped[flashcardIndex] ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                  }"
+                >
+                  <!-- Front (question) -->
+                  <div
+                    style="
+                      position: absolute;
+                      inset: 0;
+                      backface-visibility: hidden;
+                      -webkit-backface-visibility: hidden;
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      justify-content: center;
+                      border-radius: 8px;
+                      border: 1px solid #ddd3c2;
+                      background: #fffbf4;
+                      padding: 28px 32px;
+                    "
+                  >
+                    <p class="text-xs text-[#9a8a78] mb-3 uppercase tracking-wide">问题</p>
+                    <p class="text-base text-[#2f271f] leading-relaxed text-center">
+                      {{ fullArtifact.flashcards[flashcardIndex].question }}
+                    </p>
+                    <p class="text-xs text-[#c0b09a] mt-4">点击翻转查看答案</p>
+                  </div>
+
+                  <!-- Back (answer) -->
+                  <div
+                    style="
+                      position: absolute;
+                      inset: 0;
+                      backface-visibility: hidden;
+                      -webkit-backface-visibility: hidden;
+                      transform: rotateY(180deg);
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      justify-content: center;
+                      border-radius: 8px;
+                      border: 1px solid #b5d1b8;
+                      background: #f3faf4;
+                      padding: 28px 32px;
+                    "
+                  >
+                    <p class="text-xs text-emerald-600 mb-3 uppercase tracking-wide">答案</p>
+                    <p class="text-base text-[#2f271f] leading-relaxed text-center">
+                      {{ fullArtifact.flashcards[flashcardIndex].answer }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dot indicators -->
+              <div class="flex justify-center gap-1.5 mt-4">
+                <button
+                  v-for="(_, i) in fullArtifact.flashcards"
+                  :key="i"
+                  type="button"
+                  :class="[
+                    'w-2 h-2 rounded-full transition-colors duration-150',
+                    i === flashcardIndex ? 'bg-[#6a5b49]' : 'bg-[#ddd3c2] hover:bg-[#c0b09a]',
+                  ]"
+                  :aria-label="`跳转到第 ${i + 1} 张`"
+                  @click="flashcardIndex = i"
+                />
+              </div>
+            </div>
+
+            <p v-else class="text-sm text-[#9a8a78]">暂无闪卡数据。</p>
+          </div>
+        </template>
+
+        <!-- ── Non-previewable types (VIDEO, MIND_MAP, INFOGRAPHIC, SLIDE_DECK) ── -->
         <p
-          v-if="artifact.type !== 1 && artifact.state === 2"
+          v-else-if="artifact.state === ArtifactState.READY"
           class="mt-5 text-sm text-[#9a8a78] leading-relaxed"
         >
           该产物类型的内容需在 NotebookLM 中查看。

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "./index.js";
 import { chatMessages } from "./schema.js";
 
@@ -40,4 +40,20 @@ export async function listChatMessages(
     source: row.source,
     createdAt: row.createdAt,
   }));
+}
+
+/** Returns the number of chat messages for a notebook, optionally filtered by source. */
+export async function countChatMessages(
+  notebookId: string,
+  source?: "manual" | "research"
+): Promise<number> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(chatMessages)
+    .where(
+      source
+        ? sql`${chatMessages.notebookId} = ${notebookId} AND ${chatMessages.source} = ${source}`
+        : eq(chatMessages.notebookId, notebookId)
+    );
+  return Number(rows[0]?.count ?? 0);
 }

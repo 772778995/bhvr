@@ -35,6 +35,7 @@ import {
   listReportsByNotebookId,
   setReportError,
 } from "../../report/service.js";
+import { countChatMessages } from "../../db/chat-messages.js";
 import { createNotebookConversationAsker, createNotebookResearchDriver } from "../../research-runtime/chat-asker.js";
 import { isRunning, runAutoResearch } from "../../research-runtime/orchestrator.js";
 import { get as getRuntimeState, requestStop } from "../../research-runtime/registry.js";
@@ -580,8 +581,8 @@ notebooks.delete("/:id/reports/:reportId", async (c) => {
 
 notebooks.post("/:id/report/generate", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const runtime = getRuntimeState(id);
-    if (!runtime || runtime.completedCount <= 0) {
+    const msgCount = await countChatMessages(id);
+    if (msgCount <= 0) {
       return c.json(
         {
           success: false,
@@ -663,6 +664,7 @@ notebooks.post("/:id/artifacts", async (c) => {
         const result = await createArtifact(id, type, options);
         return c.json(successResponse(result));
       } catch (err) {
+        logger.error({ err, notebookId: id, type }, "createArtifact failed");
         const message = err instanceof Error ? err.message : String(err);
         if (message.startsWith("Unknown artifact type")) {
           return c.json({ success: false, message, errorCode: "INVALID_TYPE" }, 400);

@@ -75,6 +75,8 @@ const reports = ref<NotebookReport[]>([]);
 const selectedReportId = ref<string | null>(null);
 
 const selectedArtifact = ref<Artifact | null>(null);
+/** Incremented to trigger ReportListPanel to re-fetch the SDK artifact list. */
+const artifactRefreshKey = ref(0);
 
 const selectedReport = computed(() => {
   if (!selectedReportId.value) return null;
@@ -473,6 +475,26 @@ async function onStartResearch() {
   }
 }
 
+/** Generates a research report from local Q&A data via our own system. */
+async function onGenerateReport(): Promise<void> {
+  if (!notebookId.value) return;
+  try {
+    await notebooksApi.generateReport(notebookId.value);
+    pushNotice("研究报告已生成");
+    await refreshReports();
+    activeCenterTab.value = 'reports';
+    reportView.value = 'list';
+  } catch (err) {
+    pushNotice(err instanceof Error ? err.message : "生成研究报告失败", "error");
+  }
+}
+
+/** Called when a Studio artifact finishes generating — refresh list + switch tab. */
+function onArtifactReady() {
+  artifactRefreshKey.value++;
+  activeCenterTab.value = 'reports';
+}
+
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadWorkbenchData() {
   const requestId = ++activeRequestId.value;
@@ -637,6 +659,7 @@ onUnmounted(() => {
                     v-if="reportView === 'list'"
                     :notebook-id="notebookId"
                     :reports="reports"
+                    :refresh-key="artifactRefreshKey"
                     :on-select="onSelectReport"
                     :on-select-artifact="onSelectArtifact"
                     :on-delete="onRequestDeleteReport"
@@ -665,6 +688,8 @@ onUnmounted(() => {
                 :has-research-assets="hasResearchAssets"
                 :message-count="messages.length"
                 :on-start-research="onStartResearch"
+                :on-generate-report="onGenerateReport"
+                :on-artifact-ready="onArtifactReady"
               />
             </div>
           </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive } from "vue";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import {
   type ResearchState,
   ArtifactState,
@@ -17,6 +17,10 @@ interface Props {
   hasResearchAssets: boolean;
   messageCount: number;
   onStartResearch: () => void;
+  /** Generates a research report from local Q&A data (our system). */
+  onGenerateReport: () => Promise<void>;
+  /** Called when a Studio artifact finishes generating (READY). */
+  onArtifactReady?: () => void;
 }
 
 const props = defineProps<Props>();
@@ -35,12 +39,92 @@ function handleToggle() {
 
 const countLabel = computed(() => {
   const turns = Math.floor(props.messageCount / 2);
-  if (turns <= 0 && !running.value) return "暂无问答数据";
-  if (running.value) {
-    return `已追加 ${turns} 轮问答${props.researchState.step === "waiting_answer" ? "，正在等待回答…" : ""}`;
-  }
+  if (turns <= 0) return "暂无问答数据";
   return `共 ${turns} 轮问答`;
 });
+
+// ---------------------------------------------------------------------------
+// Step indicator
+// ---------------------------------------------------------------------------
+
+interface StepDef {
+  step: string;
+  label: string;
+  /** SVG path data (24x24 viewBox, stroke-based) */
+  iconPath: string;
+}
+
+const STEP_DEFS: StepDef[] = [
+  {
+    step: "starting",
+    label: "启动中",
+    // loader circle
+    iconPath: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83",
+  },
+  {
+    step: "generating_question",
+    label: "正在生成问题",
+    // pencil / edit icon
+    iconPath: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
+  },
+  {
+    step: "waiting_answer",
+    label: "等待 NotebookLM 回答",
+    // hourglass icon
+    iconPath: "M5 22h14M5 2h14M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12M7 22v-4.172a2 2 0 0 1 .586-1.414L12 12M17 2v4.172a2 2 0 0 1-.586 1.414L12 12M7 2v4.172a2 2 0 0 0 .586 1.414L12 12",
+  },
+  {
+    step: "refreshing_messages",
+    label: "同步回答内容",
+    // refresh / rotate icon
+    iconPath: "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
+  },
+];
+
+const currentStepDef = computed<StepDef | null>(() => {
+  const step = props.researchState.step;
+  if (!step || step === "idle") {
+    // Show a generic "preparing" entry when running but step not set
+    return running.value
+      ? {
+          step: "idle",
+          label: "准备中",
+          iconPath: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83",
+        }
+      : null;
+  }
+  return STEP_DEFS.find((d) => d.step === step) ?? null;
+});
+
+// ---------------------------------------------------------------------------
+// Waiting-answer timer
+// ---------------------------------------------------------------------------
+
+const waitingSeconds = ref<number>(0);
+let waitingTimer: ReturnType<typeof setInterval> | null = null;
+
+function clearWaitingTimer() {
+  if (waitingTimer !== null) {
+    clearInterval(waitingTimer);
+    waitingTimer = null;
+  }
+}
+
+watch(
+  () => props.researchState.step,
+  (step) => {
+    if (step === "waiting_answer") {
+      waitingSeconds.value = 0;
+      clearWaitingTimer();
+      waitingTimer = setInterval(() => {
+        waitingSeconds.value += 1;
+      }, 1000);
+    } else {
+      clearWaitingTimer();
+      waitingSeconds.value = 0;
+    }
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Artifact definitions
@@ -52,6 +136,8 @@ interface ArtifactDef {
   /** The type string sent to the API, or null for unsupported types. */
   apiType: string | null;
   icon: string; // inline SVG path data
+  /** Whether this feature is experimental (未经完整测试). */
+  experimental?: boolean;
 }
 
 const artifacts: ArtifactDef[] = [
@@ -59,6 +145,7 @@ const artifacts: ArtifactDef[] = [
     key: "audio",
     label: "音频概述",
     apiType: "audio",
+    experimental: true,
     // headphones icon
     icon: "M3 18v-6a9 9 0 0 1 18 0v6M3 18a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H4a3 3 0 0 0-3 3zm18 0a3 3 0 0 1-3 3h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a3 3 0 0 1 3 3z",
   },
@@ -66,6 +153,7 @@ const artifacts: ArtifactDef[] = [
     key: "slide_deck",
     label: "幻灯片",
     apiType: "slide_deck",
+    experimental: true,
     // presentation/slide icon
     icon: "M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm8 16v-3m-4 3h8",
   },
@@ -73,6 +161,7 @@ const artifacts: ArtifactDef[] = [
     key: "video",
     label: "视频概述",
     apiType: "video",
+    experimental: true,
     // film/clapboard icon
     icon: "M15 10l5-3v10l-5-3M3 6h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z",
   },
@@ -80,13 +169,15 @@ const artifacts: ArtifactDef[] = [
     key: "mind_map",
     label: "思维导图",
     apiType: "mind_map",
+    experimental: true,
     // network/graph icon
     icon: "M12 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM5 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm14 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 8v3m-5 3l4-3m6 3l-4-3",
   },
   {
     key: "report",
-    label: "研究报告",
+    label: "文档摘要",
     apiType: "report",
+    experimental: true,
     // document/page icon
     icon: "M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 0v6h6M8 13h8M8 17h5",
   },
@@ -94,6 +185,7 @@ const artifacts: ArtifactDef[] = [
     key: "flashcards",
     label: "闪卡",
     apiType: "flashcards",
+    experimental: true,
     // stacked cards icon
     icon: "M5 6h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM7 3h10a1 1 0 0 1 1 1v1H6V4a1 1 0 0 1 1-1z",
   },
@@ -101,6 +193,7 @@ const artifacts: ArtifactDef[] = [
     key: "quiz",
     label: "测验",
     apiType: "quiz",
+    experimental: true,
     // question mark circle icon
     icon: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-6v.01M12 8a2 2 0 0 1 1.71 3.04L12 13",
   },
@@ -108,6 +201,7 @@ const artifacts: ArtifactDef[] = [
     key: "infographic",
     label: "信息图",
     apiType: "infographic",
+    experimental: true,
     // bar chart icon
     icon: "M4 20h16M4 20V10m0 10h4V14m-4-4h4v4m0 0h4V8m0 12h4V4m0 16h4v-8",
   },
@@ -134,7 +228,10 @@ function clearAllTimers() {
   pollTimers.clear();
 }
 
-onUnmounted(clearAllTimers);
+onUnmounted(() => {
+  clearAllTimers();
+  clearWaitingTimer();
+});
 
 // ---------------------------------------------------------------------------
 // Poll helper
@@ -163,6 +260,7 @@ async function pollArtifact(
       if (artifact.state === ArtifactState.READY) {
         generating[key] = false;
         showToast(`${label} 已生成`, "info");
+        props.onArtifactReady?.();
         return;
       }
       if (artifact.state === ArtifactState.FAILED) {
@@ -206,9 +304,26 @@ async function handleArtifactClick(def: ArtifactDef) {
       def.apiType,
     );
     await pollArtifact(props.notebookId, res.artifactId, def.label, def.key);
-  } catch {
+  } catch (err) {
     generating[def.key] = false;
-    showToast(`${def.label} 创建失败`, "error");
+    const msg = err instanceof Error ? err.message : String(err);
+    showToast(`${def.label} 创建失败：${msg}`, "error");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generate research report (our own system, based on local Q&A)
+// ---------------------------------------------------------------------------
+
+const generatingReport = ref(false);
+
+async function handleGenerateReport() {
+  if (generatingReport.value || !props.hasResearchAssets) return;
+  generatingReport.value = true;
+  try {
+    await props.onGenerateReport();
+  } finally {
+    generatingReport.value = false;
   }
 }
 </script>
@@ -255,7 +370,54 @@ async function handleArtifactClick(def: ArtifactDef) {
           </button>
         </div>
 
-        <p class="text-sm text-[#9a8a78] leading-relaxed">{{ countLabel }}</p>
+        <!-- Step indicator card (running) -->
+        <div
+          v-if="running && currentStepDef"
+          class="flex flex-col gap-1.5 bg-[#fffbf4] border border-[#ddd3c2] rounded-md px-3 py-2"
+        >
+          <!-- Active step row -->
+          <div class="flex items-center gap-2 min-w-0">
+            <!-- Pulse dot -->
+            <span class="relative flex shrink-0 h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#9a8a78] opacity-60" />
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-[#7a6c5a]" />
+            </span>
+
+            <!-- Step icon -->
+            <svg
+              class="shrink-0 w-4 h-4 text-[#7a6c5a]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path :d="currentStepDef.iconPath" />
+            </svg>
+
+            <!-- Step label -->
+            <span class="text-sm text-[#564738] leading-snug flex-1 truncate">
+              {{ currentStepDef.label }}
+            </span>
+
+            <!-- Elapsed time (only for waiting_answer) -->
+            <span
+              v-if="researchState.step === 'waiting_answer'"
+              class="shrink-0 text-xs text-[#9a8a78] tabular-nums ml-1"
+            >
+              已等 {{ waitingSeconds }}s
+            </span>
+          </div>
+
+          <!-- Turn count sub-line -->
+          <p class="text-xs text-[#9a8a78] leading-relaxed pl-4">
+            {{ countLabel }}
+          </p>
+        </div>
+
+        <!-- Static count label (not running) -->
+        <p v-else class="text-sm text-[#9a8a78] leading-relaxed">{{ countLabel }}</p>
 
         <p
           v-if="researchState.lastError"
@@ -273,12 +435,17 @@ async function handleArtifactClick(def: ArtifactDef) {
 
       <!-- ─── 生成产物 ─── -->
       <div class="flex flex-col gap-3">
-        <h3
-          class="text-base font-medium text-[#2f271f] shrink-0"
-          style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
-        >
-          生成产物
-        </h3>
+        <div class="flex items-center gap-2 shrink-0">
+          <h3
+            class="text-base font-medium text-[#2f271f]"
+            style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
+          >
+            生成产物
+          </h3>
+          <span class="rounded px-1.5 py-0.5 text-[10px] leading-none font-medium bg-[#e4dac8] text-[#8a7b68]">
+            NotebookLM 原生
+          </span>
+        </div>
 
         <!-- 2-col grid -->
         <div class="grid grid-cols-2 gap-2">
@@ -287,9 +454,17 @@ async function handleArtifactClick(def: ArtifactDef) {
             :key="art.key"
             type="button"
             :disabled="generating[art.key]"
-            class="group flex flex-col items-center gap-1.5 rounded-md border bg-[#fffbf4] border-[#ddd3c2] px-2 py-3 text-[#2f271f] transition-all duration-150 ease-in-out hover:shadow-md hover:-translate-y-0.5 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60"
+            class="group relative flex flex-col items-center gap-1.5 rounded-md border bg-[#fffbf4] border-[#ddd3c2] px-2 py-3 text-[#2f271f] transition-all duration-150 ease-in-out hover:shadow-md hover:-translate-y-0.5 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60"
             @click="handleArtifactClick(art)"
           >
+            <!-- Experimental badge -->
+            <span
+              v-if="art.experimental"
+              class="absolute top-1 right-1 rounded px-1 py-0.5 text-[9px] leading-none font-medium bg-[#e8ddc8] text-[#9a8a78]"
+            >
+              实验
+            </span>
+
             <!-- Icon -->
             <span class="relative flex items-center justify-center w-7 h-7 text-[#7a6c5a]">
               <!-- Spinner overlay when generating -->
@@ -333,6 +508,52 @@ async function handleArtifactClick(def: ArtifactDef) {
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- ─── Generate research report (pinned footer) ─── -->
+    <div class="shrink-0 border-t border-[#d8cfbe] p-4">
+      <button
+        type="button"
+        :disabled="!hasResearchAssets || generatingReport"
+        class="w-full flex items-center justify-center gap-2 rounded-md border border-[#b8a98a] bg-[#ede2cc] px-4 py-2.5 text-sm font-medium text-[#3a2e20] transition-all duration-150 ease-in-out hover:bg-[#e0d4b8] hover:border-[#a89878] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+        @click="handleGenerateReport"
+      >
+        <!-- Spinner when generating -->
+        <svg
+          v-if="generatingReport"
+          class="w-4 h-4 animate-spin shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-dasharray="50 14"
+            stroke-linecap="round"
+          />
+        </svg>
+        <!-- Document icon -->
+        <svg
+          v-else
+          class="w-4 h-4 shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+        </svg>
+        <span>{{ generatingReport ? "正在生成报告…" : "生成研究报告" }}</span>
+      </button>
+      <p class="mt-1.5 text-xs text-[#9a8a78] text-center leading-relaxed">
+        基于本次课题研究的问答数据
+      </p>
     </div>
   </section>
 </template>

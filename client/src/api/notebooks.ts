@@ -176,12 +176,42 @@ export const ArtifactState = {
 
 export type ArtifactStateValue = (typeof ArtifactState)[keyof typeof ArtifactState];
 
+/** Quiz question as returned by the SDK. */
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation?: string;
+  hint?: string;
+}
+
+/** Flashcard pair as returned by the SDK. */
+export interface FlashcardPair {
+  question: string;
+  answer: string;
+}
+
 export interface Artifact {
   artifactId: string;
   type: ArtifactTypeValue;
   state: ArtifactStateValue;
   title?: string;
   createdAt?: string;
+  // ── Rich content fields (present when state === READY) ──
+  /** Base64-encoded MP3 audio data (AUDIO type). */
+  audioData?: string;
+  /** Audio duration in seconds (AUDIO type). */
+  duration?: number;
+  /** Report text content in Markdown (REPORT type). */
+  content?: string;
+  /** Quiz questions (QUIZ type). */
+  questions?: QuizQuestion[];
+  /** Total question count (QUIZ type). */
+  totalQuestions?: number;
+  /** Parsed flashcard pairs (FLASHCARDS type). */
+  flashcards?: FlashcardPair[];
+  /** Raw CSV string (FLASHCARDS type). */
+  csv?: string;
 }
 
 export interface CreateArtifactResponse {

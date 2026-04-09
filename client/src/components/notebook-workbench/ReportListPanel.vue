@@ -17,6 +17,8 @@ interface Props {
   onSelect: (reportId: string) => void;
   onDelete: (reportId: string) => void;
   onSelectArtifact?: (artifactId: string) => void;
+  /** Increment this to trigger a re-fetch of the SDK artifact list. */
+  refreshKey?: number;
 }
 
 const props = defineProps<Props>();
@@ -45,6 +47,7 @@ async function fetchArtifacts() {
 
 onMounted(fetchArtifacts);
 watch(() => props.notebookId, fetchArtifacts);
+watch(() => props.refreshKey, () => { void fetchArtifacts(); });
 
 // ---------------------------------------------------------------------------
 // Unified item model
@@ -72,7 +75,7 @@ function summarize(content: string | null, maxLen = 100): string {
 
 const artifactTypeLabels: Record<number, string> = {
   [ArtifactType.UNKNOWN]: "未知类型",
-  [ArtifactType.REPORT]: "研究报告",
+  [ArtifactType.REPORT]: "文档摘要",
   [ArtifactType.QUIZ]: "测验",
   [ArtifactType.FLASHCARDS]: "闪卡",
   [ArtifactType.MIND_MAP]: "思维导图",
