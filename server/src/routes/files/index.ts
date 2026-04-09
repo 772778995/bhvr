@@ -11,6 +11,7 @@ const MIME: Record<string, string> = {
   ".pdf": "application/pdf",
   ".wav": "audio/wav",
   ".ogg": "audio/ogg",
+  ".md": "text/markdown; charset=utf-8",
 };
 
 const files = new Hono();

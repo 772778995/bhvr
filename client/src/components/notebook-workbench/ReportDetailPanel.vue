@@ -5,6 +5,7 @@ import {
   type QuizQuestion,
   type FlashcardPair,
   ArtifactType,
+  notebooksApi,
 } from "@/api/notebooks";
 import { renderMarkdown } from "@/utils/markdown";
 
@@ -43,17 +44,82 @@ const currentArtifactType = computed(() => {
 });
 
 // ---------------------------------------------------------------------------
+// Research report: on-demand content fetching
+// ---------------------------------------------------------------------------
+
+/** Cache fetched markdown keyed by entry ID to avoid redundant requests.
+ *  Cleared when notebookId changes (see watch below). */
+const contentCache = new Map<string, string>();
+const fetchedContent = ref<string | null>(null);
+const contentLoading = ref(false);
+const contentError = ref(false);
+
+// Clear cache when switching notebooks to avoid stale data from a different notebook
+watch(
+  () => props.notebookId,
+  () => { contentCache.clear(); },
+);
+
+watch(
+  () => props.entry?.id,
+  async (newId) => {
+    // Reset for every entry change
+    fetchedContent.value = null;
+    contentLoading.value = false;
+    contentError.value = false;
+
+    if (!newId || props.entry?.entryType !== "research_report") return;
+
+    // If the entry still carries inline content (legacy rows), use it directly
+    if (props.entry.content) {
+      fetchedContent.value = props.entry.content;
+      return;
+    }
+
+    // Check cache first
+    if (contentCache.has(newId)) {
+      fetchedContent.value = contentCache.get(newId)!;
+      return;
+    }
+
+    // Need to fetch from fileUrl
+    const url = props.entry.fileUrl;
+    if (!url) return;
+
+    contentLoading.value = true;
+    try {
+      const text = await notebooksApi.fetchEntryContent(url);
+      contentCache.set(newId, text);
+      // Guard: entry may have changed while awaiting
+      if (props.entry?.id === newId) {
+        fetchedContent.value = text;
+      }
+    } catch {
+      // Mark as error so template can distinguish from "empty content"
+      if (props.entry?.id === newId) {
+        contentError.value = true;
+      }
+    } finally {
+      if (props.entry?.id === newId) {
+        contentLoading.value = false;
+      }
+    }
+  },
+  { immediate: true },
+);
+
+// ---------------------------------------------------------------------------
 // Research report rendering
 // ---------------------------------------------------------------------------
 
 const renderedHtml = computed(() => {
-  if (!props.entry?.content) return "";
-  return renderMarkdown(props.entry.content);
+  if (!fetchedContent.value) return "";
+  return renderMarkdown(fetchedContent.value);
 });
 
 function downloadMarkdown() {
-  if (!props.entry) return;
-  const content = props.entry.content ?? "";
+  if (!props.entry || !fetchedContent.value) return;
+  const content = fetchedContent.value;
   const filename = (props.entry.title || "report") + ".md";
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -266,7 +332,7 @@ function formatDuration(seconds: number | undefined): string {
 
       <!-- Download .md — only for research reports with content -->
       <button
-        v-if="entry?.entryType === 'research_report' && entry?.content"
+        v-if="entry?.entryType === 'research_report' && fetchedContent"
         type="button"
         class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
         @click="downloadMarkdown"
@@ -312,8 +378,15 @@ function formatDuration(seconds: number | undefined): string {
 
       <!-- Markdown content -->
       <div class="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+        <!-- Loading state -->
+        <p v-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
+          正在加载报告内容…
+        </p>
+        <p v-else-if="contentError" class="text-base text-red-700 leading-relaxed">
+          报告内容加载失败，请刷新页面重试。
+        </p>
         <div
-          v-if="entry.content"
+          v-else-if="fetchedContent"
           class="prose-warm"
           v-html="renderedHtml"
         />

@@ -84,6 +84,15 @@ async function writeBase64File(base64: string, filename: string): Promise<string
   return filename;
 }
 
+/** Write a UTF-8 text string to data/files/ and return the relative filename. */
+async function writeTextFile(text: string, filename: string): Promise<string> {
+  const dir = resolveFilesDir();
+  mkdirSync(dir, { recursive: true });
+  const fullPath = resolve(dir, filename);
+  await writeFile(fullPath, text, "utf-8");
+  return filename;
+}
+
 async function withNotebookId(
   c: Context,
   handler: (id: string) => Promise<Response> | Response
@@ -608,10 +617,22 @@ notebooks.post("/:id/report/generate", async (c) => {
       const titleMatch = result.answer.match(/^#+\s+(.+)/m);
       const title = titleMatch?.[1]?.trim() ?? "研究报告";
 
+      let reportFilename: string | undefined;
+      try {
+        reportFilename = `report-${crypto.randomUUID()}.md`;
+        await writeTextFile(result.answer, reportFilename);
+      } catch (fileErr) {
+        logger.error({ err: fileErr, notebookId: id }, "Failed to write report markdown file");
+        return c.json(
+          { success: false, message: "报告文件写入失败", errorCode: "REPORT_GENERATION_FAILED" },
+          500
+        );
+      }
       await insertReportEntry({
         notebookId: id,
         title,
-        content: result.answer,
+        content: null,
+        filePath: reportFilename,
         state: "ready",
       });
 
@@ -822,7 +843,7 @@ notebooks.get("/:id/entries", async (c) => {
           entryType: r.entryType,
           title: r.title,
           state: r.state,
-          content: r.content,
+          content: null,
           errorMessage: r.errorMessage,
           artifactId: r.artifactId,
           artifactType: r.artifactType,

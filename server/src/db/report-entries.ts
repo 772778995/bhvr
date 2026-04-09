@@ -28,6 +28,7 @@ export async function insertReportEntry(record: {
   notebookId: string;
   title: string;
   content: string | null;
+  filePath?: string;
   state?: EntryState;
   errorMessage?: string | null;
 }): Promise<ReportEntryRecord> {
@@ -39,6 +40,7 @@ export async function insertReportEntry(record: {
       title: record.title,
       state: record.state ?? "ready",
       content: record.content ?? null,
+      filePath: record.filePath ?? null,
       errorMessage: record.errorMessage ?? null,
     })
     .returning();

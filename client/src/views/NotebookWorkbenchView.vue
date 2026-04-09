@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
+  ArtifactState,
   notebooksApi,
   type ChatMessage,
   type Notebook,
@@ -490,6 +491,124 @@ function onArtifactReady() {
   activeCenterTab.value = 'reports';
 }
 
+// ── Source processing polling ────────────────────────────────────────────────
+let sourcePollingTimer: ReturnType<typeof setInterval> | null = null;
+let sourcePollingStart = 0;
+const SOURCE_POLL_INTERVAL = 5000; // 5 seconds
+const SOURCE_POLL_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+function startSourcePolling() {
+  if (sourcePollingTimer) return; // already polling
+  sourcePollingStart = Date.now();
+  sourcePollingTimer = setInterval(async () => {
+    if (Date.now() - sourcePollingStart > SOURCE_POLL_TIMEOUT) {
+      stopSourcePolling();
+      pushNotice("来源处理超时，请检查笔记本状态");
+      void refreshSources();
+      return;
+    }
+    try {
+      const status = await notebooksApi.getSourceProcessingStatus(notebookId.value);
+      if (status.allReady) {
+        await refreshSources();
+        stopSourcePolling();
+      }
+    } catch {
+      // Silently continue polling
+    }
+  }, SOURCE_POLL_INTERVAL);
+}
+
+function stopSourcePolling() {
+  if (sourcePollingTimer) {
+    clearInterval(sourcePollingTimer);
+    sourcePollingTimer = null;
+  }
+}
+
+watch(
+  () => sources.value.some((s) => s.status === "processing"),
+  (hasProcessing) => {
+    if (hasProcessing) {
+      startSourcePolling();
+    } else {
+      stopSourcePolling();
+    }
+  },
+  { immediate: true },
+);
+
+// ── Artifact creating recovery polling ──────────────────────────────────────
+const entryPollingTimers = new Map<string, ReturnType<typeof setInterval>>();
+const entryPollingStarts = new Map<string, number>();
+/** Track entries that timed out so we don't restart polling via watch. */
+const timedOutEntryIds = new Set<string>();
+const ENTRY_POLL_INTERVAL = 10_000; // 10 seconds
+const ENTRY_POLL_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+
+function startEntryPolling(entryId: string, artifactId: string) {
+  if (entryPollingTimers.has(entryId) || timedOutEntryIds.has(entryId)) return;
+  entryPollingStarts.set(entryId, Date.now());
+  entryPollingTimers.set(
+    entryId,
+    setInterval(async () => {
+      if (Date.now() - (entryPollingStarts.get(entryId) ?? 0) > ENTRY_POLL_TIMEOUT) {
+        stopEntryPolling(entryId);
+        timedOutEntryIds.add(entryId);
+        const entry = cachedEntries.value.find((e) => e.id === entryId);
+        const label = entry?.title ?? "产物";
+        pushNotice(`「${label}」生成超时，请检查笔记本状态`);
+        void refreshReports();
+        return;
+      }
+      try {
+        const artifact = await notebooksApi.getArtifact(notebookId.value, artifactId);
+        if (artifact.state === ArtifactState.READY || artifact.state === ArtifactState.FAILED) {
+          stopEntryPolling(entryId);
+          await refreshReports();
+        }
+      } catch {
+        // 静默继续轮询
+      }
+    }, ENTRY_POLL_INTERVAL),
+  );
+}
+
+function stopEntryPolling(entryId: string) {
+  const timer = entryPollingTimers.get(entryId);
+  if (timer) {
+    clearInterval(timer);
+    entryPollingTimers.delete(entryId);
+    entryPollingStarts.delete(entryId);
+  }
+}
+
+function stopAllEntryPolling() {
+  for (const entryId of [...entryPollingTimers.keys()]) {
+    stopEntryPolling(entryId);
+  }
+}
+
+watch(
+  cachedEntries,
+  (entries) => {
+    const creatingIds = new Set<string>();
+    for (const entry of entries) {
+      if (entry.state === "creating" && entry.artifactId) {
+        creatingIds.add(entry.id);
+        startEntryPolling(entry.id, entry.artifactId);
+      }
+    }
+    // 停止不再处于 creating 状态的条目的轮询
+    for (const entryId of [...entryPollingTimers.keys()]) {
+      if (!creatingIds.has(entryId)) {
+        stopEntryPolling(entryId);
+      }
+    }
+  },
+  { immediate: true },
+);
+
 // ── Data loading ────────────────────────────────────────────────────────────
 async function loadWorkbenchData() {
   const requestId = ++activeRequestId.value;
@@ -558,6 +677,11 @@ watch(
       sseCleanup = null;
     }
 
+    // Clean up polling state from the previous notebook
+    stopSourcePolling();
+    stopAllEntryPolling();
+    timedOutEntryIds.clear();
+
     void loadWorkbenchData();
   },
   { immediate: true },
@@ -568,6 +692,8 @@ onUnmounted(() => {
     sseCleanup();
     sseCleanup = null;
   }
+  stopSourcePolling();
+  stopAllEntryPolling();
 });
 </script>
 

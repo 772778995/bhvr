@@ -1,16 +1,18 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import * as schema from "./schema.js";
 import { dirname, resolve } from "node:path";
 import { resolveDatabasePath } from "./path.js";
+import { resolveFilesDir } from "../lib/files-dir.js";
 import logger from "../lib/logger.js";
 
 const DB_PATH = resolveDatabasePath();
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
-// Ensure data/files/ directory exists (used for audio/PDF artifact storage)
-const filesDir = process.env.DATA_FILES_DIR || resolve(dirname(DB_PATH), "files");
+// Ensure data/files/ directory exists (used for audio/PDF/markdown artifact storage)
+const filesDir = resolveFilesDir();
 mkdirSync(filesDir, { recursive: true });
 
 const client = createClient({
@@ -301,6 +303,33 @@ if (!hasIdColumn && tableInfo.rows.length > 0) {
     `);
 
     logger.debug("report_entries one-time migration from legacy tables complete");
+  }
+}
+
+// One-time migration: move research_report content from DB to .md files
+{
+  const staleRows = await client.execute(
+    "SELECT id, content FROM report_entries WHERE entry_type = 'research_report' AND content IS NOT NULL AND file_path IS NULL"
+  );
+  let migratedCount = 0;
+  for (const row of staleRows.rows) {
+    const id = String(row.id);
+    const content = String(row.content);
+    const filename = `report-${id}.md`;
+    const fullPath = resolve(filesDir, filename);
+    try {
+      await writeFile(fullPath, content, "utf-8");
+      await client.execute({
+        sql: "UPDATE report_entries SET file_path = ?, content = NULL WHERE id = ?",
+        args: [filename, id],
+      });
+      migratedCount++;
+    } catch (err) {
+      logger.warn({ err, entryId: id }, "failed to migrate report_entry content to file, skipping");
+    }
+  }
+  if (migratedCount > 0) {
+    logger.info({ count: migratedCount }, "migrated report_entries content to .md files");
   }
 }
 

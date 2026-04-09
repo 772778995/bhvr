@@ -375,4 +375,19 @@ export const notebooksApi = {
       method: "DELETE",
     });
   },
+
+  /**
+   * Fetch raw text content from a file URL (e.g. markdown report).
+   *
+   * Uses native fetch instead of the request() wrapper because file endpoints
+   * return plain text (text/markdown), not the JSON { success, data } envelope
+   * that request() expects.
+   */
+  async fetchEntryContent(fileUrl: string): Promise<string> {
+    const res = await fetch(fileUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch file: HTTP ${res.status}`);
+    }
+    return res.text();
+  },
 };
