@@ -6,6 +6,7 @@ import auth from "./routes/auth/index.js";
 import research from "./routes/research/index.js";
 import health from "./routes/health/index.js";
 import notebooks from "./routes/notebooks/index.js";
+import presetsRouter from "./routes/presets/index.js";
 import { recoverInterruptedTasks } from "./worker/recovery.js";
 import { authManager, DEFAULT_ACCOUNT_ID } from "./notebooklm/index.js";
 
@@ -34,6 +35,7 @@ app.route("/api/auth", auth);
 app.route("/api/research", research);
 app.route("/api/health", health);
 app.route("/api/notebooks", notebooks);
+app.route("/api/presets", presetsRouter);
 
 // Root
 app.get("/", (c) => {

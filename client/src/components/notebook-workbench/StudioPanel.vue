@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import {
   type ResearchState,
   ArtifactState,
   notebooksApi,
 } from "@/api/notebooks";
+import { api, type SummaryPreset } from "@/api/client";
 import { useToast } from "@/composables/useToast";
+import PresetManagerDialog from "@/components/PresetManagerDialog.vue";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -16,9 +18,11 @@ interface Props {
   researchState: ResearchState;
   hasResearchAssets: boolean;
   messageCount: number;
+  /** True when sources exist but all are still processing — block research start. */
+  sourcesAllProcessing?: boolean;
   onStartResearch: () => void;
   /** Generates a research report from local Q&A data (our system). */
-  onGenerateReport: () => Promise<void>;
+  onGenerateReport: (presetId?: string) => Promise<void>;
   /** Called when a Studio artifact finishes generating (READY). */
   onArtifactReady?: () => void;
 }
@@ -319,15 +323,42 @@ async function handleArtifactClick(def: ArtifactDef) {
 // ---------------------------------------------------------------------------
 
 const generatingReport = ref(false);
+const presets = ref<SummaryPreset[]>([]);
+const presetsLoading = ref(false);
+const presetMenuOpen = ref(false);
+const showPresetManager = ref(false);
 
-async function handleGenerateReport() {
+async function loadPresets() {
+  presetsLoading.value = true;
+  try {
+    presets.value = await api.listPresets();
+  } catch {
+    // non-fatal: fall back to empty list; user can still use the default
+  } finally {
+    presetsLoading.value = false;
+  }
+}
+
+onMounted(loadPresets);
+
+async function handleGenerateReport(presetId?: string) {
   if (generatingReport.value || !props.hasResearchAssets) return;
+  presetMenuOpen.value = false;
   generatingReport.value = true;
   try {
-    await props.onGenerateReport();
+    await props.onGenerateReport(presetId);
   } finally {
     generatingReport.value = false;
   }
+}
+
+function selectPreset(preset: SummaryPreset) {
+  handleGenerateReport(preset.id);
+}
+
+function togglePresetMenu() {
+  if (!props.hasResearchAssets || generatingReport.value) return;
+  presetMenuOpen.value = !presetMenuOpen.value;
 }
 </script>
 
@@ -362,8 +393,9 @@ async function handleGenerateReport() {
             type="button"
             role="switch"
             :aria-checked="toggleOn"
-            class="relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1"
-            :class="toggleOn ? 'bg-[#3a2e20]' : 'bg-[#c4b89a]'"
+            :disabled="!!sourcesAllProcessing && !running"
+            class="relative inline-flex h-5.5 w-10 shrink-0 rounded-full border-2 border-transparent transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3a2e20]/40 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-40"
+            :class="[toggleOn ? 'bg-[#3a2e20]' : 'bg-[#c4b89a]', sourcesAllProcessing && !running ? '' : 'cursor-pointer']"
             @click="handleToggle"
           >
             <span
@@ -372,6 +404,14 @@ async function handleGenerateReport() {
             />
           </button>
         </div>
+
+        <!-- Sources-still-loading notice -->
+        <p
+          v-if="sourcesAllProcessing && !running"
+          class="text-xs text-[#9a8a78] leading-snug"
+        >
+          来源正在处理中，完成后方可开始研究
+        </p>
 
         <!-- Step indicator card (running) -->
         <div
@@ -514,49 +554,108 @@ async function handleGenerateReport() {
     </div>
 
     <!-- ─── Generate research report (pinned footer) ─── -->
-    <div class="shrink-0 border-t border-[#d8cfbe] p-4">
-      <button
-        type="button"
-        :disabled="!hasResearchAssets || generatingReport"
-        class="w-full flex items-center justify-center gap-2 rounded-md border border-[#b8a98a] bg-[#ede2cc] px-4 py-2.5 text-sm font-medium text-[#3a2e20] transition-all duration-150 ease-in-out hover:bg-[#e0d4b8] hover:border-[#a89878] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
-        @click="handleGenerateReport"
+    <div class="shrink-0 border-t border-[#d8cfbe]">
+      <!-- Preset accordion panel (expands above the button) -->
+      <div
+        v-if="presetMenuOpen"
+        class="border-b border-[#d8cfbe] bg-[#f5efe2] max-h-60 overflow-y-auto"
       >
-        <!-- Spinner when generating -->
-        <svg
-          v-if="generatingReport"
-          class="w-4 h-4 animate-spin shrink-0"
-          viewBox="0 0 24 24"
-          fill="none"
+        <!-- Manage link -->
+        <button
+          type="button"
+          class="w-full text-left flex items-center gap-1.5 px-4 py-2 text-xs text-[#9a8a78] border-b border-[#e0d8c8] hover:bg-[#ede6d6] transition-colors"
+          @click="showPresetManager = true; presetMenuOpen = false"
         >
-          <circle
-            cx="12"
-            cy="12"
-            r="10"
+          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          管理总结方式…
+        </button>
+        <!-- Loading state -->
+        <div v-if="presetsLoading" class="px-4 py-3 text-xs text-[#9a8a78]">加载中…</div>
+        <!-- Preset items -->
+        <button
+          v-for="preset in presets"
+          :key="preset.id"
+          type="button"
+          :disabled="generatingReport"
+          class="w-full text-left px-4 py-2.5 border-b border-[#ece4d4] last:border-0 hover:bg-[#ede6d6] transition-colors disabled:opacity-50 disabled:pointer-events-none"
+          @click="selectPreset(preset)"
+        >
+          <div class="text-sm text-[#3a2e20] leading-snug">{{ preset.name }}</div>
+          <div v-if="preset.description" class="text-xs text-[#9a8a78] mt-0.5 leading-snug">{{ preset.description }}</div>
+        </button>
+        <!-- Empty state -->
+        <div v-if="!presetsLoading && presets.length === 0" class="px-4 py-3 text-xs text-[#9a8a78]">
+          暂无总结方式，请先添加
+        </div>
+      </div>
+
+      <!-- Button row -->
+      <div class="p-4">
+        <button
+          type="button"
+          :disabled="!hasResearchAssets || generatingReport"
+          class="w-full flex items-center justify-center gap-2 rounded-md border border-[#b8a98a] bg-[#ede2cc] px-4 py-2.5 text-sm font-medium text-[#3a2e20] transition-all duration-150 ease-in-out hover:bg-[#e0d4b8] hover:border-[#a89878] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+          @click="togglePresetMenu"
+        >
+          <!-- Spinner when generating -->
+          <svg
+            v-if="generatingReport"
+            class="w-4 h-4 animate-spin shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-dasharray="50 14"
+              stroke-linecap="round"
+            />
+          </svg>
+          <!-- Document icon -->
+          <svg
+            v-else
+            class="w-4 h-4 shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+          </svg>
+          <span>{{ generatingReport ? "正在生成报告…" : "总结" }}</span>
+          <!-- Chevron (toggle indicator) -->
+          <svg
+            v-if="!generatingReport"
+            class="w-3.5 h-3.5 shrink-0 ml-auto transition-transform duration-150"
+            :class="presetMenuOpen ? 'rotate-180' : ''"
+            viewBox="0 0 24 24"
+            fill="none"
             stroke="currentColor"
             stroke-width="2"
-            stroke-dasharray="50 14"
             stroke-linecap="round"
-          />
-        </svg>
-        <!-- Document icon -->
-        <svg
-          v-else
-          class="w-4 h-4 shrink-0"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
-        </svg>
-        <span>{{ generatingReport ? "正在生成报告…" : "生成研究报告" }}</span>
-      </button>
-      <p class="mt-1.5 text-xs text-[#9a8a78] text-center leading-relaxed">
-        基于本次课题研究的问答数据
-      </p>
+            stroke-linejoin="round"
+          >
+            <path d="M18 15l-6-6-6 6" />
+          </svg>
+        </button>
+        <p class="mt-1.5 text-xs text-[#9a8a78] text-center leading-relaxed">
+          基于本次课题研究的问答数据
+        </p>
+      </div>
     </div>
   </section>
+
+  <!-- Preset manager dialog (fixed overlay, works outside overflow:hidden) -->
+  <PresetManagerDialog
+    v-if="showPresetManager"
+    @close="showPresetManager = false; loadPresets()"
+  />
 </template>

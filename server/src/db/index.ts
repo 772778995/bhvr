@@ -79,7 +79,116 @@ await client.executeMultiple(`
 
   CREATE INDEX IF NOT EXISTS idx_artifacts_notebook
   ON artifacts (notebook_id);
+
+  CREATE TABLE IF NOT EXISTS summary_presets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    prompt TEXT NOT NULL,
+    is_builtin INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `);
+
+// Add preset_id column to research_tasks if it doesn't exist yet (idempotent migration)
+const researchTasksInfo = await client.execute("PRAGMA table_info(research_tasks)");
+const hasPresetIdColumn = researchTasksInfo.rows.some((row) => row.name === "preset_id");
+if (!hasPresetIdColumn) {
+  await client.execute("ALTER TABLE research_tasks ADD COLUMN preset_id TEXT REFERENCES summary_presets(id)");
+  logger.info("Added preset_id column to research_tasks");
+}
+
+// Seed built-in presets (upsert — safe to run on every startup)
+const now = Date.now();
+
+const BUILTIN_RESEARCH_REPORT_PROMPT = `请基于该笔记本中的所有来源和此前对话内容，撰写一份系统性中文研究报告。
+
+结构要求：
+1. 执行摘要（200-300字）：概述研究背景、核心发现和关键结论
+2. 研究方法与数据来源：简述所用来源类型及覆盖范围
+3. 核心发现（按主题组织，每个主题需有：）
+   - 主要发现陈述
+   - 支撑证据与数据（引用具体来源内容）
+   - 不同来源间的交叉验证或分歧
+4. 深度分析
+   - 因果关系与机制分析
+   - 趋势与模式识别
+   - 局限性与证据空白
+5. 结论与建议
+   - 核心结论（基于证据的确定性程度分级）
+   - 具体可行的建议
+   - 后续研究方向
+
+格式要求：
+- 使用 Markdown 格式
+- 关键数据和引用使用引用块（>）标记来源
+- 重要发现使用粗体标注
+- 尽量详尽，不要省略细节`;
+
+const BUILTIN_QUICK_READ_PROMPT = `请根据本笔记本中的文档内容，按照以下框架输出一份书籍解读报告：
+
+1. 基础信息
+- 书名
+- 英文原版名称（如有）
+- 作者（名字及简要介绍）
+- 出版时间
+
+2. 结构与内容（快速掌握全书脉络）
+- 核心主旨与思想
+- 目录脉络（分几个部分，多少章节，章节的逻辑关系；列出每个章节的主要内容和观点，最重要的2-3个内容或观点，以及章节的金句，每个章节不少于300字）
+- 独创的概念、模型、方法（概念做解释，模型、工具做适度展开）
+- 思维导图（文字版，体现全书结构）
+
+3. 价值与意义（回到组织和工作层面）
+- 这本书对读者所在组织的意义
+- 对工作有什么用
+- 局限性与适用条件
+
+4. 延展阅读（与本书内容主题相关的书籍推荐）
+
+要求：
+- 每个条目不超过200字，总体产出文字不超过5000字
+- 内容不要堆积，要分论点展开，要用短句子，精辟且易读
+- 语言风格要理性、准确，不要随意、发散
+- 所有内容必须基于笔记本中的文档来源，不得凭空捏造`;
+
+await client.execute({
+  sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          prompt = excluded.prompt,
+          updated_at = excluded.updated_at`,
+  args: [
+    "builtin-research-report",
+    "生成研究报告",
+    "系统性研究报告，含执行摘要、核心发现和结论建议",
+    BUILTIN_RESEARCH_REPORT_PROMPT,
+    now,
+    now,
+  ],
+});
+
+await client.execute({
+  sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          updated_at = excluded.updated_at`,
+  args: [
+    "builtin-quick-read",
+    "快速读书",
+    "书籍解读框架：基础信息、结构脉络、价值意义、延展阅读",
+    BUILTIN_QUICK_READ_PROMPT,
+    now,
+    now,
+  ],
+});
+
+logger.debug("Built-in summary presets ensured");
 
 // Migrate research_reports: old schema had notebook_id as PK, new schema has id as PK
 const tableInfo = await client.execute(

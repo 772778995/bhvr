@@ -28,6 +28,14 @@ function typeLabel(type: string): string {
   };
   return map[type] ?? type;
 }
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    ready: "",
+    processing: "处理中",
+  };
+  return status in map ? map[status] : status;
+}
 </script>
 
 <template>
@@ -65,6 +73,7 @@ function typeLabel(type: string): string {
         v-for="source in sources"
         :key="source.id"
         class="group relative border border-[#ddd3c2] rounded-md p-3 bg-[#fffbf4] transition-colors duration-100 hover:border-[#c4b89a] hover:bg-[#fdf7ed]"
+        :class="source.status === 'processing' ? 'opacity-60' : ''"
       >
         <button
           v-if="onDeleteSource"
@@ -77,6 +86,7 @@ function typeLabel(type: string): string {
             <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
           </svg>
         </button>
+        <!-- Title row: spinner for processing, icon for ready -->
         <a
           v-if="canOpen(source)"
           :href="source.url"
@@ -85,14 +95,37 @@ function typeLabel(type: string): string {
           rel="noopener noreferrer"
           class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-[#5a4a3a] hover:text-[#3a2e20] hover:underline"
         >
-          <SourceIcon :source="source" :size="16" />
+          <!-- Processing spinner -->
+          <svg
+            v-if="source.status === 'processing'"
+            class="shrink-0 animate-spin text-[#9a8a78]"
+            :style="{ width: '16px', height: '16px' }"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2.5" stroke-dasharray="50 14" stroke-linecap="round" />
+          </svg>
+          <SourceIcon v-else :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </a>
         <p v-else class="flex items-center gap-1.5 min-w-0 pr-5 text-base font-medium text-[#2f271f]" :title="source.title">
-          <SourceIcon :source="source" :size="16" />
+          <!-- Processing spinner -->
+          <svg
+            v-if="source.status === 'processing'"
+            class="shrink-0 animate-spin text-[#9a8a78]"
+            :style="{ width: '16px', height: '16px' }"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2.5" stroke-dasharray="50 14" stroke-linecap="round" />
+          </svg>
+          <SourceIcon v-else :source="source" :size="16" />
           <span class="truncate">{{ source.title }}</span>
         </p>
-        <p class="mt-1 text-sm text-[#9a8a78]">{{ typeLabel(source.type) }} · {{ source.status }}</p>
+        <!-- Status line: type · 处理中 (omit if ready) -->
+        <p class="mt-1 text-sm text-[#9a8a78]">
+          {{ typeLabel(source.type) }}<template v-if="statusLabel(source.status)"> · {{ statusLabel(source.status) }}</template>
+        </p>
       </li>
     </TransitionGroup>
   </section>

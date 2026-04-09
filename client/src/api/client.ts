@@ -1,5 +1,15 @@
 // API client — typed fetch wrapper for the research backend
 
+export interface SummaryPreset {
+  id: string;
+  name: string;
+  description: string | null;
+  prompt: string;
+  isBuiltin: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ResearchTask {
   id: string;
   notebookUrl: string;
@@ -9,6 +19,7 @@ export interface ResearchTask {
   completedQuestions: number;
   report: string | null;
   errorMessage: string | null;
+  presetId: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -42,12 +53,25 @@ export interface CreateResearchRequest {
   notebookUrl: string;
   topic?: string;
   numQuestions?: number;
+  presetId?: string;
 }
 
 export interface CreateResearchResponse {
   id: string;
   status: string;
   message: string;
+}
+
+export interface CreatePresetRequest {
+  name: string;
+  description?: string;
+  prompt: string;
+}
+
+export interface UpdatePresetRequest {
+  name?: string;
+  description?: string;
+  prompt?: string;
 }
 
 export interface AuthStatus {
@@ -94,6 +118,35 @@ export const api = {
 
   getTaskStatus(id: string) {
     return request<TaskStatus>(`/api/research/${id}/status`);
+  },
+
+  // --- Preset APIs ---
+  listPresets() {
+    return request<SummaryPreset[]>("/api/presets");
+  },
+
+  getPreset(id: string) {
+    return request<SummaryPreset>(`/api/presets/${id}`);
+  },
+
+  createPreset(data: CreatePresetRequest) {
+    return request<SummaryPreset>("/api/presets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  updatePreset(id: string, data: UpdatePresetRequest) {
+    return request<SummaryPreset>(`/api/presets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  deletePreset(id: string) {
+    return request<{ message: string }>(`/api/presets/${id}`, {
+      method: "DELETE",
+    });
   },
 
   getAuthStatus() {

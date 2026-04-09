@@ -344,10 +344,10 @@ export const notebooksApi = {
   },
 
   /** Trigger report generation from completed Q&A answers. */
-  generateReport(id: string) {
+  generateReport(id: string, presetId?: string) {
     return request<GenerateReportResponse>(`/api/notebooks/${id}/report/generate`, {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify(presetId ? { presetId } : {}),
     });
   },
 

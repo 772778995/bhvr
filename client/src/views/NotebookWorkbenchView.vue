@@ -130,6 +130,12 @@ const hasResearchAssets = computed(() => {
   return messages.value.length > 0 || researchState.value.completedCount > 0;
 });
 
+/** True when there are sources but every one of them is still processing.
+ *  In this state, auto-research should be blocked — NotebookLM can't answer yet. */
+const sourcesAllProcessing = computed(() => {
+  return sources.value.length > 0 && sources.value.every((s) => s.status === "processing");
+});
+
 function resetPanelData() {
   sources.value = [];
   messages.value = [];
@@ -178,17 +184,7 @@ function onCloseAddSourceDialog() {
 }
 
 async function refreshSources() {
-  if (!notebookId.value) {
-    return;
-  }
   sources.value = await notebooksApi.getSources(notebookId.value);
-}
-
-async function handleSourceAdded(closeDialog = true) {
-  await refreshSources();
-  if (closeDialog) {
-    addSourceOpen.value = false;
-  }
 }
 
 async function onAddSourceUrl(payload: { url: string; title?: string }) {
@@ -476,10 +472,10 @@ async function onStartResearch() {
 }
 
 /** Generates a research report from local Q&A data via our own system. */
-async function onGenerateReport(): Promise<void> {
+async function onGenerateReport(presetId?: string): Promise<void> {
   if (!notebookId.value) return;
   try {
-    await notebooksApi.generateReport(notebookId.value);
+    await notebooksApi.generateReport(notebookId.value, presetId);
     pushNotice("研究报告已生成");
     await refreshReports();
     activeCenterTab.value = 'reports';
@@ -687,6 +683,7 @@ onUnmounted(() => {
                 :research-state="researchState"
                 :has-research-assets="hasResearchAssets"
                 :message-count="messages.length"
+                :sources-all-processing="sourcesAllProcessing"
                 :on-start-research="onStartResearch"
                 :on-generate-report="onGenerateReport"
                 :on-artifact-ready="onArtifactReady"

@@ -39,6 +39,9 @@ import {
   setReportError,
 } from "../../report/service.js";
 import { countChatMessages } from "../../db/chat-messages.js";
+import { eq } from "drizzle-orm";
+import db from "../../db/index.js";
+import { summaryPresets } from "../../db/schema.js";
 import {
   insertArtifact as dbInsertArtifact,
   getArtifactByArtifactId,
@@ -604,7 +607,11 @@ notebooks.post("/:id/report/generate", async (c) => {
       );
     }
 
-    const summaryPrompt =
+    // Resolve summaryPrompt: use preset if provided, else fall back to built-in default
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
+    const rawPresetId = typeof body["presetId"] === "string" ? body["presetId"].trim() : "";
+
+    const DEFAULT_SUMMARY_PROMPT =
       `请基于该笔记本中的所有来源和此前对话内容，撰写一份系统性中文研究报告。
 
 结构要求：
@@ -628,6 +635,23 @@ notebooks.post("/:id/report/generate", async (c) => {
 - 关键数据和引用使用引用块（>）标记来源
 - 重要发现使用粗体标注
 - 尽量详尽，不要省略细节`;
+
+    let summaryPrompt = DEFAULT_SUMMARY_PROMPT;
+
+    if (rawPresetId) {
+      try {
+        const preset = await db.query.summaryPresets.findFirst({
+          where: eq(summaryPresets.id, rawPresetId),
+        });
+        if (preset?.prompt) {
+          summaryPrompt = preset.prompt;
+        } else {
+          logger.warn({ presetId: rawPresetId, notebookId: id }, "preset not found, using default summary prompt");
+        }
+      } catch (dbErr) {
+        logger.warn({ err: dbErr, presetId: rawPresetId }, "failed to load preset, using default prompt");
+      }
+    }
 
     return await withNotebookAuthHandling(async () => {
       const result = await askNotebookForResearch(id, summaryPrompt);
