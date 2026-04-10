@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -307,4 +307,71 @@ test("GET /api/notebooks/:id/research/stream remains available when auth require
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/event-stream");
   await response.body?.cancel();
+});
+
+test("GET /api/notebooks/:id/artifacts/:artifactId for a READY report writes markdown file to disk and stores filePath", async (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "report-artifact-test-"));
+  const prevDataFilesDir = process.env.DATA_FILES_DIR;
+  process.env.DATA_FILES_DIR = tempDir;
+
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalArtifacts = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "artifacts");
+
+  const REPORT_MARKDOWN = "# Test Report\n\nContent from NotebookLM.";
+  const TEST_ARTIFACT_ID = `report-art-${crypto.randomUUID()}`;
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "artifacts", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({
+          artifactId: TEST_ARTIFACT_ID,
+          type: 1, // ArtifactType.REPORT
+          state: 2, // ArtifactState.READY
+          title: "Test Report",
+          content: REPORT_MARKDOWN,
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const { getEntryByArtifactId } = await import("../../db/report-entries.js");
+  const notebooks = routeModule.default;
+  const notebookId = crypto.randomUUID();
+
+  t.after(() => {
+    process.env.DATA_FILES_DIR = prevDataFilesDir;
+    rmSync(tempDir, { recursive: true, force: true });
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalArtifacts) {
+      Object.defineProperty(NotebookLMClient.prototype, "artifacts", originalArtifacts);
+    }
+    disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/artifacts/${TEST_ARTIFACT_ID}`);
+  assert.equal(response.status, 200);
+
+  // The DB entry must have filePath set to an artifact-report-*.md file
+  const entry = await getEntryByArtifactId(TEST_ARTIFACT_ID);
+  assert.ok(entry, "DB entry should exist after processing READY report artifact");
+  assert.equal(entry!.state, "ready");
+  assert.ok(entry!.filePath, "filePath must be set for a report artifact");
+  assert.match(entry!.filePath!, /artifact-report-.+\.md$/);
+
+  // The markdown file must exist on disk with the correct content
+  const fullPath = join(tempDir, entry!.filePath!);
+  const content = readFileSync(fullPath, "utf8");
+  assert.equal(content, REPORT_MARKDOWN);
 });

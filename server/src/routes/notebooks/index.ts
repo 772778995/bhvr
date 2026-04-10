@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
+import { NotebookLMClient, downloadAudioFile } from "notebooklm-kit";
 import logger from "../../lib/logger.js";
 import {
   addDiscoveredSources,
@@ -66,6 +67,7 @@ import {
   mergeSourceStates,
   deleteSourceState,
 } from "../../source-state/service.js";
+import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 
 const notebooks = new Hono();
@@ -90,6 +92,16 @@ async function writeTextFile(text: string, filename: string): Promise<string> {
   mkdirSync(dir, { recursive: true });
   const fullPath = resolve(dir, filename);
   await writeFile(fullPath, text, "utf-8");
+  return filename;
+}
+
+/** Write binary bytes to data/files/ and return the relative filename. */
+async function writeBinaryFile(data: Uint8Array | ArrayBuffer, filename: string): Promise<string> {
+  const dir = resolveFilesDir();
+  mkdirSync(dir, { recursive: true });
+  const fullPath = resolve(dir, filename);
+  const buffer = data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(data);
+  await writeFile(fullPath, buffer);
   return filename;
 }
 
@@ -712,6 +724,46 @@ function extractArtifactContent(artifact: Artifact): Record<string, unknown> {
   return data;
 }
 
+async function persistReadyArtifact(notebookId: string, artifactId: string, artifact: Artifact): Promise<void> {
+  const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
+  const rawContent = extractArtifactContent(artifact);
+  let filePath: string | null = null;
+
+  if (typeStr === "audio") {
+    const filename = `audio-${crypto.randomUUID()}.mp3`;
+
+    if (typeof rawContent["audioData"] === "string" && rawContent["audioData"].length > 0) {
+      filePath = await writeBase64File(rawContent["audioData"] as string, filename);
+      delete rawContent["audioData"];
+    } else {
+      const client = await authManager.getAuthenticatedSdkClient(DEFAULT_ACCOUNT_ID) as NotebookLMClient;
+      const rpc = await client.getRPCClient();
+      const audio = await downloadAudioFile(rpc, artifactId, notebookId);
+      filePath = await writeBinaryFile(audio.audioData, filename);
+    }
+  } else if (typeStr === "report") {
+    const markdownContent = rawContent["content"];
+    if (typeof markdownContent === "string" && markdownContent.length > 0) {
+      const filename = `artifact-report-${crypto.randomUUID()}.md`;
+      filePath = await writeTextFile(markdownContent, filename);
+      // Content is now persisted in the file; remove from JSON blob to avoid duplication
+      delete rawContent["content"];
+    }
+  }
+
+  const contentJsonStr = JSON.stringify(rawContent);
+  const existingEntry = await getEntryByArtifactId(artifactId);
+  if (!existingEntry) {
+    await insertArtifactEntry({ notebookId, artifactId, artifactType: typeStr, title: artifact.title ?? null });
+  }
+
+  await markArtifactEntryReady(artifactId, {
+    title: artifact.title ?? null,
+    contentJson: contentJsonStr,
+    filePath,
+  });
+}
+
 notebooks.post("/:id/artifacts", async (c) => {
   return await withNotebookId(c, async (id) => {
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
@@ -760,9 +812,15 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
   return await withNotebookId(c, async (id) => {
     const artifactId = c.req.param("artifactId");
 
-    // Cache: if report_entries already has a READY entry with full content, skip SDK call
+    // Cache only when the persisted entry is actually complete.
+    // Audio rows with file_path = null were previously written in a broken READY state.
     const cachedEntry = await getEntryByArtifactId(artifactId).catch(() => null);
-    if (cachedEntry && cachedEntry.state === "ready" && cachedEntry.contentJson) {
+    const hasStructuredContent = Boolean(cachedEntry?.contentJson && cachedEntry.contentJson !== "{}");
+    const hasFile = Boolean(cachedEntry?.filePath);
+    const cacheComplete = (cachedEntry?.artifactType === "audio" || cachedEntry?.artifactType === "report")
+      ? hasFile
+      : hasStructuredContent || hasFile;
+    if (cachedEntry && cachedEntry.state === "ready" && cacheComplete) {
       return c.json(successResponse(entryToApiArtifact(cachedEntry)));
     }
 
@@ -770,38 +828,10 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
       try {
         const artifact = await getArtifact(id, artifactId);
 
-        // Persist state transitions to report_entries (non-fatal fire-and-forget)
+        // Persist state transitions to report_entries.
         if (artifact.state === ArtifactState.READY) {
-          const upsertReady = async () => {
-            const typeStr = ARTIFACT_TYPE_TO_STRING[artifact.type as number ?? -1] ?? "unknown";
-            const rawContent = extractArtifactContent(artifact);
-            // Handle audio: write MP3 to file, strip audioData from JSON
-            let filePath: string | null = null;
-            if (typeStr === "audio" && typeof rawContent["audioData"] === "string") {
-              const fname = `audio-${crypto.randomUUID()}.mp3`;
-              try {
-                filePath = await writeBase64File(rawContent["audioData"] as string, fname);
-              } catch (fe) {
-                logger.warn({ fe, artifactId }, "Failed to write audio file");
-              }
-              delete rawContent["audioData"];
-            }
-            const contentJsonStr = JSON.stringify(rawContent);
-            // Ensure entry exists before marking ready
-            const existingEntry = await getEntryByArtifactId(artifactId);
-            if (!existingEntry) {
-              await insertArtifactEntry({ notebookId: id, artifactId, artifactType: typeStr, title: artifact.title ?? null });
-            }
-            await markArtifactEntryReady(artifactId, {
-              title: artifact.title ?? null,
-              contentJson: contentJsonStr,
-              filePath,
-            });
-          };
-          // 必须 await：音频文件写磁盘 + DB 更新完成后才能返回响应
-          // 否则前端轮询收到 READY 立即调 listEntries，file_path 还是 null，音频不可用
           try {
-            await upsertReady();
+            await persistReadyArtifact(id, artifactId, artifact);
           } catch (dbErr) {
             logger.warn({ dbErr, artifactId }, "artifact entry ready update failed (non-fatal)");
           }

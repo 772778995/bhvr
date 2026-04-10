@@ -68,11 +68,26 @@ watch(
     contentLoading.value = false;
     contentError.value = false;
 
-    if (!newId || props.entry?.entryType !== "research_report") return;
+    if (!newId) return;
+
+    const entry = props.entry;
+    const isResearchRep = entry?.entryType === "research_report";
+    const isReportArtifact = entry?.entryType === "artifact" && entry?.artifactType === "report";
+
+    if (!isResearchRep && !isReportArtifact) return;
 
     // If the entry still carries inline content (legacy rows), use it directly
-    if (props.entry.content) {
-      fetchedContent.value = props.entry.content;
+    if (isResearchRep && entry?.content) {
+      fetchedContent.value = entry.content;
+      return;
+    }
+
+    // For report artifacts: fall back to inline contentJson.content for old DB rows without fileUrl
+    if (isReportArtifact && !entry?.fileUrl) {
+      const inlineContent = entry?.contentJson?.content;
+      if (typeof inlineContent === "string" && inlineContent) {
+        fetchedContent.value = inlineContent;
+      }
       return;
     }
 
@@ -83,7 +98,7 @@ watch(
     }
 
     // Need to fetch from fileUrl
-    const url = props.entry.fileUrl;
+    const url = entry?.fileUrl;
     if (!url) return;
 
     contentLoading.value = true;
@@ -117,6 +132,12 @@ const renderedHtml = computed(() => {
   return renderMarkdown(fetchedContent.value);
 });
 
+/** True when the current entry has loadable markdown content (research report OR report artifact). */
+const isMarkdownEntry = computed(() =>
+  props.entry?.entryType === "research_report"
+  || (props.entry?.entryType === "artifact" && props.entry?.artifactType === "report")
+);
+
 function downloadMarkdown() {
   if (!props.entry || !fetchedContent.value) return;
   const content = fetchedContent.value;
@@ -135,7 +156,8 @@ function downloadMarkdown() {
 // ---------------------------------------------------------------------------
 
 const artifactRenderedHtml = computed(() => {
-  const md = props.entry?.contentJson?.content;
+  // Prefer fetchedContent (loaded from fileUrl) over legacy inline contentJson
+  const md = fetchedContent.value ?? (props.entry?.contentJson?.content as string | undefined);
   if (typeof md !== "string" || !md) return "";
   return renderMarkdown(md);
 });
@@ -147,6 +169,37 @@ const artifactRenderedHtml = computed(() => {
 const audioSrc = computed(() => props.entry?.fileUrl ?? null);
 
 const isAudioArtifact = computed(() => currentArtifactType.value === ArtifactType.AUDIO);
+
+const audioRepairing = ref(false);
+const audioRepairFailed = ref(false);
+
+watch(
+  () => [props.entry?.id, props.entry?.artifactId, props.entry?.state, props.entry?.fileUrl, currentArtifactType.value] as const,
+  async ([entryId, artifactId, state, fileUrl, artifactType]) => {
+    audioRepairFailed.value = false;
+
+    if (
+      !entryId
+      || !artifactId
+      || artifactType !== ArtifactType.AUDIO
+      || state !== "ready"
+      || fileUrl
+      || audioRepairing.value
+    ) {
+      return;
+    }
+
+    audioRepairing.value = true;
+    try {
+      await notebooksApi.getArtifact(props.notebookId, artifactId);
+    } catch {
+      audioRepairFailed.value = true;
+    } finally {
+      audioRepairing.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 function downloadAudio() {
   const src = props.entry?.fileUrl;
@@ -330,9 +383,9 @@ function formatDuration(seconds: number | undefined): string {
 
       <div class="flex-1" />
 
-      <!-- Download .md — only for research reports with content -->
+      <!-- Download .md — for research reports and report artifacts with content -->
       <button
-        v-if="entry?.entryType === 'research_report' && fetchedContent"
+        v-if="isMarkdownEntry && fetchedContent"
         type="button"
         class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
         @click="downloadMarkdown"
@@ -483,7 +536,9 @@ function formatDuration(seconds: number | undefined): string {
 
         <!-- ── REPORT content ── -->
         <template v-if="currentArtifactType === ArtifactType.REPORT && entry.state === 'ready'">
-          <div v-if="entry.contentJson?.content" class="mt-5 prose-warm" v-html="artifactRenderedHtml" />
+          <p v-if="contentLoading" class="mt-5 text-sm text-[#9a8a78] italic">正在加载报告内容…</p>
+          <p v-else-if="contentError" class="mt-5 text-sm text-red-700">报告内容加载失败，请刷新页面重试。</p>
+          <div v-else-if="artifactRenderedHtml" class="mt-5 prose-warm" v-html="artifactRenderedHtml" />
           <p v-else class="mt-5 text-sm text-[#9a8a78]">报告内容为空。</p>
         </template>
 
@@ -505,6 +560,8 @@ function formatDuration(seconds: number | undefined): string {
               class="w-full"
               style="accent-color: #6a5b49;"
             />
+            <p v-else-if="audioRepairing" class="text-sm text-[#9a8a78]">正在补取音频文件…</p>
+            <p v-else-if="audioRepairFailed" class="text-sm text-red-700">音频文件补取失败，请稍后重试。</p>
             <p v-else class="text-sm text-[#9a8a78]">音频数据不可用。</p>
           </div>
         </template>
