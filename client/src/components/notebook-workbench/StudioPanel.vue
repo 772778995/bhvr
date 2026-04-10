@@ -8,6 +8,9 @@ import {
 import { api, type SummaryPreset } from "@/api/client";
 import { useToast } from "@/composables/useToast";
 import PresetManagerDialog from "@/components/PresetManagerDialog.vue";
+import AudioOptionsDialog, {
+  type AudioCreateOptions,
+} from "@/components/AudioOptionsDialog.vue";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -302,6 +305,12 @@ async function handleArtifactClick(def: ArtifactDef) {
   // Already generating this type
   if (generating[def.key]) return;
 
+  // Audio: open customization dialog first
+  if (def.key === "audio") {
+    showAudioDialog.value = true;
+    return;
+  }
+
   generating[def.key] = true;
   showToast(`正在生成 ${def.label}…`, "info");
 
@@ -309,6 +318,25 @@ async function handleArtifactClick(def: ArtifactDef) {
     const res = await notebooksApi.createArtifact(
       props.notebookId,
       def.apiType,
+    );
+    await pollArtifact(props.notebookId, res.artifactId, def.label, def.key);
+  } catch (err) {
+    generating[def.key] = false;
+    const msg = err instanceof Error ? err.message : String(err);
+    showToast(`${def.label} 创建失败：${msg}`, "error");
+  }
+}
+
+async function handleAudioConfirm(options: AudioCreateOptions) {
+  showAudioDialog.value = false;
+  const def = artifacts.find((a) => a.key === "audio")!;
+  generating[def.key] = true;
+  showToast(`正在生成 ${def.label}…`, "info");
+  try {
+    const res = await notebooksApi.createArtifact(
+      props.notebookId,
+      "audio",
+      options as Record<string, unknown>,
     );
     await pollArtifact(props.notebookId, res.artifactId, def.label, def.key);
   } catch (err) {
@@ -327,6 +355,7 @@ const presets = ref<SummaryPreset[]>([]);
 const presetsLoading = ref(false);
 const presetMenuOpen = ref(false);
 const showPresetManager = ref(false);
+const showAudioDialog = ref(false);
 
 async function loadPresets() {
   presetsLoading.value = true;
@@ -657,5 +686,12 @@ function togglePresetMenu() {
   <PresetManagerDialog
     v-if="showPresetManager"
     @close="showPresetManager = false; loadPresets()"
+  />
+
+  <!-- Audio customization dialog -->
+  <AudioOptionsDialog
+    v-if="showAudioDialog"
+    @close="showAudioDialog = false"
+    @confirm="handleAudioConfirm"
   />
 </template>
