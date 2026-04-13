@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { NotebookLMClient, SourceStatus, SourceType } from "notebooklm-kit";
 
+const MINIMAL_PDF_BASE64 = "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTQ0XSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NCA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjcyIDcyIFRkCihIZWxsbyBQREYpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxMCAwMDAwMCBuIAowMDAwMDAwMDYzIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDI0OCAwMDAwMCBuIAowMDAwMDAwMzQyIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1Jvb3QgMSAwIFIgL1NpemUgNiA+PgpzdGFydHhyZWYKNDEyCiUlRU9G";
+
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const tempHome = mkdtempSync(join(tmpdir(), "notebooklm-list-test-"));
@@ -307,6 +309,118 @@ test("GET /api/notebooks/:id/research/stream remains available when auth require
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/event-stream");
   await response.body?.cancel();
+});
+
+test("POST /api/notebooks/:id/book-source/stream/upload-pdf rejects non-PDF uploads", async () => {
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+  const notebookId = crypto.randomUUID();
+
+  const formData = new FormData();
+  formData.set("file", new File(["plain text"], "notes.txt", { type: "text/plain" }));
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/book-source/stream/upload-pdf`, {
+    method: "POST",
+    body: formData,
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    message: "仅支持 PDF 文件上传",
+  });
+});
+
+test("POST /api/notebooks/:id/book-source/stream/upload-pdf extracts PDF text and submits it as a text source", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+
+  const captured: {
+    notebookId?: string;
+    title?: string;
+    content?: string;
+    addFromFileCalled: boolean;
+    statusCalls: number;
+  } = {
+    addFromFileCalled: false,
+    statusCalls: 0,
+  };
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        addFromText: async (notebookId: string, input: { title: string; content: string }) => {
+          captured.notebookId = notebookId;
+          captured.title = input.title;
+          captured.content = input.content;
+          return { sourceIds: ["source-1"] };
+        },
+        addFromFile: async () => {
+          captured.addFromFileCalled = true;
+          return { sourceIds: ["source-file"] };
+        },
+        status: async () => {
+          captured.statusCalls += 1;
+          return {
+            allReady: true,
+            statuses: [
+              {
+                sourceId: "source-1",
+                status: SourceStatus.READY,
+                sourceType: SourceType.TEXT,
+              },
+            ],
+          };
+        },
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+  const notebookId = crypto.randomUUID();
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    disposeClient();
+  });
+
+  const pdfBuffer = Buffer.from(MINIMAL_PDF_BASE64, "base64");
+  const formData = new FormData();
+  formData.set("file", new File([pdfBuffer], "hello-book.pdf", { type: "application/pdf" }));
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/book-source/stream/upload-pdf`, {
+    method: "POST",
+    body: formData,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+
+  const body = await response.text();
+  assert.match(body, /event: progress/);
+  assert.match(body, /"step":"extracting"/);
+  assert.match(body, /"step":"submitting"/);
+  assert.match(body, /event: complete/);
+  assert.equal(captured.notebookId, notebookId);
+  assert.equal(captured.title, "hello-book.pdf");
+  assert.match(captured.content ?? "", /Hello PDF/);
+  assert.equal(captured.addFromFileCalled, false);
+  assert.ok(captured.statusCalls >= 1);
 });
 
 test("GET /api/notebooks/:id/artifacts/:artifactId for a READY report writes markdown file to disk and stores filePath", async (t) => {

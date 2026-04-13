@@ -72,6 +72,7 @@ import {
 } from "../../source-state/service.js";
 import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
+import { extractPdfText } from "../../pdf/extract-text.js";
 
 const notebooks = new Hono();
 
@@ -1275,6 +1276,53 @@ notebooks.post("/:id/sources/stream/add/file", async (c) => {
         await emitComplete(stream, { success: true, result });
       } else {
         await emitComplete(stream, { success: false, timedOut: true, error: '来源处理超时，请稍后刷新查看状态' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await emitComplete(stream, { success: false, error: message });
+    }
+  });
+});
+
+notebooks.post("/:id/book-source/stream/upload-pdf", async (c) => {
+  const id = parseNotebookIdOrNull(c.req.param("id"));
+  if (!id) return c.json(invalidNotebookIdResponse(), 400);
+
+  const formData = await c.req.formData().catch(() => null);
+  if (!formData) return c.json({ success: false, message: "Invalid multipart form data" }, 400);
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) return c.json({ success: false, message: "file is required" }, 400);
+
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  if (!isPdf) {
+    return c.json({ success: false, message: "仅支持 PDF 文件上传" }, 400);
+  }
+
+  const content = Buffer.from(await file.arrayBuffer());
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await emitProgress(stream, "init", "正在准备书籍...");
+      await emitProgress(stream, "extracting", `正在处理书籍 \"${file.name}\"...`);
+
+      const extractedText = await extractPdfText(content);
+
+      await emitProgress(stream, "submitting", "正在整理书籍内容...");
+
+      const result = await addSourceFromText(id, {
+        title: file.name,
+        content: extractedText,
+      });
+
+      await emitProgress(stream, "submitted", "书籍已上传，等待完成...");
+
+      const ready = await pollUntilReady(id, stream);
+
+      if (ready) {
+        await emitComplete(stream, { success: true, result });
+      } else {
+        await emitComplete(stream, { success: false, timedOut: true, error: "书籍处理超时，请稍后刷新查看状态" });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
