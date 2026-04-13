@@ -13,7 +13,7 @@ import { getAudioPlayerKey } from "./report-detail-audio";
 interface Props {
   notebookId: string;
   entry?: ReportEntry;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 const props = defineProps<Props>();
@@ -348,6 +348,7 @@ function formatDuration(seconds: number | undefined): string {
     <div class="shrink-0 px-4 py-3 border-b border-[#e0d5c0] flex items-center gap-3">
       <!-- Back button -->
       <button
+        v-if="onBack"
         type="button"
         class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
         @click="onBack"

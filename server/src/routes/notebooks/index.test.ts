@@ -269,6 +269,74 @@ test("GET /api/notebooks/:id/entries remains available when auth requires re-log
   assert.equal(found!.state, "ready");
 });
 
+test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset metadata on the report entry", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: "# 快速读书总结\n\n这是生成的内容。",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+  const notebooks = routeModule.default;
+  const notebookId = crypto.randomUUID();
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "已有研究历史",
+    source: "research",
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    const { disposeClient } = await import("../../notebooklm/index.js");
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-quick-read" }),
+  });
+
+  assert.equal(response.status, 200);
+
+  const entriesResponse = await notebooks.request(`http://localhost/${notebookId}/entries`);
+  assert.equal(entriesResponse.status, 200);
+  const entriesPayload = await entriesResponse.json() as {
+    success: boolean;
+    data: Array<{ id: string; presetId?: string | null; entryType: string; title: string | null }>;
+  };
+  assert.equal(entriesPayload.success, true);
+  const summaryEntry = entriesPayload.data.find((entry) => entry.title === "快速读书总结");
+  assert.ok(summaryEntry);
+  assert.equal(summaryEntry?.entryType, "research_report");
+  assert.equal(summaryEntry?.presetId, "builtin-quick-read");
+});
+
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {
   writeAuthMeta({
     accountId: "default",

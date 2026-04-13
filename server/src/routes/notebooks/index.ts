@@ -794,6 +794,7 @@ notebooks.post("/:id/report/generate", async (c) => {
         content: null,
         filePath: reportFilename,
         state: "ready",
+        presetId: rawPresetId || null,
       });
 
       return c.json(
@@ -1106,6 +1107,7 @@ notebooks.get("/:id/entries", async (c) => {
           state: r.state,
           content: null,
           errorMessage: r.errorMessage,
+          presetId: r.presetId,
           artifactId: r.artifactId,
           artifactType: r.artifactType,
           contentJson,

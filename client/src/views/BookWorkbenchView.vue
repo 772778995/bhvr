@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import type { Source } from "@/api/notebooks";
+import type { ChatMessage, ReportEntry, ResearchState, Source } from "@/api/notebooks";
 import { notebooksApi } from "@/api/notebooks";
 import { uploadBookSourcePdf } from "@/api/book-source";
+import { generateBookSummary } from "@/api/book-summary";
+import { payloadToState, subscribeResearchStream, type ResearchRuntimeEvent } from "@/api/sse";
 import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWorkbenchShell.vue";
 import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
+import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
+import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
+import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
+import { getBookCenterTabs, getBookSummaryEntry } from "@/components/book-workbench/book-center";
+import { canGenerateBookSummary } from "@/components/book-workbench/book-view-state";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
@@ -24,6 +31,18 @@ const sources = ref<Source[]>([]);
 const uploadDialogOpen = ref(false);
 const deletingSourceId = ref<string | null>(null);
 const progressMessage = ref("");
+const activeCenterTab = ref<"history" | "summary">("history");
+const reportEntries = ref<ReportEntry[]>([]);
+const generatingBookSummary = ref(false);
+const messages = ref<ChatMessage[]>([]);
+const researchState = ref<ResearchState>({
+  status: "idle",
+  step: "idle",
+  completedCount: 0,
+  targetCount: 0,
+});
+
+let sseCleanup: (() => void) | null = null;
 
 const notebookId = computed(() => {
   const value = route.params.id;
@@ -31,10 +50,32 @@ const notebookId = computed(() => {
 });
 
 const currentBook = computed(() => getCurrentBookSource(sources.value));
+const currentBookSummary = computed(() => getBookSummaryEntry(reportEntries.value));
+const centerTabs = computed(() => getBookCenterTabs(Boolean(currentBookSummary.value)));
 const hasData = computed(() => true);
 const hasBook = computed(() => currentBook.value !== null);
-const currentBookTitle = computed(() => currentBook.value?.title ?? "当前书籍");
+const hasResearchHistory = computed(() => canGenerateBookSummary({
+  generating: generatingBookSummary.value,
+  messages: messages.value,
+  researchState: researchState.value,
+}));
 const busy = computed(() => loaderVisible.value);
+
+function resetWorkbenchState() {
+  sources.value = [];
+  reportEntries.value = [];
+  messages.value = [];
+  progressMessage.value = "";
+  deletingSourceId.value = null;
+  generatingBookSummary.value = false;
+  activeCenterTab.value = "history";
+  researchState.value = {
+    status: "idle",
+    step: "idle",
+    completedCount: 0,
+    targetCount: 0,
+  };
+}
 
 async function refreshSources() {
   if (!notebookId.value) {
@@ -44,10 +85,46 @@ async function refreshSources() {
   sources.value = await notebooksApi.getSources(notebookId.value);
 }
 
+async function refreshReportEntries() {
+  if (!notebookId.value) {
+    reportEntries.value = [];
+    return;
+  }
+  reportEntries.value = await notebooksApi.listEntries(notebookId.value);
+}
+
+function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+
+  for (const message of current) {
+    byId.set(message.id, message);
+  }
+
+  for (const message of incoming) {
+    byId.set(message.id, message);
+  }
+
+  return [...byId.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+}
+
+async function refreshMessages() {
+  if (!notebookId.value) {
+    messages.value = [];
+    return;
+  }
+
+  try {
+    messages.value = mergeMessages(messages.value, await notebooksApi.getMessages(notebookId.value));
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "刷新研究历史失败", "error");
+  }
+}
+
 async function loadWorkbench() {
   if (!notebookId.value) {
     error.value = "缺少书籍工作台 ID。";
     loading.value = false;
+    resetWorkbenchState();
     return;
   }
 
@@ -56,11 +133,59 @@ async function loadWorkbench() {
 
   try {
     await refreshSources();
+    await refreshReportEntries();
+    await refreshMessages();
+    connectSSE();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "读取书籍来源失败";
   } finally {
     loading.value = false;
   }
+}
+
+function handleResearchEvent(event: ResearchRuntimeEvent) {
+  if (event.type === "heartbeat") {
+    return;
+  }
+
+  if (event.payload) {
+    researchState.value = payloadToState(event.payload);
+  }
+
+  if (event.type === "progress" || (event.payload?.step === "refreshing_messages")) {
+    void refreshMessages();
+  }
+
+  if (event.type === "completed") {
+    void refreshMessages();
+    void refreshReportEntries();
+  }
+
+  if (event.type === "stopped") {
+    void refreshMessages();
+  }
+
+  if (event.type === "error" && event.payload?.lastError) {
+    showToast(event.payload.lastError, "error");
+  }
+}
+
+function connectSSE() {
+  if (sseCleanup) {
+    sseCleanup();
+    sseCleanup = null;
+  }
+
+  if (!notebookId.value) {
+    return;
+  }
+
+  sseCleanup = subscribeResearchStream(notebookId.value, {
+    onEvent: handleResearchEvent,
+    onError: () => {
+      // EventSource 会自动重连，右侧保持最后状态即可。
+    },
+  });
 }
 
 function openUploadDialog() {
@@ -130,8 +255,77 @@ async function onConfirmDeleteSource() {
   }
 }
 
-onMounted(() => {
-  void loadWorkbench();
+async function onToggleResearch() {
+  if (!notebookId.value || !hasBook.value) {
+    return;
+  }
+
+  try {
+    if (researchState.value.status === "running") {
+      await notebooksApi.stopResearch(notebookId.value);
+      showToast("自动研究将在当前轮结束后停止。", "info");
+      return;
+    }
+
+    await notebooksApi.startResearch(notebookId.value, { numQuestions: 20 });
+    researchState.value = {
+      ...researchState.value,
+      status: "running",
+      step: "starting",
+      targetCount: 20,
+    };
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "启动自动研究失败", "error");
+  }
+}
+
+async function onGenerateBookSummary() {
+  if (!notebookId.value || generatingBookSummary.value || !hasResearchHistory.value) {
+    return;
+  }
+
+  generatingBookSummary.value = true;
+  try {
+    await generateBookSummary(notebookId.value);
+    await refreshReportEntries();
+    if (currentBookSummary.value) {
+      activeCenterTab.value = "summary";
+    }
+    showToast("书籍总结已生成。", "info");
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "生成书籍总结失败", "error");
+  } finally {
+    generatingBookSummary.value = false;
+  }
+}
+
+watch(
+  currentBookSummary,
+  (entry) => {
+    if (!entry && activeCenterTab.value === "summary") {
+      activeCenterTab.value = "history";
+    }
+  },
+);
+
+watch(
+  notebookId,
+  () => {
+    if (sseCleanup) {
+      sseCleanup();
+      sseCleanup = null;
+    }
+    resetWorkbenchState();
+    void loadWorkbench();
+  },
+  { immediate: true },
+);
+
+onUnmounted(() => {
+  if (sseCleanup) {
+    sseCleanup();
+    sseCleanup = null;
+  }
 });
 </script>
 
@@ -166,31 +360,48 @@ onMounted(() => {
     </template>
 
     <template #center>
-      <section class="flex h-full flex-col justify-center border border-[#d8cfbe] bg-[#fbf7ef] px-8 py-10 text-center text-[#3d3126]">
-        <p class="text-xs uppercase tracking-[0.28em] text-[#8d7f6d]">
-          Book Workbench
-        </p>
-        <h2
-          class="mt-4 text-[1.9rem] leading-tight text-[#2f2418] sm:text-[2.2rem]"
-          style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;"
-        >
-          {{ hasBook ? currentBookTitle : '等待接入一本书' }}
-        </h2>
-        <p class="mx-auto mt-5 max-w-2xl text-base leading-8 text-[#615444] sm:text-[1.05rem]">
-          <template v-if="hasBook">
-            左侧书籍面板已经切入单书模式。中间研究区和右侧阅读工具仍沿用后续任务接入，不在这里胡乱抢活。
-          </template>
-          <template v-else>
-            先在左侧上传一本 PDF。书籍上传成功后，这个工作台会以该书为唯一阅读来源，进入后续阅读流程。
-          </template>
-        </p>
-      </section>
+      <div class="flex h-full min-h-0 flex-col">
+        <div class="shrink-0 border-b border-[#d8cfbe] bg-[#f8f3ea]">
+          <div class="flex">
+            <button
+              v-for="tab in centerTabs"
+              :key="tab.key"
+              type="button"
+              class="flex-1 px-3 py-2.5 text-base transition-colors duration-100"
+              :class="activeCenterTab === tab.key
+                ? 'border-b-2 border-[#3a2e20] text-[#2f271f]'
+                : 'text-[#8f7f6e] hover:text-[#665746]'"
+              @click="activeCenterTab = tab.key"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="min-h-0 flex-1 pt-2">
+          <ResearchHistoryPanel
+            v-show="activeCenterTab === 'history'"
+            :messages="messages"
+          />
+          <BookSummaryPanel
+            v-show="activeCenterTab === 'summary'"
+            :notebook-id="notebookId"
+            :entry="currentBookSummary"
+          />
+        </div>
+      </div>
     </template>
 
     <template #right>
-      <section class="flex h-full items-center justify-center border border-[#d8cfbe] bg-[#f3ecdf] px-6 text-center text-base leading-relaxed text-[#7a6c59]">
-        右侧扩展区暂时留白。
-      </section>
+      <BookActionsPanel
+        :research-state="researchState"
+        :has-book="hasBook"
+        :can-quick-read="hasResearchHistory"
+        :busy="busy"
+        :quick-read-loading="generatingBookSummary"
+        :on-toggle-research="onToggleResearch"
+        :on-quick-read="onGenerateBookSummary"
+      />
     </template>
 
     <template #dialogs>

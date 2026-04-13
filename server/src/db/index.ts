@@ -218,6 +218,13 @@ await client.execute({
 
 logger.debug("Built-in summary presets ensured");
 
+const reportEntriesInfo = await client.execute("PRAGMA table_info(report_entries)");
+const hasReportEntryPresetIdColumn = reportEntriesInfo.rows.some((row) => row.name === "preset_id");
+
+if (!hasReportEntryPresetIdColumn && reportEntriesInfo.rows.length > 0) {
+  await client.execute("ALTER TABLE report_entries ADD COLUMN preset_id TEXT");
+}
+
 // Migrate research_reports: old schema had notebook_id as PK, new schema has id as PK
 const tableInfo = await client.execute(
   "PRAGMA table_info(research_reports)"

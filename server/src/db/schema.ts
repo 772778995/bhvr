@@ -90,6 +90,8 @@ export const reportEntries = sqliteTable(
     content: text("content"),
     /** Error details when state = 'failed' */
     errorMessage: text("error_message"),
+    /** Summary preset used for research_report rows when applicable. */
+    presetId: text("preset_id"),
     /** NotebookLM SDK artifact ID — artifact only */
     artifactId: text("artifact_id"),
     /** SDK artifact type string — artifact only */

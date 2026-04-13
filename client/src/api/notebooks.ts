@@ -223,6 +223,7 @@ export interface ReportEntry {
   /** Markdown content — research_report only */
   content?: string | null;
   errorMessage?: string | null;
+  presetId?: string | null;
   /** NotebookLM SDK artifact ID — artifact only */
   artifactId?: string | null;
   /** SDK artifact type string — artifact only */

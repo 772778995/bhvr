@@ -13,6 +13,7 @@ export interface ReportEntryRecord {
   state: EntryState;
   content: string | null;
   errorMessage: string | null;
+  presetId: string | null;
   artifactId: string | null;
   artifactType: string | null;
   contentJson: string | null;
@@ -31,6 +32,7 @@ export async function insertReportEntry(record: {
   filePath?: string;
   state?: EntryState;
   errorMessage?: string | null;
+  presetId?: string | null;
 }): Promise<ReportEntryRecord> {
   const rows = await db
     .insert(reportEntries)
@@ -42,6 +44,7 @@ export async function insertReportEntry(record: {
       content: record.content ?? null,
       filePath: record.filePath ?? null,
       errorMessage: record.errorMessage ?? null,
+      presetId: record.presetId ?? null,
     })
     .returning();
   const row = rows[0];
