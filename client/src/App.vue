@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import { isWorkbenchRouteName } from "@/router/navigation";
 
 const route = useRoute();
-const isNotebookWorkbenchRoute = computed(() => route.name === "notebook-workbench");
+const isWorkbenchRoute = computed(() => isWorkbenchRouteName(route.name));
 </script>
 
 <template>
-  <div :class="isNotebookWorkbenchRoute ? 'workbench-layout' : 'default-layout'">
-    <header v-if="!isNotebookWorkbenchRoute" class="app-header">
+  <div :class="isWorkbenchRoute ? 'workbench-layout' : 'default-layout'">
+    <header v-if="!isWorkbenchRoute" class="app-header">
       <div class="header-inner">
         <router-link to="/" class="brand-link">
           <span class="brand-mark">◈</span>
@@ -16,7 +17,7 @@ const isNotebookWorkbenchRoute = computed(() => route.name === "notebook-workben
         </router-link>
       </div>
     </header>
-    <main :class="isNotebookWorkbenchRoute ? 'workbench-main' : 'default-main'">
+    <main :class="isWorkbenchRoute ? 'workbench-main' : 'default-main'">
       <RouterView />
     </main>
   </div>

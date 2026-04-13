@@ -17,14 +17,13 @@ import {
   subscribeResearchStream,
   type ResearchRuntimeEvent,
 } from "@/api/sse";
-import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
+import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWorkbenchShell.vue";
 import SourcesPanel from "@/components/notebook-workbench/SourcesPanel.vue";
 import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
 import StudioPanel from "@/components/notebook-workbench/StudioPanel.vue";
 import ReportListPanel from "@/components/notebook-workbench/ReportListPanel.vue";
 import ReportDetailPanel from "@/components/notebook-workbench/ReportDetailPanel.vue";
 import AddSourceDialog from "@/components/notebook-workbench/AddSourceDialog.vue";
-import ResizeDivider from "@/components/notebook-workbench/ResizeDivider.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
 import { useToast } from "@/composables/useToast";
@@ -35,36 +34,6 @@ import { streamPostSSE } from "@/api/source-stream";
 const route = useRoute();
 const { showToast } = useToast();
 const { visible: loaderVisible, loaderTitle, entries: loaderEntries, startLoading, addEntry, stopLoading } = useGlobalLoader();
-
-// ── Resizable panels ────────────────────────────────────────────────────────
-const LEFT_MIN = 200;
-const LEFT_MAX = 480;
-const LEFT_INIT = 280;
-const RIGHT_MIN = 280;
-const RIGHT_MAX = 560;
-const CENTER_MIN = 320;
-const RIGHT_INIT = 340;
-
-const leftWidth = ref(
-  Number(localStorage.getItem('notebook-left-width')) || LEFT_INIT
-);
-const rightWidth = ref(
-  Number(localStorage.getItem('notebook-right-width')) || RIGHT_INIT
-);
-
-// Persist widths to localStorage when they change
-watch([leftWidth, rightWidth], ([newLeftWidth, newRightWidth]) => {
-  localStorage.setItem('notebook-left-width', newLeftWidth.toString());
-  localStorage.setItem('notebook-right-width', newRightWidth.toString());
-});
-
-function onLeftDrag(delta: number) {
-  leftWidth.value = Math.min(LEFT_MAX, Math.max(LEFT_MIN, leftWidth.value + delta));
-}
-
-function onRightDrag(delta: number) {
-  rightWidth.value = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, rightWidth.value - delta));
-}
 
 // ── Center tab state ────────────────────────────────────────────────────────
 const activeCenterTab = ref<'chat' | 'reports'>('chat');
@@ -710,154 +679,129 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full overflow-hidden bg-[#e9dfcf] text-[#2f271f]">
-    <AppToast />
-    <FullscreenLoader :visible="loaderVisible" :title="loaderTitle" :entries="loaderEntries" />
-    <div class="h-full bg-[linear-gradient(180deg,_rgba(248,242,231,0.98),_rgba(237,228,212,0.98))]">
-      <div v-if="loading" class="h-full flex items-center justify-center text-base text-[#6f6354]">
-        正在加载工作台...
-      </div>
+  <NotebookWorkbenchShell
+    :title="notebook?.title ?? 'Notebook 工作台'"
+    :loading="loading"
+    :error="error"
+    :has-data="hasData"
+    empty-message="当前 Notebook 暂无可展示数据。"
+    left-storage-key="notebook-left-width"
+    right-storage-key="notebook-right-width"
+    :on-share="onTopAction"
+    :on-more="onTopAction"
+  >
+    <template #toast>
+      <AppToast />
+    </template>
 
-      <div v-else-if="error" class="h-full flex items-center justify-center p-6">
-        <div class="w-full max-w-lg border border-[#c98e7e] bg-[#f4ddd6] p-4 text-base leading-relaxed text-[#7b3328]">
-          {{ error }}
-        </div>
-      </div>
+    <template #loader>
+      <FullscreenLoader :visible="loaderVisible" :title="loaderTitle" :entries="loaderEntries" />
+    </template>
 
-      <div v-else-if="!hasData" class="h-full flex items-center justify-center p-6">
-        <div class="w-full max-w-lg border border-[#d8cfbe] bg-[#f8f3ea] p-6 text-center text-base leading-relaxed text-[#716452]">
-          当前 Notebook 暂无可展示数据。
-        </div>
-      </div>
+    <template #left>
+      <SourcesPanel
+        :sources="sources"
+        :on-add-source="onAddSource"
+        :on-delete-source="onRequestDeleteSource"
+      />
+    </template>
 
-      <div v-else class="h-full flex flex-col overflow-hidden">
-        <NotebookTopBar
-          :title="notebook?.title ?? 'Notebook 工作台'"
-          :on-share="onTopAction"
-          :on-more="onTopAction"
-        />
-
-        <div class="min-h-0 flex-1 overflow-hidden p-3 sm:p-4 lg:p-5">
-          <div class="flex h-full min-h-0 gap-0">
-            <!-- ─── Left: Sources only ─── -->
-            <div
-              class="shrink-0 min-w-0 flex flex-col"
-              :style="{ width: leftWidth + 'px' }"
-            >
-              <SourcesPanel
-                :sources="sources"
-                :on-add-source="onAddSource"
-                :on-delete-source="onRequestDeleteSource"
-              />
-            </div>
-
-            <ResizeDivider @drag="onLeftDrag" />
-
-            <!-- ─── Center: Tabbed (Chat / Reports) ─── -->
-            <div class="flex-1 min-w-0 flex flex-col" :style="{ minWidth: CENTER_MIN + 'px' }">
-              <!-- Tab bar -->
-              <div class="shrink-0 flex border-b border-[#d8cfbe] mb-0">
-                <button
-                  type="button"
-                  class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
-                  :class="activeCenterTab === 'chat'
-                    ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
-                    : 'text-[#9a8a78] hover:text-[#6a5b49]'"
-                  @click="activeCenterTab = 'chat'"
-                >
-                  对话
-                </button>
-                <button
-                  type="button"
-                  class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
-                  :class="activeCenterTab === 'reports'
-                    ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
-                    : 'text-[#9a8a78] hover:text-[#6a5b49]'"
-                  @click="activeCenterTab = 'reports'"
-                >
-                  报告
-                </button>
-              </div>
-
-              <!-- Tab content -->
-              <div class="flex-1 min-h-0 pt-2">
-                <ChatPanel
-                  v-show="activeCenterTab === 'chat'"
-                  :messages="messages"
-                  :sending="sending"
-                  :on-send="onSendMessage"
-                />
-                <template v-if="activeCenterTab === 'reports'">
-                  <ReportListPanel
-                    v-if="reportView === 'list'"
-                    :notebook-id="notebookId"
-                    :refresh-key="artifactRefreshKey"
-                    :on-select="onSelectEntry"
-                    :on-select-artifact="onSelectEntry"
-                    :on-delete="onRequestDeleteReport"
-                    :on-entries-loaded="onEntriesLoaded"
-                  />
-                  <ReportDetailPanel
-                    v-else-if="reportView === 'detail' && selectedEntry"
-                    :notebook-id="notebookId"
-                    :entry="selectedEntry ?? undefined"
-                    :on-back="onBackToList"
-                  />
-                </template>
-              </div>
-            </div>
-
-            <ResizeDivider @drag="onRightDrag" />
-
-            <!-- ─── Right: Studio (research controls only) ─── -->
-            <div
-              class="shrink-0 min-w-0"
-              :style="{ width: rightWidth + 'px' }"
-            >
-              <StudioPanel
-                :notebook-id="notebookId"
-                :research-state="researchState"
-                :has-research-assets="hasResearchAssets"
-                :message-count="messages.length"
-                :sources-all-processing="sourcesAllProcessing"
-                :on-start-research="onStartResearch"
-                :on-generate-report="onGenerateReport"
-                :on-artifact-ready="onArtifactReady"
-              />
-            </div>
-          </div>
+    <template #center>
+      <div class="flex h-full min-h-0 flex-col">
+        <div class="mb-0 shrink-0 flex border-b border-[#d8cfbe]">
+          <button
+            type="button"
+            class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
+            :class="activeCenterTab === 'chat'
+              ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
+              : 'text-[#9a8a78] hover:text-[#6a5b49]'"
+            @click="activeCenterTab = 'chat'"
+          >
+            对话
+          </button>
+          <button
+            type="button"
+            class="flex-1 px-3 py-2 text-sm font-medium transition-colors duration-100"
+            :class="activeCenterTab === 'reports'
+              ? 'text-[#2f271f] border-b-2 border-[#3a2e20]'
+              : 'text-[#9a8a78] hover:text-[#6a5b49]'"
+            @click="activeCenterTab = 'reports'"
+          >
+            报告
+          </button>
         </div>
 
-        <AddSourceDialog
-          :open="addSourceOpen"
-          :busy="false"
-          :on-close="onCloseAddSourceDialog"
-          :on-add-url="onAddSourceUrl"
-          :on-add-text="onAddSourceText"
-          :on-search="onSearchAndAddSources"
-          :on-pick-file="onAddSourceFile"
-        />
-
-        <ConfirmDialog
-          :visible="showDeleteConfirm"
-          title="删除报告"
-          message="确定要删除这份报告吗？此操作不可撤销。"
-          confirm-text="删除"
-          :danger="true"
-          @confirm="doDeleteReport"
-          @cancel="onCancelDelete"
-        />
-
-        <ConfirmDialog
-          :visible="showSourceDeleteConfirm"
-          title="删除来源"
-          :message="`确定要删除来源「${pendingDeleteSource?.title ?? ''}」吗？此操作不可撤销。`"
-          confirm-text="删除"
-          :danger="true"
-          @confirm="doDeleteSource"
-          @cancel="onCancelSourceDelete"
-        />
+        <div class="min-h-0 flex-1 pt-2">
+          <ChatPanel
+            v-show="activeCenterTab === 'chat'"
+            :messages="messages"
+            :sending="sending"
+            :on-send="onSendMessage"
+          />
+          <template v-if="activeCenterTab === 'reports'">
+            <ReportListPanel
+              v-if="reportView === 'list'"
+              :notebook-id="notebookId"
+              :refresh-key="artifactRefreshKey"
+              :on-select="onSelectEntry"
+              :on-select-artifact="onSelectEntry"
+              :on-delete="onRequestDeleteReport"
+              :on-entries-loaded="onEntriesLoaded"
+            />
+            <ReportDetailPanel
+              v-else-if="reportView === 'detail' && selectedEntry"
+              :notebook-id="notebookId"
+              :entry="selectedEntry ?? undefined"
+              :on-back="onBackToList"
+            />
+          </template>
+        </div>
       </div>
-    </div>
-  </div>
+    </template>
+
+    <template #right>
+      <StudioPanel
+        :notebook-id="notebookId"
+        :research-state="researchState"
+        :has-research-assets="hasResearchAssets"
+        :message-count="messages.length"
+        :sources-all-processing="sourcesAllProcessing"
+        :on-start-research="onStartResearch"
+        :on-generate-report="onGenerateReport"
+        :on-artifact-ready="onArtifactReady"
+      />
+    </template>
+
+    <template #dialogs>
+      <AddSourceDialog
+        :open="addSourceOpen"
+        :busy="false"
+        :on-close="onCloseAddSourceDialog"
+        :on-add-url="onAddSourceUrl"
+        :on-add-text="onAddSourceText"
+        :on-search="onSearchAndAddSources"
+        :on-pick-file="onAddSourceFile"
+      />
+
+      <ConfirmDialog
+        :visible="showDeleteConfirm"
+        title="删除报告"
+        message="确定要删除这份报告吗？此操作不可撤销。"
+        confirm-text="删除"
+        :danger="true"
+        @confirm="doDeleteReport"
+        @cancel="onCancelDelete"
+      />
+
+      <ConfirmDialog
+        :visible="showSourceDeleteConfirm"
+        title="删除来源"
+        :message="`确定要删除来源「${pendingDeleteSource?.title ?? ''}」吗？此操作不可撤销。`"
+        confirm-text="删除"
+        :danger="true"
+        @confirm="doDeleteSource"
+        @cancel="onCancelSourceDelete"
+      />
+    </template>
+  </NotebookWorkbenchShell>
 </template>

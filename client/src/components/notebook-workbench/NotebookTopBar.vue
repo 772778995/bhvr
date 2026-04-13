@@ -1,11 +1,11 @@
 <script setup lang="ts">
 interface Props {
   title: string;
-  onShare: () => void;
-  onMore: () => void;
+  onShare?: () => void;
+  onMore?: () => void;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
 </script>
 
 <template>
@@ -17,18 +17,20 @@ defineProps<Props>();
       >
         {{ title }}
       </h1>
-      <div class="flex shrink-0 items-center gap-2">
+      <div v-if="props.onShare || props.onMore" class="flex shrink-0 items-center gap-2">
         <button
+          v-if="props.onShare"
           type="button"
           class="border border-[#cfc4af] bg-[#fbf7ef] px-3 py-1.5 text-[0.95rem] text-[#564738] transition-all duration-100 ease-in-out hover:bg-[#f1e8d8] active:scale-95"
-          @click="onShare"
+          @click="props.onShare"
         >
           分享
         </button>
         <button
+          v-if="props.onMore"
           type="button"
           class="border border-[#d8cfbf] bg-transparent px-3 py-1.5 text-[0.95rem] text-[#6a5b49] transition-all duration-100 ease-in-out hover:bg-[#efe7d7] active:scale-95"
-          @click="onMore"
+          @click="props.onMore"
         >
           更多
         </button>

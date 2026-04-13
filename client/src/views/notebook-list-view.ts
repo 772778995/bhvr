@@ -11,7 +11,7 @@ interface NotebookListViewModelOptions extends NotebookListStateOptions {
 }
 
 export function createNotebookWorkbenchPath(id: string): string {
-  return `/notebook/${id}`;
+  return `/book/${id}`;
 }
 
 export function createNotebookListState(options: NotebookListStateOptions = {}) {

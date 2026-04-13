@@ -3,6 +3,7 @@ import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { formatTime } from "@/utils/format";
 import { notebooksApi, type Notebook } from "@/api/notebooks";
+import { createNotebookWorkbenchPath } from "./notebook-list-view";
 
 const router = useRouter();
 
@@ -30,7 +31,7 @@ async function load() {
 }
 
 function openNotebook(id: string) {
-  void router.push(`/notebook/${id}`);
+  void router.push(createNotebookWorkbenchPath(id));
 }
 
 function openCreateModal() {
@@ -56,7 +57,7 @@ async function handleCreate() {
   try {
     const notebook = await notebooksApi.createNotebook({ title });
     showCreateModal.value = false;
-    void router.push(`/notebook/${notebook.id}`);
+    void router.push(createNotebookWorkbenchPath(notebook.id));
   } catch (cause) {
     createError.value = cause instanceof Error ? cause.message : "创建失败，请重试";
   } finally {

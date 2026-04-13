@@ -53,8 +53,8 @@ test("openNotebook forwards the notebook workbench path", () => {
 
   state.openNotebook("nb-42");
 
-  assert.deepEqual(pushes, ["/notebook/nb-42"]);
-  assert.equal(createNotebookWorkbenchPath("abc"), "/notebook/abc");
+  assert.deepEqual(pushes, ["/book/nb-42"]);
+  assert.equal(createNotebookWorkbenchPath("abc"), "/book/abc");
 });
 
 test("view model registers load on mounted and navigates through router push", async () => {
@@ -79,5 +79,5 @@ test("view model registers load on mounted and navigates through router push", a
   await mounted?.();
   viewModel.openNotebook("nb-7");
 
-  assert.deepEqual(calls, ["load", "/notebook/nb-7"]);
+  assert.deepEqual(calls, ["load", "/book/nb-7"]);
 });
