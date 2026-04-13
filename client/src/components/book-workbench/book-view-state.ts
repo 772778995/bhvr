@@ -6,10 +6,19 @@ interface BookSummaryAvailabilityOptions {
   researchState: ResearchState;
 }
 
+interface BookResearchHistoryOptions {
+  messages: ChatMessage[];
+  researchState: ResearchState;
+}
+
+export function hasBookResearchHistory(options: BookResearchHistoryOptions): boolean {
+  return options.messages.length > 0 || options.researchState.completedCount > 0;
+}
+
 export function canGenerateBookSummary(options: BookSummaryAvailabilityOptions): boolean {
   if (options.generating) {
     return false;
   }
 
-  return options.messages.length > 0 || options.researchState.completedCount > 0;
+  return hasBookResearchHistory(options);
 }

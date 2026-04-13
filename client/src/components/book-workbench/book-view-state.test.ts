@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { canGenerateBookSummary } from "./book-view-state.js";
+import { canGenerateBookSummary, hasBookResearchHistory } from "./book-view-state.js";
 import type { ChatMessage, ResearchState } from "@/api/notebooks";
 
 function makeState(overrides?: Partial<ResearchState>): ResearchState {
@@ -24,7 +24,27 @@ function makeMessage(id: string): ChatMessage {
   };
 }
 
-test("canGenerateBookSummary stays available when persisted history exists", () => {
+test("hasBookResearchHistory stays true when persisted history exists", () => {
+  assert.equal(
+    hasBookResearchHistory({
+      messages: [makeMessage("msg-1")],
+      researchState: makeState({ completedCount: 0 }),
+    }),
+    true,
+  );
+});
+
+test("hasBookResearchHistory stays true when runtime research progress already exists", () => {
+  assert.equal(
+    hasBookResearchHistory({
+      messages: [],
+      researchState: makeState({ completedCount: 2 }),
+    }),
+    true,
+  );
+});
+
+test("canGenerateBookSummary blocks only when there is no history or a request is already running", () => {
   assert.equal(
     canGenerateBookSummary({
       generating: false,
@@ -33,9 +53,7 @@ test("canGenerateBookSummary stays available when persisted history exists", () 
     }),
     true,
   );
-});
 
-test("canGenerateBookSummary blocks when there is no history or a request is already running", () => {
   assert.equal(
     canGenerateBookSummary({
       generating: false,

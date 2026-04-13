@@ -12,7 +12,7 @@ import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
 import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
 import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
 import { getBookCenterTabs, getBookSummaryEntry } from "@/components/book-workbench/book-center";
-import { canGenerateBookSummary } from "@/components/book-workbench/book-view-state";
+import { canGenerateBookSummary, hasBookResearchHistory } from "@/components/book-workbench/book-view-state";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
@@ -54,7 +54,11 @@ const currentBookSummary = computed(() => getBookSummaryEntry(reportEntries.valu
 const centerTabs = computed(() => getBookCenterTabs(Boolean(currentBookSummary.value)));
 const hasData = computed(() => true);
 const hasBook = computed(() => currentBook.value !== null);
-const hasResearchHistory = computed(() => canGenerateBookSummary({
+const hasResearchHistory = computed(() => hasBookResearchHistory({
+  messages: messages.value,
+  researchState: researchState.value,
+}));
+const canGenerateSummary = computed(() => canGenerateBookSummary({
   generating: generatingBookSummary.value,
   messages: messages.value,
   researchState: researchState.value,
@@ -280,7 +284,7 @@ async function onToggleResearch() {
 }
 
 async function onGenerateBookSummary() {
-  if (!notebookId.value || generatingBookSummary.value || !hasResearchHistory.value) {
+  if (!notebookId.value || !canGenerateSummary.value) {
     return;
   }
 

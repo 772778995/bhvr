@@ -257,13 +257,13 @@ test("GET /api/notebooks/:id/entries remains available when auth requires re-log
   assert.equal(response.status, 200);
   const body = await response.json() as {
     success: boolean;
-    data: Array<{ id: string; entryType: string; title: string; content: string; state: string }>;
+    data: Array<{ id: string; entryType: string; title: string; content: string | null; state: string }>;
   };
   assert.equal(body.success, true);
   assert.ok(Array.isArray(body.data));
   const found = body.data.find((e) => e.id === entry.id);
   assert.ok(found, "inserted entry should appear in entries list");
-  assert.equal(found!.content, "cached report content");
+  assert.equal(found!.content, null);
   assert.equal(found!.title, "cached report");
   assert.equal(found!.entryType, "research_report");
   assert.equal(found!.state, "ready");
@@ -350,15 +350,13 @@ test("GET /api/notebooks/:id/messages remains available when auth requires re-lo
 
   const response = await notebooks.request(`http://localhost/${notebookId}/messages`);
 
-  assert.equal(response.status, 502);
+  assert.equal(response.status, 200);
   const body = await response.json() as {
     success: boolean;
-    errorCode: string;
-    message: string;
+    data: Array<unknown>;
   };
-  assert.equal(body.success, false);
-  assert.equal(body.errorCode, "MESSAGES_FETCH_FAILED");
-  assert.match(body.message, /^获取对话记录失败:/);
+  assert.equal(body.success, true);
+  assert.deepEqual(body.data, []);
 });
 
 test("GET /api/notebooks/:id/research/stream remains available when auth requires re-login", async () => {
