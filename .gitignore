@@ -45,3 +45,6 @@ pnpm-debug.log*
 data/
 *.db
 *.sqlite
+
+# local scratch space
+tmp-audio-download/
