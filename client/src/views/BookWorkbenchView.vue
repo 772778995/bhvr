@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import type { ChatMessage, ReportEntry, ResearchState, Source } from "@/api/notebooks";
+import { useRoute, useRouter } from "vue-router";
+import type { ChatMessage, Notebook, ReportEntry, ResearchState, Source } from "@/api/notebooks";
 import { notebooksApi } from "@/api/notebooks";
 import { uploadBookSourcePdf } from "@/api/book-source";
 import { generateBookSummary } from "@/api/book-summary";
@@ -11,8 +11,15 @@ import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
 import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
 import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
-import { getBookCenterTabs, getBookSummaries, getBookSummaryEntry } from "@/components/book-workbench/book-center";
+import {
+  getBookCenterTabButtonClass,
+  getBookCenterTabIndicatorClass,
+  getBookCenterTabs,
+  getBookSummaries,
+  getBookSummaryEntry,
+} from "@/components/book-workbench/book-center";
 import { canGenerateBookSummary, hasBookResearchHistory } from "@/components/book-workbench/book-view-state";
+import { countResearchAnsweredRounds, type ResearchActionPendingState } from "@/components/book-workbench/book-actions";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
@@ -20,13 +27,23 @@ import FullscreenLoader from "@/components/ui/FullscreenLoader.vue";
 import { useToast } from "@/composables/useToast";
 import { useGlobalLoader } from "@/composables/useGlobalLoader";
 import { getCurrentBookSource } from "@/utils/book-source";
+import {
+  createBookFinderDraftPlaceholder,
+  createBookFinderIntroCopy,
+  createBookWorkbenchHeaderState,
+  createOptimisticBookFinderUserMessage,
+  createStartingResearchState,
+} from "./book-workbench-view";
+import { getBookCenterTransition } from "./book-motion";
 
 const route = useRoute();
+const router = useRouter();
 const { showToast } = useToast();
 const { visible: loaderVisible, loaderTitle, entries: loaderEntries, startLoading, addEntry, stopLoading } = useGlobalLoader();
 
 const loading = ref(true);
 const error = ref("");
+const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
 const uploadDialogOpen = ref(false);
 const deletingSourceId = ref<string | null>(null);
@@ -35,7 +52,11 @@ const activeCenterTab = ref<"history" | "summary">("history");
 const reportEntries = ref<ReportEntry[]>([]);
 const selectedSummaryEntryId = ref<string | null>(null);
 const generatingBookSummary = ref(false);
+const bookFinderSending = ref(false);
+const bookFinderMode = ref(false);
+const bookFinderDraft = ref("");
 const messages = ref<ChatMessage[]>([]);
+const researchActionPending = ref<ResearchActionPendingState>(null);
 const researchState = ref<ResearchState>({
   status: "idle",
   step: "idle",
@@ -53,6 +74,12 @@ const notebookId = computed(() => {
 const currentBook = computed(() => getCurrentBookSource(sources.value));
 const bookSummaries = computed(() => getBookSummaries(reportEntries.value));
 const latestBookSummary = computed(() => getBookSummaryEntry(reportEntries.value));
+const headerState = computed(() => createBookWorkbenchHeaderState({
+  notebookTitle: notebook.value?.title,
+  navigate: (path) => {
+    void router.push(path);
+  },
+}));
 const currentBookSummary = computed(() => {
   if (selectedSummaryEntryId.value) {
     return bookSummaries.value.find((entry) => entry.id === selectedSummaryEntryId.value) ?? latestBookSummary.value;
@@ -67,20 +94,29 @@ const hasResearchHistory = computed(() => hasBookResearchHistory({
   messages: messages.value,
   researchState: researchState.value,
 }));
+const answeredRounds = computed(() => countResearchAnsweredRounds(messages.value));
 const canGenerateSummary = computed(() => canGenerateBookSummary({
   generating: generatingBookSummary.value,
   messages: messages.value,
   researchState: researchState.value,
 }));
 const busy = computed(() => loaderVisible.value);
+const centerTransition = getBookCenterTransition();
+const bookFinderIntro = createBookFinderIntroCopy();
+const bookFinderPlaceholder = createBookFinderDraftPlaceholder();
 
 function resetWorkbenchState() {
+  notebook.value = null;
   sources.value = [];
   reportEntries.value = [];
   messages.value = [];
   progressMessage.value = "";
   deletingSourceId.value = null;
   generatingBookSummary.value = false;
+  bookFinderSending.value = false;
+  bookFinderMode.value = false;
+  bookFinderDraft.value = "";
+  researchActionPending.value = null;
   selectedSummaryEntryId.value = null;
   activeCenterTab.value = "history";
   researchState.value = {
@@ -89,6 +125,15 @@ function resetWorkbenchState() {
     completedCount: 0,
     targetCount: 0,
   };
+}
+
+async function refreshNotebook() {
+  if (!notebookId.value) {
+    notebook.value = null;
+    return;
+  }
+
+  notebook.value = await notebooksApi.getNotebook(notebookId.value);
 }
 
 async function refreshSources() {
@@ -146,6 +191,7 @@ async function loadWorkbench() {
   error.value = "";
 
   try {
+    await refreshNotebook();
     await refreshSources();
     await refreshReportEntries();
     await refreshMessages();
@@ -164,6 +210,10 @@ function handleResearchEvent(event: ResearchRuntimeEvent) {
 
   if (event.payload) {
     researchState.value = payloadToState(event.payload);
+
+    if (event.payload.status === "running" || event.payload.status === "completed" || event.payload.status === "failed" || event.payload.status === "stopped") {
+      researchActionPending.value = null;
+    }
   }
 
   if (event.type === "progress" || (event.payload?.step === "refreshing_messages")) {
@@ -274,21 +324,24 @@ async function onToggleResearch() {
     return;
   }
 
+  const previousState = { ...researchState.value };
+
   try {
     if (researchState.value.status === "running") {
+      researchActionPending.value = "stopping";
       await notebooksApi.stopResearch(notebookId.value);
+      researchActionPending.value = null;
       showToast("自动研究将在当前轮结束后停止。", "info");
       return;
     }
 
+    researchActionPending.value = "starting";
+    researchState.value = createStartingResearchState(researchState.value);
     await notebooksApi.startResearch(notebookId.value, { numQuestions: 20 });
-    researchState.value = {
-      ...researchState.value,
-      status: "running",
-      step: "starting",
-      targetCount: 20,
-    };
+    researchActionPending.value = null;
   } catch (err) {
+    researchState.value = previousState;
+    researchActionPending.value = null;
     showToast(err instanceof Error ? err.message : "启动自动研究失败", "error");
   }
 }
@@ -311,6 +364,39 @@ async function onGenerateBookSummary() {
     showToast(err instanceof Error ? err.message : "生成书籍总结失败", "error");
   } finally {
     generatingBookSummary.value = false;
+  }
+}
+
+function openBookFinder() {
+  bookFinderMode.value = true;
+  activeCenterTab.value = "history";
+}
+
+function onBookFinderDraftChange(value: string) {
+  bookFinderDraft.value = value;
+}
+
+async function onSubmitBookFinder() {
+  const query = bookFinderDraft.value.trim();
+  if (!notebookId.value || !query || bookFinderSending.value || busy.value) {
+    return;
+  }
+
+  const optimisticMessage = createOptimisticBookFinderUserMessage(query);
+  messages.value = mergeMessages(messages.value, [optimisticMessage]);
+  bookFinderSending.value = true;
+  bookFinderDraft.value = "";
+
+  try {
+    const optimisticId = optimisticMessage.id;
+    await notebooksApi.searchBooks(notebookId.value, { query });
+    messages.value = messages.value.filter((message) => message.id !== optimisticId);
+    await refreshMessages();
+  } catch (err) {
+    messages.value = messages.value.filter((message) => message.id !== optimisticMessage.id);
+    showToast(err instanceof Error ? err.message : "快速找书失败", "error");
+  } finally {
+    bookFinderSending.value = false;
   }
 }
 
@@ -356,12 +442,14 @@ onUnmounted(() => {
 
 <template>
   <NotebookWorkbenchShell
-    title="Book 工作台"
+    :title="headerState.title"
     :loading="loading"
     :error="error"
     :has-data="hasData"
     left-storage-key="book-workbench-left-width"
     right-storage-key="book-workbench-right-width"
+    back-label="返回笔记列表"
+    :on-back="headerState.goBack"
     :on-share="undefined"
     :on-more="undefined"
   >
@@ -380,6 +468,7 @@ onUnmounted(() => {
         :progress-message="progressMessage"
         :on-upload="openUploadDialog"
         :on-replace="openUploadDialog"
+        :on-book-finder="openBookFinder"
         :on-delete="onRequestDeleteSource"
       />
     </template>
@@ -392,29 +481,39 @@ onUnmounted(() => {
               v-for="tab in centerTabs"
               :key="tab.key"
               type="button"
-              class="flex-1 px-3 py-2.5 text-base transition-colors duration-100"
-              :class="activeCenterTab === tab.key
-                ? 'border-b-2 border-[#3a2e20] text-[#2f271f]'
-                : 'text-[#8f7f6e] hover:text-[#665746]'"
+              :class="getBookCenterTabButtonClass(activeCenterTab === tab.key)"
               @click="activeCenterTab = tab.key"
             >
-              {{ tab.label }}
+              <span>{{ tab.label }}</span>
+              <span :class="getBookCenterTabIndicatorClass(activeCenterTab === tab.key)">当前标签</span>
             </button>
           </div>
         </div>
 
-        <div class="min-h-0 flex-1 pt-2">
-          <ResearchHistoryPanel
-            v-show="activeCenterTab === 'history'"
-            :messages="messages"
-          />
-          <BookSummaryPanel
-            v-show="activeCenterTab === 'summary'"
-            :notebook-id="notebookId"
-            :entries="bookSummaries"
-            :entry="currentBookSummary"
-            :on-select-entry="onSelectSummaryEntry"
-          />
+        <div class="relative min-h-0 flex-1 overflow-hidden pt-2">
+          <Transition :name="centerTransition.name" mode="out-in">
+            <ResearchHistoryPanel
+              v-if="activeCenterTab === 'history'"
+              key="history"
+              :messages="messages"
+              :finder-mode="bookFinderMode"
+              :finder-intro-title="bookFinderIntro.title"
+              :finder-intro-description="bookFinderIntro.description"
+              :finder-draft="bookFinderDraft"
+              :finder-placeholder="bookFinderPlaceholder"
+              :finder-sending="bookFinderSending"
+              :on-finder-draft-change="onBookFinderDraftChange"
+              :on-finder-submit="onSubmitBookFinder"
+            />
+            <BookSummaryPanel
+              v-else
+              key="summary"
+              :notebook-id="notebookId"
+              :entries="bookSummaries"
+              :entry="currentBookSummary"
+              :on-select-entry="onSelectSummaryEntry"
+            />
+          </Transition>
         </div>
       </div>
     </template>
@@ -422,12 +521,16 @@ onUnmounted(() => {
     <template #right>
       <BookActionsPanel
         :research-state="researchState"
+        :answered-rounds="answeredRounds"
         :has-book="hasBook"
         :can-quick-read="hasResearchHistory"
         :busy="busy"
         :quick-read-loading="generatingBookSummary"
+        :book-finder-loading="bookFinderSending"
+        :research-action-pending="researchActionPending"
         :on-toggle-research="onToggleResearch"
         :on-quick-read="onGenerateBookSummary"
+        :on-book-finder="openBookFinder"
       />
     </template>
 
@@ -452,3 +555,29 @@ onUnmounted(() => {
     </template>
   </NotebookWorkbenchShell>
 </template>
+
+<style scoped>
+.folio-panel-enter-active {
+  transition: opacity v-bind('`${centerTransition.durationEnterMs}ms`') ease-out,
+    transform v-bind('`${centerTransition.durationEnterMs}ms`') ease-out;
+}
+
+.folio-panel-leave-active {
+  transition: opacity v-bind('`${centerTransition.durationLeaveMs}ms`') ease-in,
+    transform v-bind('`${centerTransition.durationLeaveMs}ms`') ease-in;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.folio-panel-enter-from {
+  opacity: 0;
+  transform: translate3d(v-bind('`${centerTransition.enterX}px`'), v-bind('`${centerTransition.enterY}px`'), 0);
+}
+
+.folio-panel-leave-to {
+  opacity: 0;
+  transform: translate3d(v-bind('`${centerTransition.leaveX}px`'), 0, 0);
+}
+</style>

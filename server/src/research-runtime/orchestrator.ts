@@ -50,10 +50,7 @@ function buildFallbackQuestions(count: number): string[] {
     "如果继续深入研究，下一个最值得追问的问题是什么？",
   ];
 
-  return Array.from({ length: count }, (_, index) => {
-    const base = templates[index % templates.length] ?? templates[0]!;
-    return count <= templates.length ? base : `${base}（第 ${index + 1} 轮）`;
-  });
+  return Array.from({ length: count }, (_, index) => templates[index % templates.length] ?? templates[0]!);
 }
 
 function getFallbackQuestion(index: number): string {

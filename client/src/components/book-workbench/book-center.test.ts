@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getBookCenterTabs, getBookSummaries, getBookSummaryEntry } from "./book-center.js";
+import {
+  getBookCenterTabButtonClass,
+  getBookCenterTabIndicatorClass,
+  getBookCenterTabs,
+  getBookSummaries,
+  getBookSummaryEntry,
+} from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
 test("getBookCenterTabs hides summary tab until a summary exists", () => {
@@ -107,4 +113,16 @@ test("getBookSummaries returns builtin quick-read reports newest first", () => {
   ];
 
   assert.deepEqual(getBookSummaries(entries).map((entry) => entry.id), ["entry-latest", "entry-older"]);
+});
+
+test("getBookCenterTabIndicatorClass keeps markup decorative-only after moving underline to button edge", () => {
+  assert.match(getBookCenterTabIndicatorClass(true), /sr-only/);
+  assert.equal(getBookCenterTabIndicatorClass(false), getBookCenterTabIndicatorClass(true));
+});
+
+test("getBookCenterTabButtonClass uses a stable bottom border for the active underline", () => {
+  assert.match(getBookCenterTabButtonClass(true), /relative/);
+  assert.match(getBookCenterTabButtonClass(true), /border-b-2/);
+  assert.match(getBookCenterTabButtonClass(true), /border-\[#3a2e20\]/);
+  assert.match(getBookCenterTabButtonClass(false), /border-transparent/);
 });

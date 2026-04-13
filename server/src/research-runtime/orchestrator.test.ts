@@ -69,6 +69,7 @@ test("runAutoResearch falls back to default Chinese questions when planner retur
   assert.equal(state?.completedCount, 1);
   assert.equal(askedQuestions.length, 1);
   assert.match(askedQuestions[0] ?? "", /最核心的研究问题|关键的结论|背景、现状、趋势/);
+  assert.doesNotMatch(askedQuestions[0] ?? "", /第\s*\d+\s*轮/);
 });
 
 test("runAutoResearch stops when stop is requested", async () => {

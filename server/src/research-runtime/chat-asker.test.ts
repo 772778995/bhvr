@@ -188,8 +188,46 @@ test("createNotebookResearchDriver asks planner and visible turns in Chinese", a
   const questionResult = await driver.nextQuestion("nb-1");
   assert.equal(questionResult.success, true);
   assert.match(requests[0] ?? "", /请使用中文/);
+  assert.match(requests[0] ?? "", /不要输出与问题无关的任何内容/);
+  assert.match(requests[0] ?? "", /第 n 轮|第 3 轮|包装文本/);
 
   const answerResult = await driver.askQuestion("nb-1", questionResult.question!);
   assert.equal(answerResult.success, true);
   assert.match(requests[1] ?? "", /请仅使用中文回答/);
+});
+
+test("createNotebookResearchDriver strips round markers and other wrappers from planner output", async () => {
+  const driver = createNotebookResearchDriver(
+    "nb-1",
+    ["source-a"],
+    async () => ({
+      text: "（第 3 轮）问题：这本书最值得优先验证的核心论点是什么？",
+      conversationId: "planner-1",
+      messageIds: ["planner-1", "msg-1"],
+      citations: [],
+    })
+  );
+
+  const questionResult = await driver.nextQuestion("nb-1");
+
+  assert.equal(questionResult.success, true);
+  assert.equal(questionResult.question, "这本书最值得优先验证的核心论点是什么？");
+});
+
+test("createNotebookResearchDriver falls back when planner returns an English question", async () => {
+  const driver = createNotebookResearchDriver(
+    "nb-1",
+    ["source-a"],
+    async () => ({
+      text: "What is the author's core argument?",
+      conversationId: "planner-1",
+      messageIds: ["planner-1", "msg-1"],
+      citations: [],
+    })
+  );
+
+  const questionResult = await driver.nextQuestion("nb-1");
+
+  assert.equal(questionResult.success, false);
+  assert.match(questionResult.error ?? "", /中文/);
 });

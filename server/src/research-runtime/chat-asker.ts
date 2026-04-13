@@ -61,10 +61,16 @@ function parsePlannerQuestion(text: string): string {
     .find((line) => line.length > 0) ?? "";
 
   return firstLine
+    .replace(/^（第\s*\d+\s*轮）\s*/u, "")
+    .replace(/^\(?第\s*\d+\s*轮\)?[:：]?\s*/u, "")
     .replace(/^[-*•]\s*/, "")
     .replace(/^\d+[.)]\s*/, "")
     .replace(/^问题[:：]\s*/, "")
     .trim();
+}
+
+function looksLikeChineseQuestion(text: string): boolean {
+  return /[\u3400-\u9fff]/.test(text);
 }
 
 export function createNotebookResearchDriver(
@@ -87,6 +93,7 @@ export function createNotebookResearchDriver(
         "2. 不要编号",
         "3. 不要解释",
         "4. 不要回答",
+        "5. 不要输出与问题无关的任何内容，例如“（第 n 轮）”“第 n 轮：”“问题如下”等包装文本",
       ].join("\n");
 
       const result = await plannerAsker(notebookId, prompt);
@@ -98,6 +105,10 @@ export function createNotebookResearchDriver(
       const question = parsePlannerQuestion(result.answer);
       if (!question) {
         return { success: false, error: "NotebookLM 未返回可用的下一问", plannerConversationId };
+      }
+
+      if (!looksLikeChineseQuestion(question)) {
+        return { success: false, error: "NotebookLM 未返回中文问题", plannerConversationId };
       }
 
       return { success: true, question, plannerConversationId };
