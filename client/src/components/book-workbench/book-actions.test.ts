@@ -32,10 +32,14 @@ test("getResearchStatusCopy describes current research progress in book context"
 });
 
 test("getQuickReadActionLabel exposes loading and idle labels", () => {
-  assert.equal(getQuickReadActionLabel(false), "快速读书");
-  assert.equal(getQuickReadActionLabel(true), "整理中...");
+  assert.equal(getQuickReadActionLabel({ loading: false, hasSummary: false }), "快速读书");
+  assert.equal(getQuickReadActionLabel({ loading: true, hasSummary: false }), "整理中...");
 });
 
-test("getQuickReadActionLabel reports loading state separately from the base label", () => {
-  assert.notEqual(getQuickReadActionLabel(true), getQuickReadActionLabel(false));
+test("getQuickReadActionLabel switches to regenerate once a summary exists", () => {
+  assert.equal(getQuickReadActionLabel({ loading: false, hasSummary: true }), "重新生成");
+  assert.notEqual(
+    getQuickReadActionLabel({ loading: true, hasSummary: true }),
+    getQuickReadActionLabel({ loading: false, hasSummary: true }),
+  );
 });

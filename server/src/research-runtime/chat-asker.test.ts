@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createNotebookConversationAsker } from "./chat-asker.js";
+import { createNotebookConversationAsker, createNotebookResearchDriver } from "./chat-asker.js";
 
 test("createNotebookConversationAsker uses send-message flow and preserves conversation context", async () => {
   const calls: Array<{
@@ -157,4 +157,39 @@ test("createNotebookConversationAsker accepts fallback response text when primar
     citations: [],
     conversationId: "conv-1",
   });
+});
+
+test("createNotebookResearchDriver asks planner and visible turns in Chinese", async () => {
+  const requests: string[] = [];
+  const driver = createNotebookResearchDriver(
+    "nb-1",
+    ["source-a"],
+    async (_notebookId, request) => {
+      requests.push(request.prompt);
+
+      if (requests.length === 1) {
+        return {
+          text: "请从作者的问题意识切入，这本书最值得先追问什么？",
+          conversationId: "planner-1",
+          messageIds: ["planner-1", "msg-1"],
+          citations: [],
+        };
+      }
+
+      return {
+        text: "这是中文回答。",
+        conversationId: "visible-1",
+        messageIds: ["visible-1", "msg-2"],
+        citations: [],
+      };
+    }
+  );
+
+  const questionResult = await driver.nextQuestion("nb-1");
+  assert.equal(questionResult.success, true);
+  assert.match(requests[0] ?? "", /请使用中文/);
+
+  const answerResult = await driver.askQuestion("nb-1", questionResult.question!);
+  assert.equal(answerResult.success, true);
+  assert.match(requests[1] ?? "", /请仅使用中文回答/);
 });

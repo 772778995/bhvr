@@ -4,8 +4,12 @@ export function getResearchPrimaryActionLabel(researchState: ResearchState): str
   return researchState.status === "running" ? "停止自动研究" : "开始自动研究";
 }
 
-export function getQuickReadActionLabel(loading: boolean): string {
-  return loading ? "整理中..." : "快速读书";
+export function getQuickReadActionLabel(options: { loading: boolean; hasSummary: boolean }): string {
+  if (options.loading) {
+    return "整理中...";
+  }
+
+  return options.hasSummary ? "重新生成" : "快速读书";
 }
 
 export function getResearchStatusCopy(researchState: ResearchState): string {

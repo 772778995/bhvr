@@ -7,6 +7,7 @@ interface Props {
   researchState: ResearchState;
   hasBook: boolean;
   canQuickRead: boolean;
+  hasSummary?: boolean;
   busy?: boolean;
   quickReadLoading?: boolean;
   onToggleResearch: () => void | Promise<void>;
@@ -16,7 +17,10 @@ interface Props {
 const props = defineProps<Props>();
 
 const actionLabel = computed(() => getResearchPrimaryActionLabel(props.researchState));
-const quickReadLabel = computed(() => getQuickReadActionLabel(Boolean(props.quickReadLoading)));
+const quickReadLabel = computed(() => getQuickReadActionLabel({
+  loading: Boolean(props.quickReadLoading),
+  hasSummary: Boolean(props.hasSummary),
+}));
 const statusCopy = computed(() => getResearchStatusCopy(props.researchState));
 const running = computed(() => props.researchState.status === "running");
 const disabled = computed(() => !props.hasBook || Boolean(props.busy));

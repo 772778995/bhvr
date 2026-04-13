@@ -401,6 +401,7 @@ onUnmounted(() => {
         :research-state="researchState"
         :has-book="hasBook"
         :can-quick-read="hasResearchHistory"
+        :has-summary="Boolean(currentBookSummary)"
         :busy="busy"
         :quick-read-loading="generatingBookSummary"
         :on-toggle-research="onToggleResearch"

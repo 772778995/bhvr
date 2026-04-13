@@ -81,7 +81,7 @@ export function createNotebookResearchDriver(
   return {
     async nextQuestion(_targetNotebookId: string): Promise<ResearchDriverQuestionResult> {
       const prompt = [
-        "请基于当前资料与此前研究进展，只输出下一个最值得继续追问的研究问题。",
+        "请基于当前资料与此前研究进展，只输出下一个最值得继续追问的研究问题。请使用中文。",
         "要求：",
         "1. 只输出一句具体问题",
         "2. 不要编号",
@@ -104,7 +104,8 @@ export function createNotebookResearchDriver(
     },
 
     async askQuestion(_targetNotebookId: string, question: string): Promise<ResearchDriverAnswerResult> {
-      const result = await visibleAsker(notebookId, question);
+      const localizedQuestion = `${question}\n\n请仅使用中文回答，并结合当前书籍资料给出清晰、完整的分析。`;
+      const result = await visibleAsker(notebookId, localizedQuestion);
       if (result.success) {
         visibleConversationId = result.conversationId ?? visibleConversationId;
       }

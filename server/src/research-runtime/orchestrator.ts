@@ -56,6 +56,10 @@ function buildFallbackQuestions(count: number): string[] {
   });
 }
 
+function getFallbackQuestion(index: number): string {
+  return buildFallbackQuestions(index + 1)[index] ?? buildFallbackQuestions(1)[0]!;
+}
+
 /**
  * Parse a numbered list out of NotebookLM's plain-text response.
  * Accepts formats: "1. text", "1) text", "- text", "• text", "**1.** text".
@@ -136,17 +140,21 @@ export async function runAutoResearch(
     try {
       const nextQuestion = await driver.nextQuestion(notebookId);
       if (!nextQuestion.success || !nextQuestion.question) {
-        throw new Error(nextQuestion.error ?? "NotebookLM 未返回可用的下一问");
+        question = getFallbackQuestion(i);
+        logger.warn(
+          { notebookId, turn: i + 1, error: nextQuestion.error },
+          "orchestrator: planner returned no question, using fallback question"
+        );
+      } else {
+        question = nextQuestion.question;
+        logger.info(
+          { notebookId, turn: i + 1, question: question.slice(0, 120) },
+          "orchestrator: question generated"
+        );
+        registry.update(notebookId, {
+          hiddenConversationIds: driver.getHiddenConversationIds(),
+        });
       }
-
-      question = nextQuestion.question;
-      logger.info(
-        { notebookId, turn: i + 1, question: question.slice(0, 120) },
-        "orchestrator: question generated"
-      );
-      registry.update(notebookId, {
-        hiddenConversationIds: driver.getHiddenConversationIds(),
-      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ notebookId, turn: i + 1, err }, "orchestrator: next-question generation failed");
