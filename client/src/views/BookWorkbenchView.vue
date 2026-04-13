@@ -11,7 +11,7 @@ import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
 import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
 import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
-import { getBookCenterTabs, getBookSummaryEntry } from "@/components/book-workbench/book-center";
+import { getBookCenterTabs, getBookSummaries, getBookSummaryEntry } from "@/components/book-workbench/book-center";
 import { canGenerateBookSummary, hasBookResearchHistory } from "@/components/book-workbench/book-view-state";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
@@ -33,6 +33,7 @@ const deletingSourceId = ref<string | null>(null);
 const progressMessage = ref("");
 const activeCenterTab = ref<"history" | "summary">("history");
 const reportEntries = ref<ReportEntry[]>([]);
+const selectedSummaryEntryId = ref<string | null>(null);
 const generatingBookSummary = ref(false);
 const messages = ref<ChatMessage[]>([]);
 const researchState = ref<ResearchState>({
@@ -50,8 +51,16 @@ const notebookId = computed(() => {
 });
 
 const currentBook = computed(() => getCurrentBookSource(sources.value));
-const currentBookSummary = computed(() => getBookSummaryEntry(reportEntries.value));
-const centerTabs = computed(() => getBookCenterTabs(Boolean(currentBookSummary.value)));
+const bookSummaries = computed(() => getBookSummaries(reportEntries.value));
+const latestBookSummary = computed(() => getBookSummaryEntry(reportEntries.value));
+const currentBookSummary = computed(() => {
+  if (selectedSummaryEntryId.value) {
+    return bookSummaries.value.find((entry) => entry.id === selectedSummaryEntryId.value) ?? latestBookSummary.value;
+  }
+
+  return latestBookSummary.value;
+});
+const centerTabs = computed(() => getBookCenterTabs(bookSummaries.value.length > 0));
 const hasData = computed(() => true);
 const hasBook = computed(() => currentBook.value !== null);
 const hasResearchHistory = computed(() => hasBookResearchHistory({
@@ -72,6 +81,7 @@ function resetWorkbenchState() {
   progressMessage.value = "";
   deletingSourceId.value = null;
   generatingBookSummary.value = false;
+  selectedSummaryEntryId.value = null;
   activeCenterTab.value = "history";
   researchState.value = {
     status: "idle",
@@ -292,7 +302,8 @@ async function onGenerateBookSummary() {
   try {
     await generateBookSummary(notebookId.value);
     await refreshReportEntries();
-    if (currentBookSummary.value) {
+    if (latestBookSummary.value) {
+      selectedSummaryEntryId.value = latestBookSummary.value.id;
       activeCenterTab.value = "summary";
     }
     showToast("书籍总结已生成。", "info");
@@ -303,11 +314,21 @@ async function onGenerateBookSummary() {
   }
 }
 
+function onSelectSummaryEntry(entryId: string) {
+  selectedSummaryEntryId.value = entryId;
+}
+
 watch(
   currentBookSummary,
   (entry) => {
     if (!entry && activeCenterTab.value === "summary") {
       activeCenterTab.value = "history";
+      selectedSummaryEntryId.value = null;
+      return;
+    }
+
+    if (entry && !selectedSummaryEntryId.value) {
+      selectedSummaryEntryId.value = entry.id;
     }
   },
 );
@@ -390,7 +411,9 @@ onUnmounted(() => {
           <BookSummaryPanel
             v-show="activeCenterTab === 'summary'"
             :notebook-id="notebookId"
+            :entries="bookSummaries"
             :entry="currentBookSummary"
+            :on-select-entry="onSelectSummaryEntry"
           />
         </div>
       </div>
@@ -401,7 +424,6 @@ onUnmounted(() => {
         :research-state="researchState"
         :has-book="hasBook"
         :can-quick-read="hasResearchHistory"
-        :has-summary="Boolean(currentBookSummary)"
         :busy="busy"
         :quick-read-loading="generatingBookSummary"
         :on-toggle-research="onToggleResearch"

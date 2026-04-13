@@ -32,14 +32,29 @@ test("getResearchStatusCopy describes current research progress in book context"
 });
 
 test("getQuickReadActionLabel exposes loading and idle labels", () => {
-  assert.equal(getQuickReadActionLabel({ loading: false, hasSummary: false }), "快速读书");
-  assert.equal(getQuickReadActionLabel({ loading: true, hasSummary: false }), "整理中...");
+  assert.equal(getQuickReadActionLabel(false), "快速读书");
+  assert.equal(getQuickReadActionLabel(true), "整理中...");
 });
 
-test("getQuickReadActionLabel switches to regenerate once a summary exists", () => {
-  assert.equal(getQuickReadActionLabel({ loading: false, hasSummary: true }), "重新生成");
+test("getQuickReadActionLabel stays on quick-read after loading finishes", () => {
+  assert.equal(getQuickReadActionLabel(false), "快速读书");
   assert.notEqual(
-    getQuickReadActionLabel({ loading: true, hasSummary: true }),
-    getQuickReadActionLabel({ loading: false, hasSummary: true }),
+    getQuickReadActionLabel(true),
+    getQuickReadActionLabel(false),
   );
+});
+
+test("getResearchStatusCopy keeps a concrete target count instead of question mark placeholders", () => {
+  assert.doesNotMatch(
+    getResearchStatusCopy(makeState({ status: "running", completedCount: 1, targetCount: 20 })),
+    /\?/,
+  );
+  assert.doesNotMatch(
+    getResearchStatusCopy(makeState({ status: "running", completedCount: 1, targetCount: 0 })),
+    /\?/,
+  );
+});
+
+test("getResearchPrimaryActionLabel remains stable while quick-read work is serialized elsewhere", () => {
+  assert.equal(getResearchPrimaryActionLabel(makeState({ status: "idle" })), "开始自动研究");
 });

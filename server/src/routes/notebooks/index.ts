@@ -606,6 +606,11 @@ notebooks.get("/:id/research/stream", async (c) => {
 
 notebooks.post("/:id/research/start", async (c) => {
   return await withNotebookId(c, async (id) => {
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
+    const requestedCount = typeof body["numQuestions"] === "number" && Number.isFinite(body["numQuestions"])
+      ? Math.max(1, Math.trunc(body["numQuestions"]))
+      : undefined;
+
     if (isRunning(id)) {
       return c.json(
         {
@@ -662,7 +667,8 @@ notebooks.post("/:id/research/start", async (c) => {
 
       void runAutoResearch(
         id,
-        createNotebookResearchDriver(id, sourceIds, sendNotebookChatMessage)
+        createNotebookResearchDriver(id, sourceIds, sendNotebookChatMessage),
+        requestedCount !== undefined ? { targetCount: requestedCount } : undefined,
       ).catch((err) => {
         void err;
       });
@@ -761,7 +767,15 @@ notebooks.post("/:id/report/generate", async (c) => {
     }
 
     return await withNotebookAuthHandling(async () => {
-      const result = await askNotebookForResearch(id, summaryPrompt);
+      let sourceIds: string[] | undefined;
+      if (rawPresetId === "builtin-quick-read") {
+        const sources = await getNotebookSources(id);
+        const enabledMap = await listSourceStateMap(id);
+        const mergedSources = mergeSourceStates(sources, enabledMap);
+        sourceIds = listEnabledSourceIds(mergedSources);
+      }
+
+      const result = await askNotebookForResearch(id, summaryPrompt, sourceIds);
       if (!result.success || !result.answer) {
         return c.json(
           {
@@ -775,7 +789,8 @@ notebooks.post("/:id/report/generate", async (c) => {
 
       // Extract title from the first heading line, or use a default
       const titleMatch = result.answer.match(/^#+\s+(.+)/m);
-      const title = titleMatch?.[1]?.trim() ?? "研究报告";
+      const fallbackTitle = rawPresetId === "builtin-quick-read" ? "快速读书总结" : "研究报告";
+      const title = titleMatch?.[1]?.trim() ?? fallbackTitle;
 
       let reportFilename: string | undefined;
       try {

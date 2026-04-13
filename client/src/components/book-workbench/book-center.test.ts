@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getBookCenterTabs, getBookSummaryEntry } from "./book-center.js";
+import { getBookCenterTabs, getBookSummaries, getBookSummaryEntry } from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
 test("getBookCenterTabs hides summary tab until a summary exists", () => {
@@ -73,4 +73,38 @@ test("getBookSummaryEntry only returns builtin quick-read reports", () => {
 
   assert.equal(getBookSummaryEntry(entries)?.id, "entry-summary");
   assert.equal(getBookSummaryEntry(entries.slice(0, 1)), null);
+});
+
+test("getBookSummaries returns builtin quick-read reports newest first", () => {
+  const entries: ReportEntry[] = [
+    {
+      id: "entry-older",
+      entryType: "research_report",
+      title: "较早总结",
+      state: "ready",
+      presetId: "builtin-quick-read",
+      createdAt: "2026-04-13T09:00:00.000Z",
+      updatedAt: "2026-04-13T09:00:00.000Z",
+    },
+    {
+      id: "entry-ignore",
+      entryType: "research_report",
+      title: "普通研究报告",
+      state: "ready",
+      presetId: null,
+      createdAt: "2026-04-13T12:00:00.000Z",
+      updatedAt: "2026-04-13T12:00:00.000Z",
+    },
+    {
+      id: "entry-latest",
+      entryType: "research_report",
+      title: "最新总结",
+      state: "ready",
+      presetId: "builtin-quick-read",
+      createdAt: "2026-04-13T11:00:00.000Z",
+      updatedAt: "2026-04-13T11:00:00.000Z",
+    },
+  ];
+
+  assert.deepEqual(getBookSummaries(entries).map((entry) => entry.id), ["entry-latest", "entry-older"]);
 });

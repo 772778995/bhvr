@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { NotebookLMClient, SourceStatus, SourceType } from "notebooklm-kit";
+import * as registry from "../../research-runtime/registry.js";
 
 const MINIMAL_PDF_BASE64 = "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTQ0XSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NCA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjcyIDcyIFRkCihIZWxsbyBQREYpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxMCAwMDAwMCBuIAowMDAwMDAwMDYzIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDI0OCAwMDAwMCBuIAowMDAwMDAwMzQyIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1Jvb3QgMSAwIFIgL1NpemUgNiA+PgpzdGFydHhyZWYKNDEyCiUlRU9G";
 
@@ -273,6 +274,8 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;
   const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
 
   globalThis.fetch = async () =>
     new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
@@ -281,6 +284,27 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
     });
 
   NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({
+          projectId: notebookId,
+          title: "Notebook Under Test",
+        }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Source A", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
   Object.defineProperty(NotebookLMClient.prototype, "generation", {
     configurable: true,
     get() {
@@ -309,6 +333,12 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
   t.after(async () => {
     globalThis.fetch = originalFetch;
     NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
     if (originalGeneration) {
       Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
     }
@@ -335,6 +365,184 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
   assert.ok(summaryEntry);
   assert.equal(summaryEntry?.entryType, "research_report");
   assert.equal(summaryEntry?.presetId, "builtin-quick-read");
+});
+
+test("POST /api/notebooks/:id/report/generate allows quick-read generation while auto research is running", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const notebookId = crypto.randomUUID();
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({
+          projectId: notebookId,
+          title: "Notebook Under Test",
+        }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: "# 深度参与：一本书的结构与价值\n\n这是生成的内容。",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  registry.start(notebookId, 20);
+
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Source A", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "已有研究历史",
+    source: "research",
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    try {
+      registry.requestStop(notebookId);
+    } catch {}
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-quick-read" }),
+  });
+
+  assert.equal(response.status, 200);
+});
+
+test("POST /api/notebooks/:id/report/generate sends enabled source ids for builtin quick-read isolation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const notebookId = crypto.randomUUID();
+  const captured: Array<{ prompt: string; sourceIds?: string[] }> = [];
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Source A", type: SourceType.TEXT, status: SourceStatus.READY },
+          { sourceId: "source-b", title: "Source B", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async (_id: string, prompt: string, options?: { sourceIds?: string[] }) => {
+          captured.push({ prompt, sourceIds: options?.sourceIds });
+          return { text: "# 深度参与\n\n内容", citations: [] };
+        },
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "已有研究历史",
+    source: "research",
+  });
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-quick-read" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(captured[0]?.sourceIds, ["source-a", "source-b"]);
+  assert.match(captured[0]?.prompt ?? "", /文档内容/);
+  assert.match(captured[0]?.prompt ?? "", /不得凭空捏造/);
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {
@@ -375,6 +583,77 @@ test("GET /api/notebooks/:id/research/stream remains available when auth require
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/event-stream");
   await response.body?.cancel();
+});
+
+test("POST /api/notebooks/:id/research/start stores the requested target count in runtime state", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const notebookId = crypto.randomUUID();
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({
+          projectId: notebookId,
+          title: "Notebook Under Test",
+        }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          {
+            sourceId: "source-1",
+            title: "Book Source",
+            type: SourceType.TEXT,
+            status: SourceStatus.READY,
+          },
+        ],
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    try {
+      registry.requestStop(notebookId);
+    } catch {}
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/research/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ numQuestions: 20 }),
+  });
+
+  assert.equal(response.status, 202);
+  const runtime = registry.get(notebookId);
+  assert.equal(runtime?.targetCount, 20);
 });
 
 test("POST /api/notebooks/:id/book-source/stream/upload-pdf rejects non-PDF uploads", async () => {

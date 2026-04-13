@@ -7,10 +7,12 @@ export function getBookCenterTabs(hasSummary: boolean) {
   return hasSummary ? [HISTORY_TAB, SUMMARY_TAB] : [HISTORY_TAB];
 }
 
-export function getBookSummaryEntry(entries: ReportEntry[]): ReportEntry | null {
-  const reports = entries
+export function getBookSummaries(entries: ReportEntry[]): ReportEntry[] {
+  return entries
     .filter((entry) => entry.entryType === "research_report" && entry.presetId === "builtin-quick-read")
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
 
-  return reports[0] ?? null;
+export function getBookSummaryEntry(entries: ReportEntry[]): ReportEntry | null {
+  return getBookSummaries(entries)[0] ?? null;
 }
