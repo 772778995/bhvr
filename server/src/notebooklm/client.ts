@@ -1093,6 +1093,14 @@ export async function createArtifact(
     // through the generic `artifacts.create` which accepts CreateArtifactOptions.
     switch (artifactType) {
       case ArtifactType.AUDIO:
+        {
+          const artifacts = await client.artifacts.list(notebookId);
+          for (const artifact of artifacts) {
+            if (artifact.type === ArtifactType.AUDIO && artifact.artifactId) {
+              await client.artifacts.delete(artifact.artifactId, notebookId);
+            }
+          }
+        }
         return await client.artifacts.audio.create(notebookId, options as Parameters<typeof client.artifacts.audio.create>[1]);
       case ArtifactType.VIDEO:
         return await client.artifacts.video.create(notebookId, options as Parameters<typeof client.artifacts.video.create>[1]);

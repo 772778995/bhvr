@@ -486,9 +486,18 @@ async function onGenerateReport(presetId?: string): Promise<void> {
 }
 
 /** Called when a Studio artifact finishes generating — refresh list + switch tab. */
-function onArtifactReady() {
+async function onArtifactReady() {
   artifactRefreshKey.value++;
   activeCenterTab.value = 'reports';
+  await refreshReports();
+
+  if (selectedEntry.value?.artifactType === "audio") {
+    const latestAudio = cachedEntries.value.find((entry) => entry.artifactType === "audio");
+    if (latestAudio) {
+      selectedEntry.value = latestAudio;
+      reportView.value = 'detail';
+    }
+  }
 }
 
 // ── Source processing polling ────────────────────────────────────────────────

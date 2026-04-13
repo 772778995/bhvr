@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
-import { NotebookLMClient, downloadAudioFile } from "notebooklm-kit";
+import { NotebookLMClient } from "notebooklm-kit";
 import logger from "../../lib/logger.js";
 import {
   addDiscoveredSources,
@@ -38,10 +38,13 @@ import {
   insertArtifactEntry,
   markArtifactEntryReady,
   markArtifactEntryFailed,
+  markArtifactEntryFailedWithData,
   listEntriesByNotebookId,
   getEntryByArtifactId,
+  getCurrentAudioEntry,
   deleteEntryById,
   insertReportEntry,
+  replaceAudioArtifactEntry,
   type ReportEntryRecord,
 } from "../../db/report-entries.js";
 import { writeFile, unlink } from "node:fs/promises";
@@ -103,6 +106,150 @@ async function writeBinaryFile(data: Uint8Array | ArrayBuffer, filename: string)
   const buffer = data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(data);
   await writeFile(fullPath, buffer);
   return filename;
+}
+
+function extractBase64AudioData(payload: unknown): string | null {
+  const seen = new Set<unknown>();
+
+  function walk(value: unknown, depth: number): string | null {
+    if (depth > 10 || value == null) return null;
+    if (typeof value === "string") {
+      const normalized = value.replace(/\s/g, "");
+      if (normalized.length > 100 && /^[A-Za-z0-9+/=]+$/.test(normalized)) {
+        return normalized;
+      }
+      return null;
+    }
+
+    if (typeof value !== "object") return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = walk(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const nested of Object.values(value)) {
+      const found = walk(nested, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return walk(payload, 0);
+}
+
+function extractArtifactAudioUrlFromListResponse(payload: unknown, artifactId: string): string | null {
+  let data = payload;
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(data) || data.length === 0 || !Array.isArray(data[0])) {
+    return null;
+  }
+
+  for (const item of data[0]) {
+    if (!Array.isArray(item) || item[0] !== artifactId) continue;
+
+    const mediaData = item[6];
+    if (!Array.isArray(mediaData)) continue;
+
+    for (const directUrl of [mediaData[3], mediaData[2]]) {
+      if (typeof directUrl === "string" && directUrl.startsWith("http")) {
+        return directUrl;
+      }
+    }
+
+    const variants = mediaData[5];
+    if (!Array.isArray(variants)) continue;
+
+    for (const variant of variants) {
+      if (
+        Array.isArray(variant)
+        && typeof variant[0] === "string"
+        && variant[0].startsWith("http")
+        && typeof variant[2] === "string"
+        && variant[2].startsWith("audio/")
+      ) {
+        return variant[0];
+      }
+    }
+  }
+
+  return null;
+}
+
+async function downloadBinaryFromUrl(url: string, cookies: string): Promise<Uint8Array> {
+  const res = await fetch(url, {
+    headers: {
+      Cookie: cookies,
+      Accept: "*/*",
+      "User-Agent": "Mozilla/5.0",
+    },
+    redirect: "follow",
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to download audio URL: HTTP ${res.status}`);
+  }
+
+  const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml")) {
+    throw new Error(`Audio URL returned HTML instead of media (${contentType || "unknown content-type"})`);
+  }
+
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const prefix = Buffer.from(bytes.slice(0, 32)).toString("utf8").toLowerCase();
+  if (prefix.startsWith("<!doctype html") || prefix.startsWith("<html")) {
+    throw new Error("Audio URL returned an HTML document instead of audio bytes");
+  }
+
+  return bytes;
+}
+
+async function downloadArtifactAudioFile(client: NotebookLMClient, artifactId: string, notebookId: string): Promise<Uint8Array> {
+  const rpc = await client.getRPCClient();
+  const overviewRequestTypes = [1, 0, 2, 3];
+
+  for (const requestType of overviewRequestTypes) {
+    try {
+      const overviewResponse = await rpc.call("VUsiyb", [notebookId, requestType], notebookId);
+      const overviewBase64 = extractBase64AudioData(overviewResponse);
+      if (overviewBase64) {
+        return Uint8Array.from(Buffer.from(overviewBase64, "base64"));
+      }
+    } catch {
+      // Fall through to the next request type, then to artifact-specific fallback.
+    }
+  }
+
+  const response = await rpc.call("Fxmvse", [
+    [null, null, null, [1, null, null, null, null, null, null, null, null, null, [1]]],
+    artifactId,
+    [[[0, 1000]]],
+  ], notebookId);
+
+  const base64 = extractBase64AudioData(response);
+  if (base64) {
+    return Uint8Array.from(Buffer.from(base64, "base64"));
+  }
+
+  const listResponse = await rpc.call("gArtLc", [[2], notebookId], notebookId);
+  const audioUrl = extractArtifactAudioUrlFromListResponse(listResponse, artifactId);
+  if (!audioUrl) {
+    throw new Error(`Failed to locate audio URL for artifact ${artifactId}`);
+  }
+
+  return await downloadBinaryFromUrl(audioUrl, rpc.getCookies());
 }
 
 async function withNotebookId(
@@ -711,6 +858,7 @@ function entryToApiArtifact(entry: ReportEntryRecord): Record<string, unknown> {
     state: ARTIFACT_STATE_TO_NUM[entry.state] ?? 0,
     title: entry.title ?? undefined,
     createdAt: entry.createdAt.toISOString(),
+    fileUrl: entry.filePath ? `/api/files/${entry.filePath}` : null,
   };
 }
 
@@ -737,9 +885,12 @@ async function persistReadyArtifact(notebookId: string, artifactId: string, arti
       delete rawContent["audioData"];
     } else {
       const client = await authManager.getAuthenticatedSdkClient(DEFAULT_ACCOUNT_ID) as NotebookLMClient;
-      const rpc = await client.getRPCClient();
-      const audio = await downloadAudioFile(rpc, artifactId, notebookId);
-      filePath = await writeBinaryFile(audio.audioData, filename);
+      try {
+        const audioData = await downloadArtifactAudioFile(client, artifactId, notebookId);
+        filePath = await writeBinaryFile(audioData, filename);
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : String(err));
+      }
     }
   } else if (typeStr === "report") {
     const markdownContent = rawContent["content"];
@@ -775,6 +926,17 @@ notebooks.post("/:id/artifacts", async (c) => {
 
     const options = (body["options"] ?? {}) as Record<string, unknown>;
 
+    if (type === "audio") {
+      const currentAudio = await getCurrentAudioEntry(id);
+      if (currentAudio?.state === "creating") {
+        return c.json({
+          success: false,
+          message: "当前已有音频任务生成中，请等待完成后再试",
+          errorCode: "AUDIO_ALREADY_CREATING",
+        }, 409);
+      }
+    }
+
     return await withNotebookAuthHandling(async () => {
       try {
         const result = await createArtifact(id, type, options);
@@ -782,12 +944,19 @@ notebooks.post("/:id/artifacts", async (c) => {
         if (result.artifactId) {
           const initState = result.state === "ready" ? "ready" : "creating";
           try {
-            await insertArtifactEntry({
-              notebookId: id,
-              artifactId: result.artifactId,
-              artifactType: type,
-              state: initState as "creating" | "ready" | "failed",
-            });
+            if (type === "audio") {
+              await replaceAudioArtifactEntry({
+                notebookId: id,
+                artifactId: result.artifactId,
+              });
+            } else {
+              await insertArtifactEntry({
+                notebookId: id,
+                artifactId: result.artifactId,
+                artifactType: type,
+                state: initState as "creating" | "ready" | "failed",
+              });
+            }
           } catch (dbErr) {
             logger.warn(
               { dbErr, notebookId: id, artifactId: result.artifactId },
@@ -832,8 +1001,42 @@ notebooks.get("/:id/artifacts/:artifactId", async (c) => {
         if (artifact.state === ArtifactState.READY) {
           try {
             await persistReadyArtifact(id, artifactId, artifact);
+            const refreshedEntry = await getEntryByArtifactId(artifactId).catch(() => null);
+            if (refreshedEntry) {
+              return c.json(successResponse(entryToApiArtifact(refreshedEntry)));
+            }
           } catch (dbErr) {
-            logger.warn({ dbErr, artifactId }, "artifact entry ready update failed (non-fatal)");
+            if ((artifact.type as number) === ArtifactType.AUDIO) {
+              logger.warn({
+                dbErr,
+                artifactId,
+                notebookId: id,
+                message: dbErr instanceof Error ? dbErr.message : String(dbErr),
+              }, "audio ready artifact failed to persist playable file; marking failed");
+              try {
+                const client = await authManager.getAuthenticatedSdkClient(DEFAULT_ACCOUNT_ID) as NotebookLMClient;
+                await client.artifacts.delete(artifactId, id);
+              } catch (deleteErr) {
+                logger.warn({ deleteErr, artifactId, notebookId: id }, "failed to delete remote audio artifact after persistence failure");
+              }
+              try {
+                await markArtifactEntryFailedWithData(artifactId, {
+                  title: artifact.title ?? null,
+                });
+              } catch (markErr) {
+                logger.warn({ markErr, artifactId }, "failed to mark audio artifact as failed after persistence failure");
+              }
+              const failedEntry = await getEntryByArtifactId(artifactId).catch(() => null);
+              if (failedEntry) {
+                return c.json(successResponse(entryToApiArtifact(failedEntry)));
+              }
+            }
+            logger.warn({
+              dbErr,
+              artifactId,
+              message: dbErr instanceof Error ? dbErr.message : String(dbErr),
+              stack: dbErr instanceof Error ? dbErr.stack : undefined,
+            }, "artifact entry ready update failed (non-fatal)");
           }
         } else if (artifact.state === ArtifactState.FAILED) {
           markArtifactEntryFailed(artifactId).catch((dbErr) =>

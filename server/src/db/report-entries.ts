@@ -73,6 +73,54 @@ export async function insertArtifactEntry(record: {
 }
 
 /**
+ * Reuse the single local audio slot for a notebook.
+ * Audio no longer keeps local history rows because the remote overview is unique.
+ */
+export async function replaceAudioArtifactEntry(record: {
+  notebookId: string;
+  artifactId: string;
+}): Promise<void> {
+  const existingRows = await db
+    .select()
+    .from(reportEntries)
+    .where(and(eq(reportEntries.notebookId, record.notebookId), eq(reportEntries.artifactType, "audio")))
+    .orderBy(desc(reportEntries.createdAt));
+
+  const existing = existingRows[0] as unknown as ReportEntryRecord | undefined;
+
+  if (!existing) {
+    await insertArtifactEntry({
+      notebookId: record.notebookId,
+      artifactId: record.artifactId,
+      artifactType: "audio",
+      state: "creating",
+      title: null,
+    });
+    return;
+  }
+
+  await db
+    .update(reportEntries)
+    .set({
+      artifactId: record.artifactId,
+      state: "creating",
+      title: null,
+      contentJson: null,
+      filePath: null,
+      errorMessage: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(reportEntries.id, existing.id));
+
+  if (existingRows.length > 1) {
+    const staleIds = existingRows.slice(1).map((row) => row.id);
+    for (const staleId of staleIds) {
+      await db.delete(reportEntries).where(eq(reportEntries.id, staleId));
+    }
+  }
+}
+
+/**
  * Mark an artifact entry as READY with content.
  * audioData is intentionally excluded — large binary is stored as a file.
  */
@@ -107,6 +155,23 @@ export async function markArtifactEntryFailed(artifactId: string): Promise<void>
   await db
     .update(reportEntries)
     .set({ state: "failed", updatedAt: new Date() })
+    .where(eq(reportEntries.artifactId, artifactId));
+}
+
+export async function markArtifactEntryFailedWithData(
+  artifactId: string,
+  data: { title?: string | null }
+): Promise<void> {
+  const updates: Record<string, unknown> = {
+    state: "failed",
+    updatedAt: new Date(),
+  };
+  if (data.title !== undefined) {
+    updates.title = data.title;
+  }
+  await db
+    .update(reportEntries)
+    .set(updates)
     .where(eq(reportEntries.artifactId, artifactId));
 }
 
@@ -146,6 +211,16 @@ export async function getEntryByArtifactId(
     .select()
     .from(reportEntries)
     .where(eq(reportEntries.artifactId, artifactId))
+    .limit(1);
+  return (rows[0] as unknown as ReportEntryRecord) ?? null;
+}
+
+export async function getCurrentAudioEntry(notebookId: string): Promise<ReportEntryRecord | null> {
+  const rows = await db
+    .select()
+    .from(reportEntries)
+    .where(and(eq(reportEntries.notebookId, notebookId), eq(reportEntries.artifactType, "audio")))
+    .orderBy(desc(reportEntries.createdAt))
     .limit(1);
   return (rows[0] as unknown as ReportEntryRecord) ?? null;
 }

@@ -8,6 +8,7 @@ import {
   notebooksApi,
 } from "@/api/notebooks";
 import { renderMarkdown } from "@/utils/markdown";
+import { getAudioPlayerKey } from "./report-detail-audio";
 
 interface Props {
   notebookId: string;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const activeEntry = computed(() => props.entry);
 
 // ---------------------------------------------------------------------------
 // Mode detection
@@ -40,7 +42,7 @@ const ARTIFACT_TYPE_STR_TO_NUM: Record<string, number> = {
 };
 
 const currentArtifactType = computed(() => {
-  return ARTIFACT_TYPE_STR_TO_NUM[props.entry?.artifactType ?? ''] ?? 0;
+  return ARTIFACT_TYPE_STR_TO_NUM[activeEntry.value?.artifactType ?? ''] ?? 0;
 });
 
 // ---------------------------------------------------------------------------
@@ -70,7 +72,7 @@ watch(
 
     if (!newId) return;
 
-    const entry = props.entry;
+    const entry = activeEntry.value;
     const isResearchRep = entry?.entryType === "research_report";
     const isReportArtifact = entry?.entryType === "artifact" && entry?.artifactType === "report";
 
@@ -134,14 +136,14 @@ const renderedHtml = computed(() => {
 
 /** True when the current entry has loadable markdown content (research report OR report artifact). */
 const isMarkdownEntry = computed(() =>
-  props.entry?.entryType === "research_report"
-  || (props.entry?.entryType === "artifact" && props.entry?.artifactType === "report")
+  activeEntry.value?.entryType === "research_report"
+  || (activeEntry.value?.entryType === "artifact" && activeEntry.value?.artifactType === "report")
 );
 
 function downloadMarkdown() {
-  if (!props.entry || !fetchedContent.value) return;
+  if (!activeEntry.value || !fetchedContent.value) return;
   const content = fetchedContent.value;
-  const filename = (props.entry.title || "report") + ".md";
+  const filename = (activeEntry.value.title || "report") + ".md";
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -157,7 +159,7 @@ function downloadMarkdown() {
 
 const artifactRenderedHtml = computed(() => {
   // Prefer fetchedContent (loaded from fileUrl) over legacy inline contentJson
-  const md = fetchedContent.value ?? (props.entry?.contentJson?.content as string | undefined);
+  const md = fetchedContent.value ?? (activeEntry.value?.contentJson?.content as string | undefined);
   if (typeof md !== "string" || !md) return "";
   return renderMarkdown(md);
 });
@@ -166,47 +168,22 @@ const artifactRenderedHtml = computed(() => {
 // Artifact: AUDIO
 // ---------------------------------------------------------------------------
 
-const audioSrc = computed(() => props.entry?.fileUrl ?? null);
+const audioSrc = computed(() => activeEntry.value?.fileUrl ?? null);
+
+const audioPlayerKey = computed(() => getAudioPlayerKey({
+  id: activeEntry.value?.id,
+  fileUrl: activeEntry.value?.fileUrl,
+  updatedAt: activeEntry.value?.updatedAt,
+}));
 
 const isAudioArtifact = computed(() => currentArtifactType.value === ArtifactType.AUDIO);
 
-const audioRepairing = ref(false);
-const audioRepairFailed = ref(false);
-
-watch(
-  () => [props.entry?.id, props.entry?.artifactId, props.entry?.state, props.entry?.fileUrl, currentArtifactType.value] as const,
-  async ([entryId, artifactId, state, fileUrl, artifactType]) => {
-    audioRepairFailed.value = false;
-
-    if (
-      !entryId
-      || !artifactId
-      || artifactType !== ArtifactType.AUDIO
-      || state !== "ready"
-      || fileUrl
-      || audioRepairing.value
-    ) {
-      return;
-    }
-
-    audioRepairing.value = true;
-    try {
-      await notebooksApi.getArtifact(props.notebookId, artifactId);
-    } catch {
-      audioRepairFailed.value = true;
-    } finally {
-      audioRepairing.value = false;
-    }
-  },
-  { immediate: true },
-);
-
 function downloadAudio() {
-  const src = props.entry?.fileUrl;
+  const src = activeEntry.value?.fileUrl;
   if (!src) return;
   const a = document.createElement("a");
   a.href = src;
-  const title = props.entry?.title || "audio";
+  const title = activeEntry.value?.title || "audio";
   a.download = title + ".mp3";
   a.click();
 }
@@ -315,18 +292,18 @@ const artifactStateLabels: Record<string, string> = {
 };
 
 const artifactTitle = computed(() => {
-  if (!props.entry) return "";
-  return props.entry.title || (artifactTypeLabels[currentArtifactType.value] ?? "未知类型");
+  if (!activeEntry.value) return "";
+  return activeEntry.value.title || (artifactTypeLabels[currentArtifactType.value] ?? "未知类型");
 });
 
 const artifactStateText = computed(() => {
-  if (!props.entry) return "";
-  return artifactStateLabels[props.entry.state] ?? "未知状态";
+  if (!activeEntry.value) return "";
+  return artifactStateLabels[activeEntry.value.state] ?? "未知状态";
 });
 
 const artifactStateColor = computed(() => {
-  if (!props.entry) return "text-[#9a8a78]";
-  switch (props.entry.state) {
+  if (!activeEntry.value) return "text-[#9a8a78]";
+  switch (activeEntry.value.state) {
     case "creating": return "text-amber-600";
     case "ready": return "text-emerald-700";
     case "failed": return "text-red-600";
@@ -555,14 +532,13 @@ function formatDuration(seconds: number | undefined): string {
             <!-- Audio player -->
             <audio
               v-if="audioSrc"
+              :key="audioPlayerKey"
               :src="audioSrc"
               controls
               class="w-full"
               style="accent-color: #6a5b49;"
             />
-            <p v-else-if="audioRepairing" class="text-sm text-[#9a8a78]">正在补取音频文件…</p>
-            <p v-else-if="audioRepairFailed" class="text-sm text-red-700">音频文件补取失败，请稍后重试。</p>
-            <p v-else class="text-sm text-[#9a8a78]">音频数据不可用。</p>
+            <p v-else class="text-sm text-[#9a8a78]">音频文件尚未就绪或生成失败。</p>
           </div>
         </template>
 

@@ -187,6 +187,8 @@ export interface Artifact {
   state: ArtifactStateValue;
   title?: string;
   createdAt?: string;
+  /** Download/stream URL for file-backed artifacts when available. */
+  fileUrl?: string | null;
   // ── Rich content fields (present when state === READY) ──
   /** Base64-encoded MP3 audio data (AUDIO type). */
   audioData?: string;
@@ -348,7 +350,7 @@ export const notebooksApi = {
   // -------------------------------------------------------------------------
 
   /** Create an artifact (audio, quiz, flashcards, etc.) for a notebook. */
-  createArtifact(id: string, type: string, options?: Record<string, unknown>) {
+  createArtifact(id: string, type: string, options?: unknown) {
     return request<CreateArtifactResponse>(`/api/notebooks/${id}/artifacts`, {
       method: "POST",
       body: JSON.stringify({ type, options }),

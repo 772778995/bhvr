@@ -336,7 +336,7 @@ async function handleAudioConfirm(options: AudioCreateOptions) {
     const res = await notebooksApi.createArtifact(
       props.notebookId,
       "audio",
-      options as Record<string, unknown>,
+      options,
     );
     await pollArtifact(props.notebookId, res.artifactId, def.label, def.key);
   } catch (err) {
