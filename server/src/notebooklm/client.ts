@@ -52,6 +52,13 @@ const ALLOWED_DOMAINS = [
   ".googleusercontent.com",
 ];
 
+const NOTEBOOKLM_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+
+function extractAuthTokenFromHtml(html: string): string | null {
+  const tokenMatch = html.match(/"SNlM0e":"([^"]+)"/);
+  return tokenMatch?.[1] ?? null;
+}
+
 const testHooks = {
   importPlaywright: defaultImportPlaywright,
 };
@@ -90,6 +97,7 @@ export interface NotebookMessage {
 }
 
 type NotebookHistoryThreadIdResponse = Array<Array<[string]>>;
+type NotebookListHomeResponse = [string, unknown, string, string, unknown, unknown?][];
 
 type NotebookHistoryUserMessageRecord = [
   id: string,
@@ -237,7 +245,9 @@ async function fetchAuthToken(cookieHeader: string): Promise<string> {
   const resp = await fetch("https://notebooklm.google.com/", {
     headers: {
       Cookie: cookieHeader,
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      "User-Agent": NOTEBOOKLM_BROWSER_USER_AGENT,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     },
     redirect: "manual",
   });
@@ -247,16 +257,45 @@ async function fetchAuthToken(cookieHeader: string): Promise<string> {
     if (location.includes("accounts.google.com")) {
       throw new Error('Session expired. Run "npx notebooklm login" to re-authenticate.');
     }
+    if (location.includes("location=unsupported")) {
+      throw new Error("NotebookLM rejected the request as an unsupported browser environment");
+    }
     throw new Error(`Failed to fetch auth token: HTTP ${resp.status}`);
   }
 
   const html = await resp.text();
-  const tokenMatch = html.match(/"SNlM0e":"([^"]+)"/);
-  if (!tokenMatch?.[1]) {
+  const token = extractAuthTokenFromHtml(html);
+  if (!token) {
     throw new Error("Failed to extract auth token (SNlM0e) from page");
   }
 
-  return tokenMatch[1];
+  return token;
+}
+
+async function extractAuthTokenFromPersistentBrowser(accountId: string): Promise<{ authToken: string; storageState: unknown }> {
+  const { chromium } = await testHooks.importPlaywright();
+  const paths = getProfilePaths(accountId);
+  const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
+    headless: true,
+    channel: "chrome",
+  });
+
+  try {
+    const page = await context.newPage();
+    await page.goto("https://notebooklm.google.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await verifyNotebookPageAuthenticated(page);
+
+    const html = await page.content();
+    const authToken = extractAuthTokenFromHtml(html);
+    if (!authToken) {
+      throw new Error("Failed to extract auth token (SNlM0e) from browser page");
+    }
+
+    const storageState = await exportPersistentContextState(context, accountId);
+    return { authToken, storageState };
+  } finally {
+    await context.close();
+  }
 }
 
 async function verifyNotebookPageAuthenticated(page: Page): Promise<void> {
@@ -273,28 +312,7 @@ async function exportPersistentContextState(context: BrowserContext, accountId: 
 }
 
 async function refreshWithPersistentProfile(accountId: string): Promise<{ authToken: string; storageState: unknown }> {
-  const { chromium } = await testHooks.importPlaywright();
-  const paths = getProfilePaths(accountId);
-  const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
-    headless: true,
-  });
-
-  try {
-    const page = await context.newPage();
-    await page.goto("https://notebooklm.google.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
-    await verifyNotebookPageAuthenticated(page);
-
-    const storageState = await exportPersistentContextState(context, accountId);
-    const cookieData = extractCookieData(storageState);
-    if (!cookieData) {
-      throw new NotebookRequestAuthError("No valid Google cookies found after refresh");
-    }
-
-    const authToken = await fetchAuthToken(cookieData.cookieHeader);
-    return { authToken, storageState };
-  } finally {
-    await context.close();
-  }
+  return await extractAuthTokenFromPersistentBrowser(accountId);
 }
 
 function isRecognizedAuthFailure(error: unknown): boolean {
@@ -350,12 +368,29 @@ async function ensureDefaultProfileInitialized(): Promise<void> {
 async function createRuntimeClient(accountId: string): Promise<RuntimeClientLike> {
   await ensureDefaultProfileInitialized();
 
-  const cookieData = loadCookiesFromProfile(accountId);
+  let cookieData = loadCookiesFromProfile(accountId);
   if (!cookieData) {
     throw new AuthRequiredError('No authentication found. Run "npx notebooklm login" first.');
   }
 
-  const authToken = await fetchAuthToken(cookieData.cookieHeader);
+  let authToken: string;
+  try {
+    authToken = await fetchAuthToken(cookieData.cookieHeader);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("unsupported browser environment")) {
+      throw error;
+    }
+
+    const refreshed = await extractAuthTokenFromPersistentBrowser(accountId);
+    authToken = refreshed.authToken;
+    writeStorageState(accountId, refreshed.storageState);
+    cookieData = extractCookieData(refreshed.storageState);
+    if (!cookieData) {
+      throw new AuthRequiredError("Browser refresh completed but no valid Google cookies were exported");
+    }
+  }
+
   const client = new NotebookLMClient({
     authToken,
     cookies: cookieData.cookieHeader,
@@ -555,6 +590,8 @@ export const __testOnly = {
   set importPlaywright(value: typeof defaultImportPlaywright) {
     testHooks.importPlaywright = value;
   },
+  createRuntimeClientForTests: createRuntimeClient,
+  extractAuthTokenFromHtml,
   silentRefreshForTests: silentRefresh,
   extractChatResponseText,
   buildChatContextItems,
@@ -608,8 +645,18 @@ async function runNotebookRequest<T>(operation: (client: NotebookLMClient) => Pr
 }
 
 export async function listNotebooks(): Promise<NotebookDetail[]> {
-  const notebooks = await runNotebookRequest(async (client) => await client.notebooks.list());
-  return notebooks.map(mapNotebook);
+  try {
+    const notebooks = await runNotebookRequest(async (client) => await client.notebooks.list());
+    return notebooks.map(mapNotebook);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Permission denied")) {
+      throw error;
+    }
+
+    logger.warn({ err: error }, "listNotebooks: notebooklm-kit list denied, falling back to browser home data");
+    return await listNotebooksFromPersistentBrowser(DEFAULT_ACCOUNT_ID);
+  }
 }
 
 export function extractNotebookId(url: string): string {
@@ -700,6 +747,98 @@ function mapNotebook(nb: Notebook): NotebookDetail {
   };
 }
 
+function normalizeNotebookListEntry(entry: NotebookListHomeResponse[number]): NotebookDetail | null {
+  const title = typeof entry[0] === "string" && entry[0].trim().length > 0 ? entry[0].trim() : null;
+  const id = typeof entry[2] === "string" && entry[2].trim().length > 0 ? entry[2].trim() : null;
+  const metadata = Array.isArray(entry[5]) ? entry[5] : null;
+  const updated = metadata && Array.isArray(metadata[5]) ? metadata[5] as [number, number] : undefined;
+
+  if (!title || !id) {
+    return null;
+  }
+
+  return {
+    id,
+    title,
+    description: "",
+    updatedAt: toIsoTimestamp(updated),
+  };
+}
+
+function extractWrbPayload(text: string, rpcId: string): string | null {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    if (!line.startsWith("[[")) continue;
+
+    try {
+      const parsed = JSON.parse(line) as unknown[];
+      for (const chunk of parsed) {
+        if (!Array.isArray(chunk)) continue;
+        if (chunk[0] !== "wrb.fr" || chunk[1] !== rpcId || typeof chunk[2] !== "string") continue;
+        return chunk[2];
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function parseNotebookListFromHomeRpc(text: string): NotebookDetail[] {
+  const payload = extractWrbPayload(text, "wXbhsf");
+  if (!payload) {
+    throw new Error("Failed to parse notebook list response from home RPC");
+  }
+
+  const parsed = JSON.parse(payload) as unknown;
+  if (!Array.isArray(parsed) || !Array.isArray(parsed[0])) {
+    throw new Error("Unexpected notebook list payload shape from home RPC");
+  }
+
+  const rows = typeof parsed[0][0] === "string"
+    ? parsed as NotebookListHomeResponse
+    : parsed[0] as NotebookListHomeResponse;
+
+  return rows
+    .map(normalizeNotebookListEntry)
+    .filter((entry): entry is NotebookDetail => entry !== null);
+}
+
+async function listNotebooksFromPersistentBrowser(accountId: string): Promise<NotebookDetail[]> {
+  const { chromium } = await testHooks.importPlaywright();
+  const paths = getProfilePaths(accountId);
+  const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
+    headless: true,
+    channel: "chrome",
+  });
+
+  try {
+    const page = context.pages?.()[0] ?? await context.newPage();
+    let notebookResponseText: string | null = null;
+
+    page.on("response", async (response) => {
+      if (!response.url().includes("rpcids=wXbhsf")) {
+        return;
+      }
+
+      notebookResponseText = await response.text().catch(() => null);
+    });
+
+    await page.goto("https://notebooklm.google.com/", { waitUntil: "networkidle", timeout: 60000 });
+    await verifyNotebookPageAuthenticated(page);
+
+    if (!notebookResponseText) {
+      throw new Error("Notebook home page did not expose notebook list RPC response");
+    }
+
+    return parseNotebookListFromHomeRpc(notebookResponseText);
+  } finally {
+    await context.close();
+  }
+}
+
 function parseRpcJson<T>(value: unknown): T {
   if (typeof value === "string") {
     return JSON.parse(value) as T;
@@ -784,6 +923,9 @@ export async function getNotebookDetail(notebookId: string): Promise<NotebookDet
       throw err;
     }
     const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("Permission denied")) {
+      throw new Error("Permission denied");
+    }
     logger.warn({ notebookId, err }, "getNotebookDetail: sdk.notebooks.get failed");
     throw new Error(`Failed to fetch notebook detail: ${message}`);
   }

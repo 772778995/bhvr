@@ -65,6 +65,15 @@ function requiresReauthentication(error: unknown): boolean {
     || message.includes("2FA");
 }
 
+function isRecoverableAuthFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("HTTP 302")
+    || message.includes("auth token")
+    || message.includes("authentication")
+    || message.includes("expired")
+    || message.includes("unsupported");
+}
+
 export function createAuthManager(deps: AuthManagerDependencies): AuthManager {
   const stateByAccount = new Map<string, RuntimeState>();
 
@@ -174,7 +183,22 @@ export function createAuthManager(deps: AuthManagerDependencies): AuthManager {
         return runtime.client;
       }
 
-      const client = await deps.createRuntimeClient(accountId);
+      let client: RuntimeClientLike;
+      try {
+        client = await deps.createRuntimeClient(accountId);
+      } catch (error) {
+        if (requiresReauthentication(error) || !isRecoverableAuthFailure(error)) {
+          throw error;
+        }
+
+        const status = await this.refreshAuthProfile(accountId, "runtime-create");
+        if (status.status !== "ready") {
+          throw error;
+        }
+
+        client = await deps.createRuntimeClient(accountId);
+      }
+
       runtime.client = client;
 
       const persisted = readAuthMeta(accountId);

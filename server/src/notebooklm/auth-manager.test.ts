@@ -176,3 +176,40 @@ test("getAuthProfileStatus returns persisted auth metadata", async () => {
     } satisfies AuthMeta);
   });
 });
+
+test("getAuthenticatedSdkClient silently refreshes once when initial runtime creation fails with recoverable auth error", async () => {
+  await withTempHome(async () => {
+    let createCalls = 0;
+    let refreshCalls = 0;
+
+    const manager = createAuthManager(
+      createDependencies({
+        createRuntimeClient: async () => {
+          createCalls += 1;
+          if (createCalls === 1) {
+            throw new Error("Failed to fetch auth token: HTTP 302");
+          }
+
+          return {
+            dispose() {},
+          };
+        },
+        silentRefresh: async () => {
+          refreshCalls += 1;
+          return {
+            authToken: "token:1712491200000",
+            storageState: {
+              cookies: [{ name: "SAPISID", value: "cookie", domain: ".google.com" }],
+            },
+          };
+        },
+      })
+    );
+
+    const client = await manager.getAuthenticatedSdkClient("default");
+
+    assert.ok(client);
+    assert.equal(createCalls, 2);
+    assert.equal(refreshCalls, 1);
+  });
+});

@@ -142,6 +142,105 @@ test("listNotebooks normalizes SDK output and GET /api/notebooks returns success
     ],
   });
 });
+
+test("GET /api/notebooks falls back to browser home data when notebooklm-kit list is denied", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function connect() {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => {
+          throw new Error("Permission denied");
+        },
+      };
+    },
+  });
+
+  const clientModule = await import("../../notebooklm/client.js");
+  const originalImport = clientModule.__testOnly.importPlaywright;
+  const payload = JSON.stringify([
+    ["测试", null, "notebook-1", "", null, [1, false, true, null, null, [1776072754, 759105000], 1, false, [1776068683, 221409000], null, null, null, false, true, 1, false, null, true, 3]],
+    ["快速读书", null, "notebook-2", "", null, [1, false, true, null, null, [1776071196, 30988000], 1, false, [1775803015, 435052000], null, null, null, false, true, 1, false, null, true, 3]],
+  ]);
+  const rpcResponse = `${JSON.stringify([["wrb.fr", "wXbhsf", payload, null, null, null, "generic"]])}`;
+
+  const mockedImportPlaywright = async () => ({
+    chromium: {
+      launchPersistentContext: async () => {
+        let onResponse: ((resp: { url(): string; text(): Promise<string> }) => Promise<void> | void) | null = null;
+        const page = {
+          on: (_event: string, handler: (resp: { url(): string; text(): Promise<string> }) => Promise<void> | void) => {
+            onResponse = handler;
+          },
+          goto: async () => {
+            await onResponse?.({
+              url: () => "https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute?rpcids=wXbhsf",
+              text: async () => `)]}'\n\n${rpcResponse.length}\n${rpcResponse}\n25\n[["e",4,null,null,1010]]\n`,
+            });
+          },
+          url: () => "https://notebooklm.google.com/",
+        };
+
+        return {
+          pages: () => [],
+          newPage: async () => page,
+          storageState: async () => ({
+            cookies: [{ name: "SAPISID", value: "browser-cookie", domain: ".google.com" }],
+          }),
+          close: async () => {},
+        };
+      },
+    },
+  });
+
+  clientModule.__testOnly.importPlaywright = mockedImportPlaywright as unknown as typeof originalImport;
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    clientModule.__testOnly.importPlaywright = originalImport;
+    await disposeClient();
+  });
+
+  const response = await notebooks.request("http://localhost/");
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: [
+      {
+        id: "notebook-1",
+        title: "测试",
+        updatedAt: "2026-04-13T09:32:34.759Z",
+        description: "",
+      },
+      {
+        id: "notebook-2",
+        title: "快速读书",
+        updatedAt: "2026-04-13T08:46:31.030Z",
+        description: "",
+      },
+    ],
+  });
+});
+
 test("GET /api/notebooks returns 401 with explicit errorCode on unrecoverable auth failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;
@@ -223,6 +322,52 @@ test("GET /api/notebooks/:id returns 401 with explicit errorCode on unrecoverabl
       success: false,
       message: "authentication revoked",
       errorCode: "UNAUTHORIZED",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    await disposeClient();
+  }
+});
+
+test("GET /api/notebooks/:id returns 403 with explicit errorCode on notebook permission failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function connect() {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => {
+          throw new Error("Permission denied");
+        },
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  try {
+    const response = await notebooks.request("http://localhost/b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4");
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "Permission denied",
+      errorCode: "FORBIDDEN",
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -1438,4 +1583,52 @@ test("GET /api/notebooks/:id/artifacts/:artifactId does not persist HTML login p
   const entry = await getEntryByArtifactId(artifactId);
   assert.equal(entry?.state, "failed");
   assert.equal(entry?.filePath ?? null, null);
+});
+
+test("POST /api/notebooks/:id/book-finder/search returns explicit config error when OPENAI settings are missing", async () => {
+  const previousBaseUrl = process.env.OPENAI_BASE_URL;
+  const previousToken = process.env.OPENAI_TOKEN;
+  const previousModel = process.env.OPENAI_MODEL;
+
+  delete process.env.OPENAI_BASE_URL;
+  delete process.env.OPENAI_TOKEN;
+  delete process.env.OPENAI_MODEL;
+
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  try {
+    const response = await notebooks.request("http://localhost/b6bc3be7-56ee-4cfc-8cd4-cb2f9d25ebc4/book-finder/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ query: "组织管理" }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "快速找书缺少必要配置：OPENAI_BASE_URL, OPENAI_TOKEN, OPENAI_MODEL",
+      errorCode: "BOOK_FINDER_CONFIG_MISSING",
+    });
+  } finally {
+    if (previousBaseUrl === undefined) {
+      delete process.env.OPENAI_BASE_URL;
+    } else {
+      process.env.OPENAI_BASE_URL = previousBaseUrl;
+    }
+
+    if (previousToken === undefined) {
+      delete process.env.OPENAI_TOKEN;
+    } else {
+      process.env.OPENAI_TOKEN = previousToken;
+    }
+
+    if (previousModel === undefined) {
+      delete process.env.OPENAI_MODEL;
+    } else {
+      process.env.OPENAI_MODEL = previousModel;
+    }
+  }
 });

@@ -73,6 +73,7 @@ import {
 import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 import { extractPdfText } from "../../pdf/extract-text.js";
+import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finder/service.js";
 
 const notebooks = new Hono();
 
@@ -278,6 +279,21 @@ async function withNotebookAuthHandling(handler: () => Promise<Response>): Promi
         }),
         {
           status: 401,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Permission denied")) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          message,
+          errorCode: "FORBIDDEN",
+        }),
+        {
+          status: 403,
           headers: { "content-type": "application/json" },
         }
       );
@@ -1297,6 +1313,90 @@ notebooks.post("/:id/sources/stream/add/file", async (c) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await emitComplete(stream, { success: false, error: message });
+    }
+  });
+});
+
+notebooks.post("/:id/book-finder/search", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
+    const query = typeof body["query"] === "string" ? body["query"].trim() : "";
+
+    if (!query) {
+      return c.json(
+        {
+          success: false,
+          message: "query is required",
+          errorCode: "INVALID_QUERY",
+        },
+        400,
+      );
+    }
+
+    const missing = listMissingBookFinderConfig();
+    if (missing.length > 0) {
+      return c.json(
+        {
+          success: false,
+          message: `快速找书缺少必要配置：${missing.join(", ")}`,
+          errorCode: "BOOK_FINDER_CONFIG_MISSING",
+        },
+        503,
+      );
+    }
+
+    const userMessageId = crypto.randomUUID();
+    const assistantMessageId = crypto.randomUUID();
+
+    try {
+      await insertChatMessage({
+        id: userMessageId,
+        notebookId: id,
+        role: "user",
+        content: query,
+        source: "manual",
+      });
+    } catch (dbErr) {
+      logger.warn({ err: dbErr, notebookId: id }, "failed to persist quick book finder user message to DB");
+    }
+
+    try {
+      const result = await findBooksForQuery(query);
+
+      try {
+        await insertChatMessage({
+          id: assistantMessageId,
+          notebookId: id,
+          role: "assistant",
+          content: result.markdown,
+          source: "manual",
+        });
+      } catch (dbErr) {
+        logger.warn({ err: dbErr, notebookId: id }, "failed to persist quick book finder assistant message to DB");
+      }
+
+      return c.json(
+        successResponse({
+          normalizedQuery: result.normalizedQuery,
+          message: {
+            id: assistantMessageId,
+            role: "assistant" as const,
+            content: result.markdown,
+            createdAt: new Date().toISOString(),
+            status: "done" as const,
+          },
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(
+        {
+          success: false,
+          message,
+          errorCode: "BOOK_FINDER_SEARCH_FAILED",
+        },
+        502,
+      );
     }
   });
 });
