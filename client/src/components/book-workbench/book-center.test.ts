@@ -10,10 +10,11 @@ import {
 } from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
-test("getBookCenterTabs hides summary tab until a summary exists", () => {
+test("getBookCenterTabs always keeps summary tab visible", () => {
   assert.deepEqual(getBookCenterTabs(false), [
     { key: "history", label: "课题研究历史" },
     { key: "book-finder", label: "快速找书" },
+    { key: "summary", label: "书籍总结" },
   ]);
   assert.deepEqual(getBookCenterTabs(true), [
     { key: "history", label: "课题研究历史" },

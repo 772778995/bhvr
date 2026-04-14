@@ -5,7 +5,8 @@ const BOOK_FINDER_TAB = { key: "book-finder", label: "快速找书" } as const;
 const SUMMARY_TAB = { key: "summary", label: "书籍总结" } as const;
 
 export function getBookCenterTabs(hasSummary: boolean) {
-  return hasSummary ? [HISTORY_TAB, BOOK_FINDER_TAB, SUMMARY_TAB] : [HISTORY_TAB, BOOK_FINDER_TAB];
+  void hasSummary;
+  return [HISTORY_TAB, BOOK_FINDER_TAB, SUMMARY_TAB];
 }
 
 export function getBookCenterTabButtonClass(active: boolean): string {

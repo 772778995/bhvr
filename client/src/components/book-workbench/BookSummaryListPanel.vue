@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { ReportEntry } from "@/api/notebooks";
+import { notebooksApi, type ReportEntry } from "@/api/notebooks";
+import {
+  downloadBookSummaryEntry,
+  getBookSummaryDownloadButtonClass,
+  shouldShowBookSummaryDownload,
+} from "./book-summary-list";
 
 interface Props {
   entries: ReportEntry[];
@@ -24,6 +29,14 @@ function formatTime(raw: string): string {
     return raw;
   }
 }
+
+async function onDownload(entry: ReportEntry): Promise<void> {
+  if (!shouldShowBookSummaryDownload(entry)) {
+    return;
+  }
+
+  await downloadBookSummaryEntry(entry, notebooksApi.fetchEntryContent);
+}
 </script>
 
 <template>
@@ -34,21 +47,39 @@ function formatTime(raw: string): string {
 
     <ul v-else class="min-h-0 flex-1 overflow-y-auto px-3 py-3 space-y-2">
       <li v-for="entry in entries" :key="entry.id">
-        <button
-          type="button"
-          class="w-full border px-3 py-3 text-left transition-colors duration-100"
+        <div
+          class="flex items-start gap-2 border px-3 py-3 transition-colors duration-100"
           :class="selectedEntryId === entry.id
             ? 'border-[#3a2e20] bg-[#efe1c5] text-[#2f271f]'
             : 'border-[#d7ccb8] bg-[#fffaf1] text-[#5d4f3d] hover:border-[#c7b89d] hover:bg-[#f4ecd9]'"
-          @click="onSelect(entry.id)"
         >
-          <p class="text-base leading-6 font-medium">
-            {{ entry.title || '未命名总结' }}
-          </p>
-          <p class="mt-2 text-sm leading-6 text-[#8a7864]">
-            {{ formatTime(entry.updatedAt) }}
-          </p>
-        </button>
+          <button
+            type="button"
+            class="min-w-0 flex-1 text-left"
+            @click="onSelect(entry.id)"
+          >
+            <p class="text-base leading-6 font-medium">
+              {{ entry.title || '未命名总结' }}
+            </p>
+            <p class="mt-2 text-sm leading-6 text-[#8a7864]">
+              {{ formatTime(entry.updatedAt) }}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            :disabled="!shouldShowBookSummaryDownload(entry)"
+            :class="getBookSummaryDownloadButtonClass(!shouldShowBookSummaryDownload(entry))"
+            aria-label="下载书籍总结 markdown"
+            title="下载 markdown"
+            @click="onDownload(entry)"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="4 10 8 14 12 10" />
+              <line x1="8" y1="2" x2="8" y2="14" />
+            </svg>
+          </button>
+        </div>
       </li>
     </ul>
   </aside>

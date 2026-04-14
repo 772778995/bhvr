@@ -417,8 +417,7 @@ function onSelectSummaryEntry(entryId: string) {
 watch(
   currentBookSummary,
   (entry) => {
-    if (!entry && activeCenterTab.value === "summary") {
-      activeCenterTab.value = "history";
+    if (!entry) {
       selectedSummaryEntryId.value = null;
       return;
     }

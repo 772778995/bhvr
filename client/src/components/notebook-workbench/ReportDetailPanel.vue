@@ -135,24 +135,6 @@ const renderedHtml = computed(() => {
 });
 
 /** True when the current entry has loadable markdown content (research report OR report artifact). */
-const isMarkdownEntry = computed(() =>
-  activeEntry.value?.entryType === "research_report"
-  || (activeEntry.value?.entryType === "artifact" && activeEntry.value?.artifactType === "report")
-);
-
-function downloadMarkdown() {
-  if (!activeEntry.value || !fetchedContent.value) return;
-  const content = fetchedContent.value;
-  const filename = (activeEntry.value.title || "report") + ".md";
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 // ---------------------------------------------------------------------------
 // Artifact: rendered HTML for REPORT-type artifacts
 // ---------------------------------------------------------------------------
@@ -344,52 +326,6 @@ function formatDuration(seconds: number | undefined): string {
 
 <template>
   <section class="h-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#f8f3ea]">
-    <!-- Toolbar -->
-    <div class="shrink-0 px-4 py-3 border-b border-[#e0d5c0] flex items-center gap-3">
-      <!-- Back button -->
-      <button
-        v-if="onBack"
-        type="button"
-        class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
-        @click="onBack"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="10 3 5 8 10 13" />
-        </svg>
-        <span>返回列表</span>
-      </button>
-
-      <div class="flex-1" />
-
-      <!-- Download .md — for research reports and report artifacts with content -->
-      <button
-        v-if="isMarkdownEntry && fetchedContent"
-        type="button"
-        class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
-        @click="downloadMarkdown"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="4 10 8 14 12 10" />
-          <line x1="8" y1="2" x2="8" y2="14" />
-        </svg>
-        <span>下载 .md</span>
-      </button>
-
-      <!-- Download MP3 — only for AUDIO with an audio source -->
-      <button
-        v-if="isAudioArtifact && audioSrc"
-        type="button"
-        class="flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
-        @click="downloadAudio"
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="4 10 8 14 12 10" />
-          <line x1="8" y1="2" x2="8" y2="14" />
-        </svg>
-        <span>下载 MP3</span>
-      </button>
-    </div>
-
     <!-- ════════════════════════════════════════════════════════ -->
     <!-- RESEARCH REPORT MODE -->
     <!-- ════════════════════════════════════════════════════════ -->
@@ -488,6 +424,18 @@ function formatDuration(seconds: number | undefined): string {
               </h2>
               <p class="text-xs text-[#9a8a78] mt-0.5">{{ artifactTypeName }}</p>
             </div>
+            <button
+              v-if="isAudioArtifact && audioSrc"
+              type="button"
+              class="ml-auto inline-flex items-center gap-1 rounded px-2 py-1 text-sm text-[#6a5b49] transition-all duration-100 hover:bg-[#efe7d7] active:scale-95"
+              @click="downloadAudio"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 10 8 14 12 10" />
+                <line x1="8" y1="2" x2="8" y2="14" />
+              </svg>
+              <span>下载 MP3</span>
+            </button>
           </div>
 
           <!-- State + time -->

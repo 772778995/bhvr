@@ -84,6 +84,29 @@ test("createOptimisticBookFinderUserMessage keeps the manual query visible befor
   assert.match(message.id, /^book-finder-user:/);
 });
 
+test("createOptimisticBookFinderUserMessage falls back when crypto.randomUUID is unavailable", () => {
+  const originalCrypto = globalThis.crypto;
+  const patchedCrypto = originalCrypto ? { ...originalCrypto, randomUUID: undefined } : undefined;
+
+  try {
+    Object.defineProperty(globalThis, "crypto", {
+      value: patchedCrypto,
+      configurable: true,
+    });
+
+    const message = createOptimisticBookFinderUserMessage("心理学入门");
+
+    assert.equal(message.content, "心理学入门");
+    assert.match(message.id, /^book-finder-user:/);
+    assert.ok(message.id.length > "book-finder-user:".length);
+  } finally {
+    Object.defineProperty(globalThis, "crypto", {
+      value: originalCrypto,
+      configurable: true,
+    });
+  }
+});
+
 test("createBookFinderDisplayMessages prepends a welcome assistant bubble", () => {
   const displayed = createBookFinderDisplayMessages([]);
 
@@ -134,10 +157,45 @@ test("createBookFinderDisplayMessages filters out non-book-finder history messag
   ]);
 });
 
+test("createBookFinderDisplayMessages keeps persisted book-finder user messages even without optimistic id prefix", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "db-user-message-1",
+      role: "user",
+      content: "帮我找和 Agent 相关的书籍",
+      createdAt: "2026-04-14T09:01:00.000Z",
+      status: "done",
+    },
+    {
+      id: "assistant-book-finder-2",
+      role: "assistant",
+      content: "# 快速找书结果\n\n检索主题：Agent",
+      createdAt: "2026-04-14T09:01:01.000Z",
+      status: "done",
+    },
+  ];
+
+  const displayed = createBookFinderDisplayMessages(messages);
+
+  assert.deepEqual(displayed.map((message) => message.id), [
+    "book-finder-welcome",
+    "db-user-message-1",
+    "assistant-book-finder-2",
+  ]);
+});
+
 test("BookWorkbenchView no longer wires quick find buttons into side panels", () => {
   const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /:on-book-finder="openBookFinder"/);
   assert.doesNotMatch(source, /:book-finder-loading="bookFinderSending"/);
   assert.doesNotMatch(source, /function openBookFinder\(\)/);
+});
+
+test("ReportDetailPanel no longer keeps the markdown download toolbar button", () => {
+  const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /下载 \.md/);
+  assert.doesNotMatch(source, /const isMarkdownEntry/);
+  assert.doesNotMatch(source, /function downloadMarkdown/);
 });
