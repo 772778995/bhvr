@@ -73,7 +73,7 @@ export function getResearchStatusCopy(researchState: ResearchState): string {
   }
 
   if (researchState.status === "running") {
-    return "正在围绕当前书籍自动研究，新的问题与回答会陆续写入中栏历史。";
+    return "正在围绕当前书籍自动研究";
   }
 
   return "围绕当前书籍自动生成问题并逐步整理回答，适合先快速摸清一本书的结构和重点。";

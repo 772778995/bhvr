@@ -54,24 +54,49 @@ export function createBookFinderDisplayMessages(messages: ChatMessage[]): ChatMe
     status: "done",
   };
 
-  const filtered = messages.filter((message) => {
-    if (message.id.startsWith("book-finder-user:")) {
-      return true;
+  const filtered: ChatMessage[] = [];
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === "assistant" && isBookFinderAssistantMessage(message.content)) {
+      const previousMessage = messages[index - 1];
+      if (previousMessage?.role === "user" && filtered.at(-1)?.id !== previousMessage.id) {
+        filtered.push(previousMessage);
+      }
+      filtered.push(message);
+      continue;
     }
 
-    return message.role === "assistant" && message.content.trimStart().startsWith("# 快速找书结果");
-  });
+    if (message.id.startsWith("book-finder-user:")) {
+      filtered.push(message);
+    }
+  }
 
   return [welcomeMessage, ...filtered];
+}
+
+function isBookFinderAssistantMessage(content: string): boolean {
+  const normalized = content.trim();
+  return normalized.startsWith("# 快速找书结果")
+    || normalized.includes("- 线上平台与评分：")
+    || normalized.includes("- 微信读书：")
+    || normalized.includes("当前没有从公开书目数据源检索到足够可靠的结果");
 }
 
 export function createBookFinderDraftPlaceholder(): string {
   return "输入书籍关键词或类别，例如：组织管理、品牌营销、心理学入门";
 }
 
+function createClientMessageId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function createOptimisticBookFinderUserMessage(content: string): ChatMessage {
   return {
-    id: `book-finder-user:${crypto.randomUUID()}`,
+    id: `book-finder-user:${createClientMessageId()}`,
     role: "user",
     content: content.trim(),
     createdAt: new Date().toISOString(),

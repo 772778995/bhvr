@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { NotebookLMClient, SourceStatus, SourceType } from "notebooklm-kit";
 import * as registry from "../../research-runtime/registry.js";
+import { resetWorkspaceEnvCacheForTests } from "../../book-finder/service.js";
 
 const MINIMAL_PDF_BASE64 = "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTQ0XSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NCA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjcyIDcyIFRkCihIZWxsbyBQREYpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxMCAwMDAwMCBuIAowMDAwMDAwMDYzIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDI0OCAwMDAwMCBuIAowMDAwMDAwMzQyIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1Jvb3QgMSAwIFIgL1NpemUgNiA+PgpzdGFydHhyZWYKNDEyCiUlRU9G";
 
@@ -1589,10 +1590,14 @@ test("POST /api/notebooks/:id/book-finder/search returns explicit config error w
   const previousBaseUrl = process.env.OPENAI_BASE_URL;
   const previousToken = process.env.OPENAI_TOKEN;
   const previousModel = process.env.OPENAI_MODEL;
+  const previousCwd = process.cwd();
+  const isolatedCwd = mkdtempSync(join(tmpdir(), "book-finder-config-missing-"));
 
+  resetWorkspaceEnvCacheForTests();
   delete process.env.OPENAI_BASE_URL;
   delete process.env.OPENAI_TOKEN;
   delete process.env.OPENAI_MODEL;
+  process.chdir(isolatedCwd);
 
   const routeModule = await import("./index.js");
   const notebooks = routeModule.default;
@@ -1613,6 +1618,9 @@ test("POST /api/notebooks/:id/book-finder/search returns explicit config error w
       errorCode: "BOOK_FINDER_CONFIG_MISSING",
     });
   } finally {
+    process.chdir(previousCwd);
+    rmSync(isolatedCwd, { recursive: true, force: true });
+    resetWorkspaceEnvCacheForTests();
     if (previousBaseUrl === undefined) {
       delete process.env.OPENAI_BASE_URL;
     } else {

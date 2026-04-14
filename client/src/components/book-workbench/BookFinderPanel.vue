@@ -48,14 +48,16 @@ function handleInput(event: Event) {
 <template>
   <section class="flex h-full w-full min-h-0 flex-col border border-[#d8cfbe] bg-[#f8f3ea] p-4">
     <ul class="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-      <li v-for="message in messages" :key="message.id">
-        <div class="max-w-[90%] px-3.5 py-2.5 text-base leading-relaxed"
-          :class="message.role === 'user'
-            ? getBookFinderUserBubbleClass()
-            : getBookFinderAssistantBubbleClass()"
-        >
-          <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
-          <div v-else class="prose-warm" v-html="renderMarkdown(message.content)" />
+      <li v-for="message in messages" :key="message.id" class="flex flex-col">
+        <div :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+          <div class="px-3.5 py-2.5 text-base leading-relaxed"
+            :class="message.role === 'user'
+              ? getBookFinderUserBubbleClass()
+              : getBookFinderAssistantBubbleClass()"
+          >
+            <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
+            <div v-else class="prose-warm" v-html="renderMarkdown(message.content)" />
+          </div>
         </div>
         <p v-if="message.createdAt" class="mt-1 text-sm text-[#9a8a78]" :class="message.role === 'user' ? 'text-right' : ''">
           {{ message.createdAt }}

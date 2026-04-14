@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -19,6 +20,15 @@ test("getBookFinderUserBubbleClass keeps long user tokens wrapped", () => {
   assert.match(className, /whitespace-pre-wrap/);
   assert.match(className, /overflow-wrap-anywhere/);
   assert.match(className, /break-words/);
+});
+
+test("BookFinderPanel keeps user bubbles right-aligned and content-sized", () => {
+  const source = readFileSync(new URL("./BookFinderPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /message\.role === 'user' \? 'flex justify-end' : 'flex justify-start'/);
+  assert.match(getBookFinderUserBubbleClass(), /inline-block/);
+  assert.match(getBookFinderUserBubbleClass(), /shrink-0/);
+  assert.match(getBookFinderUserBubbleClass(), /max-w-\[75%\]/);
 });
 
 test("getBookFinderAssistantBubbleClass preserves assistant paper bubble styling", () => {

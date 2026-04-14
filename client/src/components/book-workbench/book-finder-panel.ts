@@ -3,7 +3,7 @@ export function shouldSubmitBookFinderKeydown(event: Pick<KeyboardEvent, "key" |
 }
 
 export function getBookFinderUserBubbleClass(): string {
-  return "ml-auto whitespace-pre-wrap overflow-wrap-anywhere break-words rounded-2xl rounded-tr-sm bg-[#3a2e20] text-[#f5ede0]";
+  return "inline-block shrink-0 max-w-[75%] whitespace-pre-wrap overflow-wrap-anywhere break-words rounded-2xl rounded-tr-sm bg-[#3a2e20] text-[#f5ede0]";
 }
 
 export function getBookFinderAssistantBubbleClass(): string {

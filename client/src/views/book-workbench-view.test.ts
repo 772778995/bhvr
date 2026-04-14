@@ -169,7 +169,7 @@ test("createBookFinderDisplayMessages keeps persisted book-finder user messages 
     {
       id: "assistant-book-finder-2",
       role: "assistant",
-      content: "# 快速找书结果\n\n检索主题：Agent",
+      content: "## Agent 入门与经典\n\n1. **《Designing Agents》**\n- 微信读书：暂无数据",
       createdAt: "2026-04-14T09:01:01.000Z",
       status: "done",
     },
@@ -181,6 +181,33 @@ test("createBookFinderDisplayMessages keeps persisted book-finder user messages 
     "book-finder-welcome",
     "db-user-message-1",
     "assistant-book-finder-2",
+  ]);
+});
+
+test("createBookFinderDisplayMessages keeps persisted assistant results after system headings were removed", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "db-user-message-2",
+      role: "user",
+      content: "组织学习",
+      createdAt: "2026-04-14T09:02:00.000Z",
+      status: "done",
+    },
+    {
+      id: "assistant-book-finder-3",
+      role: "assistant",
+      content: "## 组织学习经典\n\n1. **《第五项修炼》**\n- 线上平台与评分：豆瓣 评分 8.6/10\n- 微信读书：https://weread.qq.com/example",
+      createdAt: "2026-04-14T09:02:01.000Z",
+      status: "done",
+    },
+  ];
+
+  const displayed = createBookFinderDisplayMessages(messages);
+
+  assert.deepEqual(displayed.map((message) => message.id), [
+    "book-finder-welcome",
+    "db-user-message-2",
+    "assistant-book-finder-3",
   ]);
 });
 
