@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import type { ChatMessage, ResearchState } from "@/api/notebooks";
+import type { ChatMessage } from "@/api/notebooks";
 import {
   createBookFinderDisplayMessages,
   createBookWorkbenchHeaderState,
@@ -9,18 +9,7 @@ import {
   createBookFinderIntroCopy,
   createOptimisticBookFinderUserMessage,
   createNotebookListPath,
-  createStartingResearchState,
 } from "./book-workbench-view";
-
-function makeState(overrides?: Partial<ResearchState>): ResearchState {
-  return {
-    status: "idle",
-    step: "idle",
-    completedCount: 0,
-    targetCount: 0,
-    ...overrides,
-  };
-}
 
 test("header state uses notebook title when available", () => {
   const header = createBookWorkbenchHeaderState({
@@ -51,18 +40,6 @@ test("header state navigates back to notebook list", () => {
 
   assert.deepEqual(pushes, ["/"]);
   assert.equal(createNotebookListPath(), "/");
-});
-
-test("createStartingResearchState resets progress immediately for optimistic button feedback", () => {
-  assert.deepEqual(
-    createStartingResearchState(makeState({ status: "completed", completedCount: 12, targetCount: 12 })),
-    {
-      status: "running",
-      step: "starting",
-      completedCount: 0,
-      targetCount: 20,
-    },
-  );
 });
 
 test("createBookFinderIntroCopy uses the fixed锐读 greeting", () => {
@@ -169,7 +146,7 @@ test("createBookFinderDisplayMessages keeps persisted book-finder user messages 
     {
       id: "assistant-book-finder-2",
       role: "assistant",
-      content: "1. **《Designing Agents》**\n- 链接：[Open Library](https://openlibrary.org/works/OL1W)\n- 评分：暂无公开数据",
+      content: "1. **《Designing Agents》**\n- 链接：[Open Library](https://openlibrary.org/works/OL1W)",
       createdAt: "2026-04-14T09:01:01.000Z",
       status: "done",
     },
@@ -263,6 +240,57 @@ test("BookWorkbenchView no longer wires quick find buttons into side panels", ()
   assert.doesNotMatch(source, /:on-book-finder="openBookFinder"/);
   assert.doesNotMatch(source, /:book-finder-loading="bookFinderSending"/);
   assert.doesNotMatch(source, /function openBookFinder\(\)/);
+});
+
+test("BookWorkbenchView reads manual chat history and removes auto-research wiring", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /activeCenterTab = ref<"chat" \| "summary" \| "book-finder">\("chat"\)/);
+  assert.match(source, /await notebooksApi\.getChatMessages\(notebookId\.value\)/);
+  assert.doesNotMatch(source, /ResearchHistoryPanel/);
+  assert.doesNotMatch(source, /subscribeResearchStream/);
+  assert.doesNotMatch(source, /researchState/);
+  assert.doesNotMatch(source, /onToggleResearch/);
+});
+
+test("book-workbench-view helpers no longer expose optimistic auto-research state reset", () => {
+  const source = readFileSync(new URL("./book-workbench-view.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /createStartingResearchState/);
+  assert.doesNotMatch(source, /DEFAULT_BOOK_RESEARCH_TARGET_COUNT/);
+});
+
+test("BookSummaryPanel removes the old top summary header and supports true fullscreen reading", () => {
+  const source = readFileSync(new URL("../components/book-workbench/BookSummaryPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /<template>\s*<section :class="layout\.shellClass">/s);
+  assert.match(source, /<section :class="layout\.shellClass">[\s\S]*<Teleport to="body">[\s\S]*<\/Teleport>[\s\S]*<\/section>/s);
+  assert.match(source, /<Teleport to="body">/);
+  assert.match(source, /全屏阅读/);
+  assert.doesNotMatch(source, /版本切换保留在顶部，正文区域直接全宽展开阅读。/);
+  assert.doesNotMatch(source, /<select/);
+  assert.doesNotMatch(source, /书籍总结\n/);
+});
+
+test("BookActionsPanel no longer renders auto-research controls", () => {
+  const source = readFileSync(new URL("../components/book-workbench/BookActionsPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /getBookActionLabel\("quick-read"/);
+  assert.match(source, /getBookActionLabel\("deep-reading"/);
+  assert.match(source, /onDeepReading/);
+  assert.doesNotMatch(source, /自动研究\n/);
+  assert.doesNotMatch(source, /自动研究</);
+  assert.doesNotMatch(source, /onToggleResearch/);
+  assert.doesNotMatch(source, /researchState/);
+});
+
+test("BookWorkbenchView moves summary history into the right panel", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /:history-entries="bookSummaries"/);
+  assert.match(source, /:selected-entry-id="currentBookSummary\?\.id \?\? null"/);
+  assert.match(source, /:on-select-entry="onSelectSummaryEntry"/);
+  assert.match(source, /function onSelectSummaryEntry\(entryId: string\) \{[\s\S]*selectedSummaryEntryId\.value = entryId;[\s\S]*activeCenterTab\.value = "summary";[\s\S]*\}/);
 });
 
 test("ReportDetailPanel no longer keeps the markdown download toolbar button", () => {

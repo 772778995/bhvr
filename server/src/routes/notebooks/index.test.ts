@@ -11,12 +11,17 @@ const MINIMAL_PDF_BASE64 = "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFn
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const originalDatabasePath = process.env.DATABASE_PATH;
+const originalDataFilesDir = process.env.DATA_FILES_DIR;
 const tempHome = mkdtempSync(join(tmpdir(), "notebooklm-list-test-"));
 const notebooklmDir = join(tempHome, ".notebooklm");
 const defaultProfileDir = join(notebooklmDir, "profiles", "default");
+const tempDatabasePath = join(tempHome, "test-notebooklm.db");
+const tempDataFilesDir = join(tempHome, "data-files");
 
 mkdirSync(notebooklmDir, { recursive: true });
 mkdirSync(defaultProfileDir, { recursive: true });
+mkdirSync(tempDataFilesDir, { recursive: true });
 writeFileSync(
   join(notebooklmDir, "storage-state.json"),
   JSON.stringify({
@@ -37,11 +42,26 @@ function writeAuthMeta(meta: Record<string, unknown>) {
 
 process.env.HOME = tempHome;
 process.env.USERPROFILE = tempHome;
+process.env.DATABASE_PATH = tempDatabasePath;
+process.env.DATA_FILES_DIR = tempDataFilesDir;
 
 process.on("exit", () => {
   process.env.HOME = originalHome;
   process.env.USERPROFILE = originalUserProfile;
-  rmSync(tempHome, { recursive: true, force: true });
+  if (originalDatabasePath === undefined) delete process.env.DATABASE_PATH;
+  else process.env.DATABASE_PATH = originalDatabasePath;
+  if (originalDataFilesDir === undefined) delete process.env.DATA_FILES_DIR;
+  else process.env.DATA_FILES_DIR = originalDataFilesDir;
+  try {
+    rmSync(tempHome, { recursive: true, force: true });
+  } catch {
+    // SQLite may still hold the temp DB file open during process shutdown on Windows.
+  }
+});
+
+test("route tests resolve the database path inside the temp workspace", async () => {
+  const { resolveDatabasePath } = await import("../../db/path.js");
+  assert.equal(resolveDatabasePath(), tempDatabasePath);
 });
 
 test("listNotebooks normalizes SDK output and GET /api/notebooks returns successResponse", async (t) => {
@@ -689,6 +709,158 @@ test("POST /api/notebooks/:id/report/generate sends enabled source ids for built
   assert.deepEqual(captured[0]?.sourceIds, ["source-a", "source-b"]);
   assert.match(captured[0]?.prompt ?? "", /文档内容/);
   assert.match(captured[0]?.prompt ?? "", /不得凭空捏造/);
+});
+
+test("POST /api/notebooks/:id/report/generate allows builtin quick-read without prior chat history when book sources exist", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const notebookId = crypto.randomUUID();
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: "# 快速读书总结\n\n这是生成的内容。",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-quick-read" }),
+  });
+
+  assert.equal(response.status, 200);
+});
+
+test("POST /api/notebooks/:id/report/generate allows builtin deep-reading without prior chat history when book sources exist", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const notebookId = crypto.randomUUID();
+  const capturedPrompts: string[] = [];
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async (_id: string, prompt: string) => {
+          capturedPrompts.push(prompt);
+          return {
+            text: "# 详细解读\n\n这是生成的内容。",
+            citations: [],
+          };
+        },
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-deep-reading" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(capturedPrompts[0] ?? "", /逐章/);
+  assert.match(capturedPrompts[0] ?? "", /局限/);
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {
@@ -1691,5 +1863,152 @@ test("GET /api/notebooks/:id/messages excludes persisted book finder messages fr
   assert.deepEqual(body.data.map((message) => message.content), [
     "普通手动提问",
     "普通研究回答",
+  ]);
+});
+
+test("POST /api/notebooks/:id/book-finder/search records per-source availability stats", async (t) => {
+  const previousBaseUrl = process.env.OPENAI_BASE_URL;
+  const previousToken = process.env.OPENAI_TOKEN;
+  const previousModel = process.env.OPENAI_MODEL;
+  const originalFetch = globalThis.fetch;
+  const notebookId = crypto.randomUUID();
+
+  process.env.OPENAI_BASE_URL = "https://llm.example.test/v1";
+  process.env.OPENAI_TOKEN = "token";
+  process.env.OPENAI_MODEL = "book-model";
+  resetWorkspaceEnvCacheForTests();
+
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "https://llm.example.test/v1/chat/completions") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { messages?: Array<{ role: string; content: string }> };
+      const prompt = body.messages?.[0]?.content ?? "";
+      const content = prompt.includes("字段固定为 sections")
+        ? JSON.stringify({ sections: [] })
+        : JSON.stringify({ searchText: "management", keywords: ["management"], languagePreference: "en" });
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.startsWith("https://openlibrary.org/search.json")) {
+      return new Response(JSON.stringify({
+        docs: [
+          {
+            key: "/works/OL1W",
+            title: "Management",
+            author_name: ["Peter Drucker"],
+          },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (url === "https://annas-archive.gl/search?q=management") {
+      return new Response("<!doctype html><div>Results 1-50 (0 total)</div>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }
+
+    if (url === "https://www.gutenberg.org/ebooks/search.opds/?query=management") {
+      return new Response('<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>', {
+        status: 200,
+        headers: { "content-type": "application/atom+xml" },
+      });
+    }
+
+    if (url === "https://z-lib.fm/s/management") {
+      return new Response("busy", { status: 503 });
+    }
+
+    throw new Error(`Unexpected URL in route test: ${url}`);
+  };
+
+  const routeModule = await import(`./index.js?book-source-stats=${Date.now()}`);
+  const statsModule = await import("../../db/book-source-stats.js");
+  const dbModule = await import("../../db/index.js");
+  const schemaModule = await import("../../db/schema.js");
+  const notebooks = routeModule.default;
+
+  await dbModule.default.delete(schemaModule.bookSourceStats);
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    resetWorkspaceEnvCacheForTests();
+    await dbModule.default.delete(schemaModule.bookSourceStats);
+
+    if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = previousBaseUrl;
+    if (previousToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = previousToken;
+    if (previousModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = previousModel;
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/book-finder/search`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ query: "management" }),
+  });
+
+  assert.equal(response.status, 200);
+
+  const rows = await statsModule.listBookSourceStats();
+  assert.deepEqual(rows
+    .map((row) => [row.sourceId, row.lastStatus, row.attemptCount] as const)
+    .sort((left, right) => left[0].localeCompare(right[0])), [
+    ["anna-archive", "empty", 1],
+    ["open-library", "success", 1],
+    ["project-gutenberg", "empty", 1],
+    ["z-library", "failure", 1],
+  ]);
+});
+
+test("GET /api/notebooks/:id/chat/messages returns only manual chat messages for book conversations", async () => {
+  const notebookId = crypto.randomUUID();
+  const routeModule = await import("./index.js");
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+  const notebooks = routeModule.default;
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "user",
+    content: "普通手动提问",
+    source: "manual",
+  });
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "普通对话回答",
+    source: "manual",
+  });
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "自动研究回答",
+    source: "research",
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/chat/messages`);
+  assert.equal(response.status, 200);
+
+  const body = await response.json() as {
+    success: boolean;
+    data: Array<{ content: string }>;
+  };
+
+  assert.equal(body.success, true);
+  assert.deepEqual(body.data.map((message) => message.content), [
+    "普通手动提问",
+    "普通对话回答",
   ]);
 });

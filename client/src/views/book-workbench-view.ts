@@ -1,11 +1,9 @@
-import type { ChatMessage, ResearchState } from "@/api/notebooks";
+import type { ChatMessage } from "@/api/notebooks";
 
 interface BookWorkbenchHeaderStateOptions {
   notebookTitle?: string | null;
   navigate?: (path: string) => void;
 }
-
-const DEFAULT_BOOK_RESEARCH_TARGET_COUNT = 20;
 
 export function createNotebookListPath(): string {
   return "/";
@@ -22,18 +20,6 @@ export function createBookWorkbenchHeaderState(options: BookWorkbenchHeaderState
   return {
     title,
     goBack,
-  };
-}
-
-export function createStartingResearchState(previousState: ResearchState): ResearchState {
-  const { lastError: _lastError, ...rest } = previousState;
-
-  return {
-    ...rest,
-    status: "running",
-    step: "starting",
-    completedCount: 0,
-    targetCount: DEFAULT_BOOK_RESEARCH_TARGET_COUNT,
   };
 }
 

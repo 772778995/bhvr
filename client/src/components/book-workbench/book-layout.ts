@@ -10,7 +10,7 @@ export function getBookSourcePanelLayout(hasBook: boolean) {
 
 export function getBookSummaryDetailLayout() {
   return {
-    shellClass: "flex h-full min-h-0 overflow-hidden border border-[#d8cfbe] bg-[#fbf6ed]",
+    shellClass: "flex h-full min-h-0 flex-col overflow-hidden border border-[#d8cfbe] bg-[#fbf6ed]",
     detailPaneClass: "relative min-w-0 min-h-0 flex-1 overflow-hidden",
     detailTransitionName: "folio-note",
   };

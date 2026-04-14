@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import type { ChatMessage, Notebook, ReportEntry, ResearchState, Source } from "@/api/notebooks";
+import type { ChatMessage, Notebook, ReportEntry, SendMessageHistoryItem, Source } from "@/api/notebooks";
 import { notebooksApi } from "@/api/notebooks";
 import { uploadBookSourcePdf } from "@/api/book-source";
 import { generateBookSummary } from "@/api/book-summary";
-import { payloadToState, subscribeResearchStream, type ResearchRuntimeEvent } from "@/api/sse";
 import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWorkbenchShell.vue";
 import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
-import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
 import BookFinderPanel from "@/components/book-workbench/BookFinderPanel.vue";
 import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
+import ChatPanel from "@/components/notebook-workbench/ChatPanel.vue";
 import {
   getBookCenterTabButtonClass,
   getBookCenterTabIndicatorClass,
@@ -19,8 +18,7 @@ import {
   getBookSummaries,
   getBookSummaryEntry,
 } from "@/components/book-workbench/book-center";
-import { canGenerateBookSummary, hasBookResearchHistory } from "@/components/book-workbench/book-view-state";
-import { countResearchAnsweredRounds, type ResearchActionPendingState } from "@/components/book-workbench/book-actions";
+import { canGenerateBookSummary } from "@/components/book-workbench/book-view-state";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
@@ -33,7 +31,6 @@ import {
   createBookFinderDraftPlaceholder,
   createBookWorkbenchHeaderState,
   createOptimisticBookFinderUserMessage,
-  createStartingResearchState,
 } from "./book-workbench-view";
 import { getBookCenterTransition } from "./book-motion";
 
@@ -49,23 +46,18 @@ const sources = ref<Source[]>([]);
 const uploadDialogOpen = ref(false);
 const deletingSourceId = ref<string | null>(null);
 const progressMessage = ref("");
-const activeCenterTab = ref<"history" | "book-finder" | "summary">("history");
+const activeCenterTab = ref<"chat" | "summary" | "book-finder">("chat");
 const reportEntries = ref<ReportEntry[]>([]);
 const selectedSummaryEntryId = ref<string | null>(null);
 const generatingBookSummary = ref(false);
+const generatingDeepReading = ref(false);
+const sending = ref(false);
 const bookFinderSending = ref(false);
 const bookFinderDraft = ref("");
 const messages = ref<ChatMessage[]>([]);
 const bookFinderPersistedMessages = ref<ChatMessage[]>([]);
-const researchActionPending = ref<ResearchActionPendingState>(null);
-const researchState = ref<ResearchState>({
-  status: "idle",
-  step: "idle",
-  completedCount: 0,
-  targetCount: 0,
-});
-
-let sseCleanup: (() => void) | null = null;
+const activeConversationId = ref<string | null>(null);
+const conversationHistory = ref<SendMessageHistoryItem[]>([]);
 
 const notebookId = computed(() => {
   const value = route.params.id;
@@ -91,16 +83,10 @@ const currentBookSummary = computed(() => {
 const centerTabs = computed(() => getBookCenterTabs(bookSummaries.value.length > 0));
 const hasData = computed(() => true);
 const hasBook = computed(() => currentBook.value !== null);
-const hasResearchHistory = computed(() => hasBookResearchHistory({
-  messages: messages.value,
-  researchState: researchState.value,
-}));
-const answeredRounds = computed(() => countResearchAnsweredRounds(messages.value));
 const bookFinderMessages = computed(() => createBookFinderDisplayMessages(bookFinderPersistedMessages.value));
 const canGenerateSummary = computed(() => canGenerateBookSummary({
   generating: generatingBookSummary.value,
-  messages: messages.value,
-  researchState: researchState.value,
+  hasBook: hasBook.value,
 }));
 const busy = computed(() => loaderVisible.value);
 const centerTransition = getBookCenterTransition();
@@ -115,17 +101,14 @@ function resetWorkbenchState() {
   progressMessage.value = "";
   deletingSourceId.value = null;
   generatingBookSummary.value = false;
+  generatingDeepReading.value = false;
+  sending.value = false;
   bookFinderSending.value = false;
   bookFinderDraft.value = "";
-  researchActionPending.value = null;
+  activeConversationId.value = null;
+  conversationHistory.value = [];
   selectedSummaryEntryId.value = null;
-  activeCenterTab.value = "history";
-  researchState.value = {
-    status: "idle",
-    step: "idle",
-    completedCount: 0,
-    targetCount: 0,
-  };
+  activeCenterTab.value = "chat";
 }
 
 async function refreshNotebook() {
@@ -174,9 +157,13 @@ async function refreshMessages() {
   }
 
   try {
-    messages.value = mergeMessages(messages.value, await notebooksApi.getMessages(notebookId.value));
+    messages.value = mergeMessages(messages.value, await notebooksApi.getChatMessages(notebookId.value));
+    conversationHistory.value = messages.value.map((message) => ({
+      role: message.role,
+      message: message.content,
+    }));
   } catch (err) {
-    showToast(err instanceof Error ? err.message : "刷新研究历史失败", "error");
+    showToast(err instanceof Error ? err.message : "刷新对话记录失败", "error");
   }
 }
 
@@ -210,61 +197,11 @@ async function loadWorkbench() {
     await refreshReportEntries();
     await refreshMessages();
     await refreshBookFinderMessages();
-    connectSSE();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "读取书籍来源失败";
   } finally {
     loading.value = false;
   }
-}
-
-function handleResearchEvent(event: ResearchRuntimeEvent) {
-  if (event.type === "heartbeat") {
-    return;
-  }
-
-  if (event.payload) {
-    researchState.value = payloadToState(event.payload);
-
-    if (event.payload.status === "running" || event.payload.status === "completed" || event.payload.status === "failed" || event.payload.status === "stopped") {
-      researchActionPending.value = null;
-    }
-  }
-
-  if (event.type === "progress" || (event.payload?.step === "refreshing_messages")) {
-    void refreshMessages();
-  }
-
-  if (event.type === "completed") {
-    void refreshMessages();
-    void refreshReportEntries();
-  }
-
-  if (event.type === "stopped") {
-    void refreshMessages();
-  }
-
-  if (event.type === "error" && event.payload?.lastError) {
-    showToast(event.payload.lastError, "error");
-  }
-}
-
-function connectSSE() {
-  if (sseCleanup) {
-    sseCleanup();
-    sseCleanup = null;
-  }
-
-  if (!notebookId.value) {
-    return;
-  }
-
-  sseCleanup = subscribeResearchStream(notebookId.value, {
-    onEvent: handleResearchEvent,
-    onError: () => {
-      // EventSource 会自动重连，右侧保持最后状态即可。
-    },
-  });
 }
 
 function openUploadDialog() {
@@ -334,30 +271,36 @@ async function onConfirmDeleteSource() {
   }
 }
 
-async function onToggleResearch() {
-  if (!notebookId.value || !hasBook.value) {
+async function onSendMessage(content: string) {
+  const trimmedContent = content.trim();
+  if (!notebookId.value || !trimmedContent || sending.value) {
     return;
   }
 
-  const previousState = { ...researchState.value };
+  sending.value = true;
 
   try {
-    if (researchState.value.status === "running") {
-      researchActionPending.value = "stopping";
-      await notebooksApi.stopResearch(notebookId.value);
-      researchActionPending.value = null;
-      showToast("自动研究将在当前轮结束后停止。", "info");
-      return;
-    }
+    const result = await notebooksApi.sendMessage(notebookId.value, {
+      content: trimmedContent,
+      ...(activeConversationId.value ? { conversationId: activeConversationId.value } : {}),
+      ...(conversationHistory.value.length > 0
+        ? { conversationHistory: conversationHistory.value }
+        : {}),
+    });
 
-    researchActionPending.value = "starting";
-    researchState.value = createStartingResearchState(researchState.value);
-    await notebooksApi.startResearch(notebookId.value, { numQuestions: 20 });
-    researchActionPending.value = null;
+    activeConversationId.value = result.conversationId;
+    if (result.message) {
+      conversationHistory.value = [
+        ...conversationHistory.value,
+        { role: "user", message: trimmedContent },
+        { role: "assistant", message: result.message.content },
+      ];
+    }
+    await refreshMessages();
   } catch (err) {
-    researchState.value = previousState;
-    researchActionPending.value = null;
-    showToast(err instanceof Error ? err.message : "启动自动研究失败", "error");
+    showToast(err instanceof Error ? err.message : "发送消息失败", "error");
+  } finally {
+    sending.value = false;
   }
 }
 
@@ -370,8 +313,9 @@ async function onGenerateBookSummary() {
   try {
     await generateBookSummary(notebookId.value);
     await refreshReportEntries();
-    if (latestBookSummary.value) {
-      selectedSummaryEntryId.value = latestBookSummary.value.id;
+    const newestSummary = getBookSummaryEntry(reportEntries.value);
+    if (newestSummary) {
+      selectedSummaryEntryId.value = newestSummary.id;
       activeCenterTab.value = "summary";
     }
     showToast("书籍总结已生成。", "info");
@@ -379,6 +323,28 @@ async function onGenerateBookSummary() {
     showToast(err instanceof Error ? err.message : "生成书籍总结失败", "error");
   } finally {
     generatingBookSummary.value = false;
+  }
+}
+
+async function onGenerateDeepReading() {
+  if (!notebookId.value || !canGenerateSummary.value) {
+    return;
+  }
+
+  generatingDeepReading.value = true;
+  try {
+    await generateBookSummary(notebookId.value, "builtin-deep-reading");
+    await refreshReportEntries();
+    const newestSummary = getBookSummaryEntry(reportEntries.value);
+    if (newestSummary) {
+      selectedSummaryEntryId.value = newestSummary.id;
+      activeCenterTab.value = "summary";
+    }
+    showToast("详细解读已生成。", "info");
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "生成详细解读失败", "error");
+  } finally {
+    generatingDeepReading.value = false;
   }
 }
 
@@ -412,6 +378,7 @@ async function onSubmitBookFinder() {
 
 function onSelectSummaryEntry(entryId: string) {
   selectedSummaryEntryId.value = entryId;
+  activeCenterTab.value = "summary";
 }
 
 watch(
@@ -431,22 +398,11 @@ watch(
 watch(
   notebookId,
   () => {
-    if (sseCleanup) {
-      sseCleanup();
-      sseCleanup = null;
-    }
     resetWorkbenchState();
     void loadWorkbench();
   },
   { immediate: true },
 );
-
-onUnmounted(() => {
-  if (sseCleanup) {
-    sseCleanup();
-    sseCleanup = null;
-  }
-});
 </script>
 
 <template>
@@ -500,10 +456,12 @@ onUnmounted(() => {
 
         <div class="relative min-h-0 flex-1 overflow-hidden pt-2">
           <Transition :name="centerTransition.name" mode="out-in">
-            <ResearchHistoryPanel
-              v-if="activeCenterTab === 'history'"
-              key="history"
+            <ChatPanel
+              v-if="activeCenterTab === 'chat'"
+              key="chat"
               :messages="messages"
+              :sending="sending"
+              :on-send="onSendMessage"
             />
             <BookFinderPanel
               v-else-if="activeCenterTab === 'book-finder'"
@@ -521,7 +479,6 @@ onUnmounted(() => {
               :notebook-id="notebookId"
               :entries="bookSummaries"
               :entry="currentBookSummary"
-              :on-select-entry="onSelectSummaryEntry"
             />
           </Transition>
         </div>
@@ -530,15 +487,15 @@ onUnmounted(() => {
 
     <template #right>
       <BookActionsPanel
-        :research-state="researchState"
-        :answered-rounds="answeredRounds"
         :has-book="hasBook"
-        :can-quick-read="hasResearchHistory"
         :busy="busy"
         :quick-read-loading="generatingBookSummary"
-        :research-action-pending="researchActionPending"
-        :on-toggle-research="onToggleResearch"
+        :deep-reading-loading="generatingDeepReading"
+        :history-entries="bookSummaries"
+        :selected-entry-id="currentBookSummary?.id ?? null"
         :on-quick-read="onGenerateBookSummary"
+        :on-deep-reading="onGenerateDeepReading"
+        :on-select-entry="onSelectSummaryEntry"
       />
     </template>
 

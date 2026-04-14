@@ -77,6 +77,7 @@ import { extractPdfText } from "../../pdf/extract-text.js";
 import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finder/service.js";
 
 const notebooks = new Hono();
+const BOOK_REPORT_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading"]);
 
 // ---------------------------------------------------------------------------
 // File storage helpers
@@ -477,7 +478,7 @@ notebooks.get("/:id/messages", async (c) => {
 notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     try {
-      const records = await listChatMessages(id, ["manual", "research"]);
+      const records = await listChatMessages(id, ["manual"]);
       const messages = records.map((r) => ({
         id: r.id,
         role: r.role,
@@ -725,21 +726,36 @@ notebooks.post("/:id/research/stop", async (c) => {
 
 notebooks.post("/:id/report/generate", async (c) => {
   return await withNotebookId(c, async (id) => {
-    const msgCount = await countChatMessages(id);
-    if (msgCount <= 0) {
-      return c.json(
-        {
-          success: false,
-          message: "暂无可用于报告生成的自动研究问答资产",
-          errorCode: "INSUFFICIENT_RESEARCH_ASSETS",
-        },
-        400
-      );
-    }
-
     // Resolve summaryPrompt: use preset if provided, else fall back to built-in default
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
     const rawPresetId = typeof body["presetId"] === "string" ? body["presetId"].trim() : "";
+    const isBookReportPreset = BOOK_REPORT_PRESET_IDS.has(rawPresetId);
+
+    if (!isBookReportPreset) {
+      const msgCount = await countChatMessages(id);
+      if (msgCount <= 0) {
+        return c.json(
+          {
+            success: false,
+            message: "暂无可用于报告生成的自动研究问答资产",
+            errorCode: "INSUFFICIENT_RESEARCH_ASSETS",
+          },
+          400
+        );
+      }
+    } else {
+      const sources = await getNotebookSources(id);
+      if (sources.length <= 0) {
+        return c.json(
+          {
+            success: false,
+            message: "当前书籍尚未上传，无法生成快速读书总结",
+            errorCode: "NO_BOOK_SOURCES",
+          },
+          400
+        );
+      }
+    }
 
     const DEFAULT_SUMMARY_PROMPT =
       `请基于该笔记本中的所有来源和此前对话内容，撰写一份系统性中文研究报告。
@@ -785,7 +801,7 @@ notebooks.post("/:id/report/generate", async (c) => {
 
     return await withNotebookAuthHandling(async () => {
       let sourceIds: string[] | undefined;
-      if (rawPresetId === "builtin-quick-read") {
+      if (isBookReportPreset) {
         const sources = await getNotebookSources(id);
         const enabledMap = await listSourceStateMap(id);
         const mergedSources = mergeSourceStates(sources, enabledMap);
@@ -806,7 +822,11 @@ notebooks.post("/:id/report/generate", async (c) => {
 
       // Extract title from the first heading line, or use a default
       const titleMatch = result.answer.match(/^#+\s+(.+)/m);
-      const fallbackTitle = rawPresetId === "builtin-quick-read" ? "快速读书总结" : "研究报告";
+      const fallbackTitle = rawPresetId === "builtin-quick-read"
+        ? "快速读书总结"
+        : rawPresetId === "builtin-deep-reading"
+          ? "详细解读"
+          : "研究报告";
       const title = titleMatch?.[1]?.trim() ?? fallbackTitle;
 
       let reportFilename: string | undefined;

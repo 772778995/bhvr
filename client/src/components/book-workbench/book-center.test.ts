@@ -10,27 +10,31 @@ import {
 } from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
-test("getBookCenterTabs always keeps summary tab visible", () => {
+test("getBookCenterTabs keeps 对话、书籍总结、快速找书 as the stable middle order", () => {
   assert.deepEqual(getBookCenterTabs(false), [
-    { key: "history", label: "课题研究历史" },
-    { key: "book-finder", label: "快速找书" },
+    { key: "chat", label: "对话" },
     { key: "summary", label: "书籍总结" },
+    { key: "book-finder", label: "快速找书" },
   ]);
   assert.deepEqual(getBookCenterTabs(true), [
-    { key: "history", label: "课题研究历史" },
-    { key: "book-finder", label: "快速找书" },
+    { key: "chat", label: "对话" },
     { key: "summary", label: "书籍总结" },
+    { key: "book-finder", label: "快速找书" },
   ]);
 });
 
-test("getBookCenterTabs keeps 快速找书 as a dedicated middle tab", () => {
+test("getBookCenterTabs puts 书籍总结 before 快速找书", () => {
   const tabs = getBookCenterTabs(true);
 
-  assert.equal(tabs[1]?.key, "book-finder");
-  assert.equal(tabs[1]?.label, "快速找书");
+  assert.equal(tabs[0]?.key, "chat");
+  assert.equal(tabs[0]?.label, "对话");
+  assert.equal(tabs[1]?.key, "summary");
+  assert.equal(tabs[2]?.key, "book-finder");
+  assert.equal(tabs[1]?.label, "书籍总结");
+  assert.equal(tabs[2]?.label, "快速找书");
 });
 
-test("getBookSummaryEntry returns the latest builtin quick-read report", () => {
+test("getBookSummaryEntry returns the latest supported book summary report", () => {
   const entries: ReportEntry[] = [
     {
       id: "entry-1",
@@ -53,9 +57,9 @@ test("getBookSummaryEntry returns the latest builtin quick-read report", () => {
     {
       id: "entry-3",
       entryType: "research_report",
-      title: "最新书籍总结",
+      title: "最新详细解读",
       state: "ready",
-      presetId: "builtin-quick-read",
+      presetId: "builtin-deep-reading",
       createdAt: "2026-04-13T11:00:00.000Z",
       updatedAt: "2026-04-13T11:00:00.000Z",
     },
@@ -65,7 +69,7 @@ test("getBookSummaryEntry returns the latest builtin quick-read report", () => {
   assert.equal(getBookSummaryEntry([]), null);
 });
 
-test("getBookSummaryEntry only returns builtin quick-read reports", () => {
+test("getBookSummaryEntry only returns supported book summary presets", () => {
   const entries: ReportEntry[] = [
     {
       id: "entry-plain-report",
@@ -85,13 +89,22 @@ test("getBookSummaryEntry only returns builtin quick-read reports", () => {
       createdAt: "2026-04-13T10:00:00.000Z",
       updatedAt: "2026-04-13T10:00:00.000Z",
     },
+    {
+      id: "entry-deep-reading",
+      entryType: "research_report",
+      title: "详细解读",
+      state: "ready",
+      presetId: "builtin-deep-reading",
+      createdAt: "2026-04-13T11:00:00.000Z",
+      updatedAt: "2026-04-13T11:00:00.000Z",
+    },
   ];
 
-  assert.equal(getBookSummaryEntry(entries)?.id, "entry-summary");
+  assert.equal(getBookSummaryEntry(entries)?.id, "entry-deep-reading");
   assert.equal(getBookSummaryEntry(entries.slice(0, 1)), null);
 });
 
-test("getBookSummaries returns builtin quick-read reports newest first", () => {
+test("getBookSummaries returns quick-read and deep-reading reports newest first", () => {
   const entries: ReportEntry[] = [
     {
       id: "entry-older",
@@ -114,9 +127,9 @@ test("getBookSummaries returns builtin quick-read reports newest first", () => {
     {
       id: "entry-latest",
       entryType: "research_report",
-      title: "最新总结",
+      title: "最新详细解读",
       state: "ready",
-      presetId: "builtin-quick-read",
+      presetId: "builtin-deep-reading",
       createdAt: "2026-04-13T11:00:00.000Z",
       updatedAt: "2026-04-13T11:00:00.000Z",
     },

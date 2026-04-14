@@ -20,9 +20,9 @@ test("book source panel pins footer actions to bottom in both empty and loaded s
   });
 });
 
-test("book summary detail layout constrains width and overflow inside center column", () => {
+test("book summary detail layout keeps only the reading body in the center column", () => {
   assert.deepEqual(getBookSummaryDetailLayout(), {
-    shellClass: "flex h-full min-h-0 overflow-hidden border border-[#d8cfbe] bg-[#fbf6ed]",
+    shellClass: "flex h-full min-h-0 flex-col overflow-hidden border border-[#d8cfbe] bg-[#fbf6ed]",
     detailPaneClass: "relative min-w-0 min-h-0 flex-1 overflow-hidden",
     detailTransitionName: "folio-note",
   });

@@ -1,18 +1,6 @@
-import type { ChatMessage, ResearchState } from "@/api/notebooks";
-
 interface BookSummaryAvailabilityOptions {
   generating: boolean;
-  messages: ChatMessage[];
-  researchState: ResearchState;
-}
-
-interface BookResearchHistoryOptions {
-  messages: ChatMessage[];
-  researchState: ResearchState;
-}
-
-export function hasBookResearchHistory(options: BookResearchHistoryOptions): boolean {
-  return options.messages.length > 0 || options.researchState.completedCount > 0;
+  hasBook: boolean;
 }
 
 export function canGenerateBookSummary(options: BookSummaryAvailabilityOptions): boolean {
@@ -20,5 +8,5 @@ export function canGenerateBookSummary(options: BookSummaryAvailabilityOptions):
     return false;
   }
 
-  return hasBookResearchHistory(options);
+  return options.hasBook;
 }

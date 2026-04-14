@@ -195,6 +195,23 @@ const BUILTIN_QUICK_READ_PROMPT = `请忽略此前任何对话、提问、回答
 - 语言风格要理性、准确，不要随意、发散
 - 所有内容必须基于笔记本中的文档来源，不得凭空捏造`;
 
+const BUILTIN_DEEP_READING_PROMPT = `请忽略此前任何对话、提问、回答和中间研究结论，只根据本笔记本当前来源中的文档内容，输出一份中文《详细解读》报告。
+
+输出结构：
+1. 这本书试图解决什么问题：作者的核心判断、目标读者、要回应的现实处境
+2. 全书结构拆解：按部分或章节说明推进关系，逐章写出核心观点、承接关系与章节作用
+3. 关键概念、模型、方法：解释定义、适用场景、前提条件、边界与容易误解之处
+4. 重点章节精读：挑最关键的章节展开，分析其论点、论据、案例与结论如何成立
+5. 作者论证链路：结论是如何被建立的，证据来自哪里，还存在哪些论证跳跃或证据空白
+6. 实践价值：对管理、组织、产品、个人行动分别有什么可迁移的启发
+7. 局限与批判阅读：这本书有哪些前提假设、局限性、争议点，以及读者应如何谨慎吸收
+
+要求：
+- 使用 Markdown
+- 比快速读书更充分，但不要空泛堆字
+- 优先写清逻辑关系与论证脉络，不要只做摘要摘抄
+- 所有内容必须基于笔记本中的文档来源，不得凭空捏造`;
+
 await client.execute({
   sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
         VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -208,6 +225,24 @@ await client.execute({
     "生成研究报告",
     "系统性研究报告，含执行摘要、核心发现和结论建议",
     BUILTIN_RESEARCH_REPORT_PROMPT,
+    now,
+    now,
+  ],
+});
+
+await client.execute({
+  sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          prompt = excluded.prompt,
+          updated_at = excluded.updated_at`,
+  args: [
+    "builtin-deep-reading",
+    "详细解读",
+    "逐章展开结构、概念、论证链路与局限的深度解读",
+    BUILTIN_DEEP_READING_PROMPT,
     now,
     now,
   ],

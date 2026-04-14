@@ -31,6 +31,24 @@ test("BookFinderPanel keeps user bubbles right-aligned and content-sized", () =>
   assert.match(getBookFinderUserBubbleClass(), /max-w-\[75%\]/);
 });
 
+test("BookFinderPanel reuses the conversation composer styling from ChatPanel", () => {
+  const source = readFileSync(new URL("./BookFinderPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /getBookFinderTextareaClass\(\)/);
+  assert.match(source, /getBookFinderSubmitButtonClass\(\)/);
+  assert.doesNotMatch(source, /inline-flex h-\[48px\] shrink-0 items-center justify-center border border-\[#bdaa8c\] bg-\[#efe2cd\]/);
+});
+
+test("BookFinderPanel auto-scrolls smoothly and exposes a scroll-to-bottom button", () => {
+  const source = readFileSync(new URL("./BookFinderPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /onMounted/);
+  assert.match(source, /scrollTo\(\{ top: el\.scrollHeight, behavior: "smooth" \}\)/);
+  assert.match(source, /scrollContainerRef/);
+  assert.match(source, /⇩/);
+  assert.match(source, /@click="scrollToBottom"/);
+});
+
 test("getBookFinderAssistantBubbleClass preserves assistant paper bubble styling", () => {
   const className = getBookFinderAssistantBubbleClass();
 

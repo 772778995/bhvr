@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from "vue";
+import { onMounted, ref, nextTick, watch } from "vue";
 import { renderMarkdown } from "@/utils/markdown";
 import type { ChatMessage } from "@/api/notebooks";
+import {
+  getBookChatAssistantBubbleClass,
+  getBookChatPrimaryButtonClass,
+  getBookChatTextareaClass,
+  getBookChatUserBubbleClass,
+} from "@/components/book-workbench/book-chat";
 
 interface Props {
   messages: ChatMessage[];
@@ -53,6 +59,10 @@ function scrollToBottom() {
     }
   });
 }
+
+onMounted(() => {
+  scrollToBottom();
+});
 </script>
 
 <template>
@@ -66,40 +76,37 @@ function scrollToBottom() {
            还没有对话内容，输入问题即可开始。
          </div>
 
-         <TransitionGroup
-           v-else
-           tag="ul"
-           class="space-y-4 pr-1"
-           enter-active-class="transition-all duration-300 ease-out"
-           enter-from-class="opacity-0 translate-y-3"
-           enter-to-class="opacity-100 translate-y-0"
-         >
-           <li v-for="message in messages" :key="message.id">
-             <div
-               class="max-w-[90%] px-3.5 py-2.5 text-base leading-relaxed"
-               :class="
-                 message.role === 'user'
-                   ? 'ml-auto rounded-2xl rounded-tr-sm bg-[#3a2e20] text-[#f5ede0]'
-                   : 'rounded-2xl rounded-tl-sm bg-[#f8f3ea] text-[#2f271f] border border-[#e0d5c0]'
-               "
-             >
-               <!-- User messages: plain text -->
-               <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
-               <!-- Assistant messages: rendered Markdown -->
-               <div
-                 v-else
-                 class="prose-warm"
-                 v-html="renderMarkdown(message.content)"
-               />
-             </div>
-             <p
-               class="mt-1 text-sm text-[#9a8a78]"
-               :class="message.role === 'user' ? 'text-right' : ''"
-             >
-               {{ message.createdAt }}
-             </p>
-           </li>
-         </TransitionGroup>
+          <TransitionGroup
+            v-else
+            tag="ul"
+            class="space-y-4 pr-3"
+            enter-active-class="transition-all duration-300 ease-out"
+            enter-from-class="opacity-0 translate-y-3"
+            enter-to-class="opacity-100 translate-y-0"
+          >
+            <li v-for="message in messages" :key="message.id" class="flex flex-col">
+              <div :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+                <div class="px-3.5 py-2.5 text-base leading-relaxed"
+                  :class="message.role === 'user'
+                    ? getBookChatUserBubbleClass()
+                    : getBookChatAssistantBubbleClass()"
+                >
+                  <p v-if="message.role === 'user'" class="whitespace-pre-wrap">{{ message.content }}</p>
+                  <div
+                    v-else
+                    class="prose-warm"
+                    v-html="renderMarkdown(message.content)"
+                  />
+                </div>
+              </div>
+              <p
+                class="mt-1 text-sm text-[#9a8a78]"
+                :class="message.role === 'user' ? 'text-right' : ''"
+              >
+                {{ message.createdAt }}
+              </p>
+            </li>
+          </TransitionGroup>
        </div>
 
        <!-- Scroll to bottom button — outside scroll container, fixed to wrapper bottom-right -->
@@ -112,23 +119,25 @@ function scrollToBottom() {
        </button>
      </div>
 
-    <div class="pt-3 mt-3 border-t border-[#e0d5c0] flex items-center gap-2 shrink-0">
+    <div class="mt-3 shrink-0 border-t border-[#e0d5c0] pt-3">
+      <div class="flex items-end gap-3">
       <textarea
         v-model="draft"
         rows="2"
         :disabled="sending"
         placeholder="输入消息..."
-        class="flex-1 resize-none rounded-md border border-[#d8cfbe] bg-white px-3 py-2.5 text-base text-[#2f271f] disabled:bg-[#f0e8d8] disabled:text-[#9a8a78] transition-colors duration-100"
+        :class="getBookChatTextareaClass()"
         @keydown="handleKeydown"
       />
       <button
         type="button"
-        class="rounded-md bg-[#3a2e20] px-3 py-2.5 text-base text-[#f5ede0] transition-all duration-100 hover:bg-[#2f271f] active:scale-95 disabled:cursor-not-allowed disabled:bg-[#b8a99a]"
+        :class="getBookChatPrimaryButtonClass()"
         :disabled="sending || !draft.trim()"
         @click="handleSubmit"
       >
         {{ sending ? "发送中..." : "发送" }}
       </button>
+      </div>
     </div>
   </section>
 </template>

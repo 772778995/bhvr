@@ -321,6 +321,10 @@ export const notebooksApi = {
     return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
   },
 
+  getChatMessages(id: string) {
+    return request<ChatMessage[]>(`/api/notebooks/${id}/chat/messages`);
+  },
+
   getBookFinderMessages(id: string) {
     return request<ChatMessage[]>(`/api/notebooks/${id}/book-finder/messages`);
   },
