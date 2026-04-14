@@ -203,7 +203,7 @@ async function confirmDelete(id: string) {
                 :disabled="isReadonly"
                 type="text"
                 maxlength="20"
-                placeholder="例如：快速读书"
+                placeholder="例如：书籍简述"
                 class="w-full rounded border border-[#c4b89a] bg-white px-3 py-2 text-sm text-[#2c2c2c] focus:outline-none focus:ring-2 focus:ring-[#8b7d5a] disabled:bg-[#f5f1ea] disabled:text-[#6b6352]"
               />
             </div>

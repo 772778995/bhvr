@@ -745,11 +745,14 @@ notebooks.post("/:id/report/generate", async (c) => {
       }
     } else {
       const sources = await getNotebookSources(id);
+      const noSourceMessage = rawPresetId === "builtin-deep-reading"
+        ? "当前书籍尚未上传，无法生成详细解读"
+        : "当前书籍尚未上传，无法生成书籍简述";
       if (sources.length <= 0) {
         return c.json(
           {
             success: false,
-            message: "当前书籍尚未上传，无法生成快速读书总结",
+            message: noSourceMessage,
             errorCode: "NO_BOOK_SOURCES",
           },
           400
@@ -823,7 +826,7 @@ notebooks.post("/:id/report/generate", async (c) => {
       // Extract title from the first heading line, or use a default
       const titleMatch = result.answer.match(/^#+\s+(.+)/m);
       const fallbackTitle = rawPresetId === "builtin-quick-read"
-        ? "快速读书总结"
+        ? "书籍简述"
         : rawPresetId === "builtin-deep-reading"
           ? "详细解读"
           : "研究报告";
@@ -849,9 +852,15 @@ notebooks.post("/:id/report/generate", async (c) => {
         presetId: rawPresetId || null,
       });
 
+      const successMessage = rawPresetId === "builtin-quick-read"
+        ? "书籍简述已生成"
+        : rawPresetId === "builtin-deep-reading"
+          ? "详细解读已生成"
+          : "研究报告已生成";
+
       return c.json(
         successResponse({
-          message: "研究报告已生成",
+          message: successMessage,
         })
       );
     });

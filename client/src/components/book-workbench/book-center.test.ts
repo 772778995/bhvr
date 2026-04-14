@@ -83,7 +83,7 @@ test("getBookSummaryEntry only returns supported book summary presets", () => {
     {
       id: "entry-summary",
       entryType: "research_report",
-      title: "快速读书总结",
+      title: "书籍简述",
       state: "ready",
       presetId: "builtin-quick-read",
       createdAt: "2026-04-13T10:00:00.000Z",

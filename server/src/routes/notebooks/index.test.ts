@@ -476,7 +476,7 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
     get() {
       return {
         chat: async () => ({
-          text: "# 快速读书总结\n\n这是生成的内容。",
+          text: "这是生成的内容。",
           citations: [],
         }),
       };
@@ -519,6 +519,10 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
   });
 
   assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍简述已生成" },
+  });
 
   const entriesResponse = await notebooks.request(`http://localhost/${notebookId}/entries`);
   assert.equal(entriesResponse.status, 200);
@@ -527,7 +531,7 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
     data: Array<{ id: string; presetId?: string | null; entryType: string; title: string | null }>;
   };
   assert.equal(entriesPayload.success, true);
-  const summaryEntry = entriesPayload.data.find((entry) => entry.title === "快速读书总结");
+  const summaryEntry = entriesPayload.data.find((entry) => entry.title === "书籍简述");
   assert.ok(summaryEntry);
   assert.equal(summaryEntry?.entryType, "research_report");
   assert.equal(summaryEntry?.presetId, "builtin-quick-read");
@@ -622,6 +626,10 @@ test("POST /api/notebooks/:id/report/generate allows quick-read generation while
   });
 
   assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍简述已生成" },
+  });
 });
 
 test("POST /api/notebooks/:id/report/generate sends enabled source ids for builtin quick-read isolation", async (t) => {
@@ -707,8 +715,9 @@ test("POST /api/notebooks/:id/report/generate sends enabled source ids for built
 
   assert.equal(response.status, 200);
   assert.deepEqual(captured[0]?.sourceIds, ["source-a", "source-b"]);
-  assert.match(captured[0]?.prompt ?? "", /文档内容/);
-  assert.match(captured[0]?.prompt ?? "", /不得凭空捏造/);
+  assert.match(captured[0]?.prompt ?? "", /300字以内/);
+  assert.match(captured[0]?.prompt ?? "", /关键案例/);
+  assert.match(captured[0]?.prompt ?? "", /适用人群/);
 });
 
 test("POST /api/notebooks/:id/report/generate allows builtin quick-read without prior chat history when book sources exist", async (t) => {
@@ -749,7 +758,7 @@ test("POST /api/notebooks/:id/report/generate allows builtin quick-read without 
     get() {
       return {
         chat: async () => ({
-          text: "# 快速读书总结\n\n这是生成的内容。",
+          text: "# 书籍简述\n\n这是生成的内容。",
           citations: [],
         }),
       };
@@ -782,6 +791,10 @@ test("POST /api/notebooks/:id/report/generate allows builtin quick-read without 
   });
 
   assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍简述已生成" },
+  });
 });
 
 test("POST /api/notebooks/:id/report/generate allows builtin deep-reading without prior chat history when book sources exist", async (t) => {
@@ -859,8 +872,85 @@ test("POST /api/notebooks/:id/report/generate allows builtin deep-reading withou
   });
 
   assert.equal(response.status, 200);
-  assert.match(capturedPrompts[0] ?? "", /逐章/);
-  assert.match(capturedPrompts[0] ?? "", /局限/);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "详细解读已生成" },
+  });
+  assert.match(capturedPrompts[0] ?? "", /5000字以内/);
+  assert.match(capturedPrompts[0] ?? "", /延展阅读/);
+  assert.match(capturedPrompts[0] ?? "", /企业/);
+});
+
+test("POST /api/notebooks/:id/report/generate returns preset-specific no-book messages", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const notebookId = crypto.randomUUID();
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [],
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    await disposeClient();
+  });
+
+  const quickReadResponse = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-quick-read" }),
+  });
+  assert.equal(quickReadResponse.status, 400);
+  assert.deepEqual(await quickReadResponse.json(), {
+    success: false,
+    message: "当前书籍尚未上传，无法生成书籍简述",
+    errorCode: "NO_BOOK_SOURCES",
+  });
+
+  const deepReadingResponse = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-deep-reading" }),
+  });
+  assert.equal(deepReadingResponse.status, 400);
+  assert.deepEqual(await deepReadingResponse.json(), {
+    success: false,
+    message: "当前书籍尚未上传，无法生成详细解读",
+    errorCode: "NO_BOOK_SOURCES",
+  });
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {

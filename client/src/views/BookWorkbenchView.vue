@@ -318,9 +318,9 @@ async function onGenerateBookSummary() {
       selectedSummaryEntryId.value = newestSummary.id;
       activeCenterTab.value = "summary";
     }
-    showToast("书籍总结已生成。", "info");
+    showToast("书籍简述已生成。", "info");
   } catch (err) {
-    showToast(err instanceof Error ? err.message : "生成书籍总结失败", "error");
+    showToast(err instanceof Error ? err.message : "生成书籍简述失败", "error");
   } finally {
     generatingBookSummary.value = false;
   }

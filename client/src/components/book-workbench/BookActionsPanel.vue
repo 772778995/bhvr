@@ -70,7 +70,7 @@ function formatTime(raw: string): string {
           阅读操作
         </div>
         <p class="mt-3 text-base leading-7 text-[#5d4f3d]">
-          直接基于当前上传书籍生成不同密度的阅读结果，不再依赖额外问答历史。
+          直接基于当前上传书籍生成书籍简述或详细解读，不再依赖额外问答历史。
         </p>
         <button
           type="button"
@@ -91,7 +91,7 @@ function formatTime(raw: string): string {
         </button>
 
         <p v-if="!hasBook" class="mt-3 text-sm leading-6 text-[#8a7864]">
-          先在左侧上传一本书，再开始快速读书。
+          先在左侧上传一本书，再生成书籍简述或详细解读。
         </p>
       </section>
     </div>

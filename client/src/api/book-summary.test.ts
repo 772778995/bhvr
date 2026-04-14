@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { generateBookSummary } from "./book-summary.js";
 
-test("generateBookSummary requests report generation with the builtin quick-read preset", async () => {
+test("generateBookSummary requests report generation with the builtin book-brief preset", async () => {
   const originalFetch = globalThis.fetch;
   let capturedBody: unknown = null;
   let capturedUrl = "";
@@ -12,7 +12,7 @@ test("generateBookSummary requests report generation with the builtin quick-read
     capturedUrl = String(input);
     capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
 
-    return new Response(JSON.stringify({ success: true, data: { message: "书籍总结已生成" } }), {
+    return new Response(JSON.stringify({ success: true, data: { message: "书籍简述已生成" } }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -23,7 +23,7 @@ test("generateBookSummary requests report generation with the builtin quick-read
 
     assert.equal(capturedUrl, "/api/notebooks/nb-book-1/report/generate");
     assert.deepEqual(capturedBody, { presetId: "builtin-quick-read" });
-    assert.equal(result.message, "书籍总结已生成");
+    assert.equal(result.message, "书籍简述已生成");
   } finally {
     globalThis.fetch = originalFetch;
   }

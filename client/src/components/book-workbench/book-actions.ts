@@ -5,5 +5,5 @@ export function getBookActionLabel(kind: BookActionKind, loading: boolean): stri
     return loading ? "解读中..." : "详细解读";
   }
 
-  return loading ? "整理中..." : "快速读书";
+  return loading ? "整理中..." : "书籍简述";
 }
