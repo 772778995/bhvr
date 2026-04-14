@@ -56,6 +56,20 @@ await client.executeMultiple(`
   CREATE UNIQUE INDEX IF NOT EXISTS notebook_source_unique
   ON notebook_source_states (notebook_id, source_id);
 
+  CREATE TABLE IF NOT EXISTS book_source_stats (
+    source_id TEXT PRIMARY KEY NOT NULL,
+    source_label TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    empty_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    last_status TEXT NOT NULL DEFAULT 'failure',
+    last_error TEXT,
+    last_latency_ms INTEGER,
+    last_success_at INTEGER,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS chat_messages (
     id TEXT PRIMARY KEY NOT NULL,
     notebook_id TEXT NOT NULL,

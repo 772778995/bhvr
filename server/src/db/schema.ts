@@ -197,6 +197,22 @@ export const notebookSourceStates = sqliteTable(
   })
 );
 
+export const bookSourceStats = sqliteTable("book_source_stats", {
+  sourceId: text("source_id").primaryKey(),
+  sourceLabel: text("source_label").notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  successCount: integer("success_count").notNull().default(0),
+  emptyCount: integer("empty_count").notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  lastStatus: text("last_status").notNull().default("failure"),
+  lastError: text("last_error"),
+  lastLatencyMs: integer("last_latency_ms"),
+  lastSuccessAt: integer("last_success_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const chatMessages = sqliteTable(
   "chat_messages",
   {

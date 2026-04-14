@@ -31,11 +31,12 @@ test("importing db/index initializes required tables for a fresh database", asyn
       SELECT name
       FROM sqlite_master
       WHERE type = 'table'
-        AND name IN ('research_tasks', 'questions', 'research_reports', 'notebook_source_states')
+        AND name IN ('book_source_stats', 'research_tasks', 'questions', 'research_reports', 'notebook_source_states')
       ORDER BY name
     `);
 
     assert.deepEqual(response.rows.map((row) => row.name), [
+      "book_source_stats",
       "notebook_source_states",
       "questions",
       "research_reports",

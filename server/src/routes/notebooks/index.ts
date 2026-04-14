@@ -72,6 +72,7 @@ import {
 } from "../../source-state/service.js";
 import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
 import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
+import { recordBookSourceStat } from "../../db/book-source-stats.js";
 import { extractPdfText } from "../../pdf/extract-text.js";
 import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finder/service.js";
 
@@ -1387,7 +1388,9 @@ notebooks.post("/:id/book-finder/search", async (c) => {
     }
 
     try {
-      const result = await findBooksForQuery(query);
+      const result = await findBooksForQuery(query, process.env, fetch, {
+        recordSourceStat: recordBookSourceStat,
+      });
 
       try {
         await insertChatMessage({
