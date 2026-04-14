@@ -142,7 +142,7 @@ test("createBookFinderDisplayMessages filters out non-book-finder history messag
     {
       id: "assistant-book-finder-1",
       role: "assistant",
-      content: "# 快速找书结果\n\n检索主题：组织管理",
+      content: "1. **《组织的逻辑》**\n- 链接：[豆瓣](https://book.douban.com/subject/1/)\n- 【豆瓣】评分：8.6/10（245 条评价）",
       createdAt: "2026-04-13T10:01:01.000Z",
       status: "done",
     },
@@ -169,7 +169,7 @@ test("createBookFinderDisplayMessages keeps persisted book-finder user messages 
     {
       id: "assistant-book-finder-2",
       role: "assistant",
-      content: "## Agent 入门与经典\n\n1. **《Designing Agents》**\n- 微信读书：暂无数据",
+      content: "1. **《Designing Agents》**\n- 链接：[Open Library](https://openlibrary.org/works/OL1W)\n- 评分：暂无公开数据",
       createdAt: "2026-04-14T09:01:01.000Z",
       status: "done",
     },
@@ -181,6 +181,25 @@ test("createBookFinderDisplayMessages keeps persisted book-finder user messages 
     "book-finder-welcome",
     "db-user-message-1",
     "assistant-book-finder-2",
+  ]);
+});
+
+test("createBookFinderDisplayMessages keeps persisted quick-find user messages even when search failed", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "db-user-message-failed-search",
+      role: "user",
+      content: "冷门主题",
+      createdAt: "2026-04-14T09:01:00.000Z",
+      status: "done",
+    },
+  ];
+
+  const displayed = createBookFinderDisplayMessages(messages);
+
+  assert.deepEqual(displayed.map((message) => message.id), [
+    "book-finder-welcome",
+    "db-user-message-failed-search",
   ]);
 });
 
@@ -196,7 +215,7 @@ test("createBookFinderDisplayMessages keeps persisted assistant results after sy
     {
       id: "assistant-book-finder-3",
       role: "assistant",
-      content: "## 组织学习经典\n\n1. **《第五项修炼》**\n- 线上平台与评分：豆瓣 评分 8.6/10\n- 微信读书：https://weread.qq.com/example",
+      content: "1. **《第五项修炼》**\n- 链接：[豆瓣](https://book.douban.com/subject/10554308/) | [微信读书](https://weread.qq.com/example)\n- 【豆瓣】评分：8.6/10\n- 【微信读书】推荐值：78.0%（664 人）",
       createdAt: "2026-04-14T09:02:01.000Z",
       status: "done",
     },
@@ -208,6 +227,33 @@ test("createBookFinderDisplayMessages keeps persisted assistant results after sy
     "book-finder-welcome",
     "db-user-message-2",
     "assistant-book-finder-3",
+  ]);
+});
+
+test("createBookFinderDisplayMessages recognizes flat assistant results by link and rating lines", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "db-user-message-3",
+      role: "user",
+      content: "组织学习",
+      createdAt: "2026-04-14T09:03:00.000Z",
+      status: "done",
+    },
+    {
+      id: "assistant-book-finder-4",
+      role: "assistant",
+      content: "1. **《学习型组织》**\n- 链接：[豆瓣](https://book.douban.com/subject/2/)\n- 【豆瓣】评分：8.4/10（320 条评价）",
+      createdAt: "2026-04-14T09:03:01.000Z",
+      status: "done",
+    },
+  ];
+
+  const displayed = createBookFinderDisplayMessages(messages);
+
+  assert.deepEqual(displayed.map((message) => message.id), [
+    "book-finder-welcome",
+    "db-user-message-3",
+    "assistant-book-finder-4",
   ]);
 });
 

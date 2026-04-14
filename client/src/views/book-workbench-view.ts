@@ -55,6 +55,8 @@ export function createBookFinderDisplayMessages(messages: ChatMessage[]): ChatMe
   };
 
   const filtered: ChatMessage[] = [];
+  const hasAssistantResult = messages.some((message) => message.role === "assistant" && isBookFinderAssistantMessage(message.content));
+  const userMessageCount = messages.filter((message) => message.role === "user").length;
 
   for (const [index, message] of messages.entries()) {
     if (message.role === "assistant" && isBookFinderAssistantMessage(message.content)) {
@@ -66,7 +68,7 @@ export function createBookFinderDisplayMessages(messages: ChatMessage[]): ChatMe
       continue;
     }
 
-    if (message.id.startsWith("book-finder-user:")) {
+    if (message.role === "user" && (!hasAssistantResult || userMessageCount === 1)) {
       filtered.push(message);
     }
   }
@@ -76,9 +78,14 @@ export function createBookFinderDisplayMessages(messages: ChatMessage[]): ChatMe
 
 function isBookFinderAssistantMessage(content: string): boolean {
   const normalized = content.trim();
-  return normalized.startsWith("# 快速找书结果")
+  return /(^|\n)\d+\. \*\*《.+》\*\*/u.test(normalized)
+    || normalized.startsWith("# 快速找书结果")
     || normalized.includes("- 线上平台与评分：")
     || normalized.includes("- 微信读书：")
+    || normalized.includes("- 链接：")
+    || normalized.includes("- 【豆瓣】评分：")
+    || normalized.includes("- 【微信读书】推荐值：")
+    || normalized.includes("- 评分：暂无公开数据")
     || normalized.includes("当前没有从公开书目数据源检索到足够可靠的结果");
 }
 

@@ -1675,7 +1675,7 @@ test("GET /api/notebooks/:id/messages excludes persisted book finder messages fr
     id: crypto.randomUUID(),
     notebookId,
     role: "assistant",
-    content: "# 快速找书结果\n\n检索主题：组织管理",
+    content: "1. **《组织管理的实践》**\n- 链接：[豆瓣](https://book.douban.com/subject/1/)\n- 【豆瓣】评分：8.6/10（245 条评价）",
     source: "book_finder",
   });
 

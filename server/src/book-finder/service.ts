@@ -3,10 +3,6 @@ import { resolve } from "node:path";
 
 const REQUIRED_ENV_NAMES = ["OPENAI_BASE_URL", "OPENAI_TOKEN", "OPENAI_MODEL"] as const;
 
-const FOUNDATION_KEYWORDS = ["入门", "基础", "导论", "原理", "经典", "教程", "handbook", "introduction", "fundamentals", "beginner", "classic"];
-const PRACTICE_KEYWORDS = ["企业", "管理", "商业", "案例", "实践", "组织", "领导", "运营", "strategy", "business", "leadership", "practice", "case"];
-const LOGIC_KEYWORDS = ["底层", "逻辑", "心理", "思维", "哲学", "历史", "社会", "系统", "logic", "psychology", "philosophy", "systems", "history"];
-
 let loadedEnvTargets = new WeakSet<NodeJS.ProcessEnv>();
 const DEFAULT_METADATA_TIMEOUT_MS = 3000;
 
@@ -26,29 +22,9 @@ export interface BookCandidate {
   infoLink: string | null;
   previewLink: string | null;
   wereadLink: string | null;
+  wereadRecommendationScore: number | null;
+  wereadRecommendationCount: number | null;
   sourceLabel: string;
-}
-
-export interface BookSelection {
-  foundationIds: string[];
-  practiceIds: string[];
-  logicIds: string[];
-  topRatedIds: string[];
-}
-
-export interface DynamicBookSectionSelection {
-  title: string;
-  bookIds: string[];
-}
-
-export interface BookFinderSection {
-  title: string;
-  books: BookCandidate[];
-}
-
-export interface BookFinderSections {
-  sections: BookFinderSection[];
-  topRated: BookCandidate[];
 }
 
 interface BookFinderIntent {
@@ -77,9 +53,46 @@ interface OpenAIChatCompletionResponse {
   }>;
 }
 
+interface DoubanSubjectSuggestItem {
+  id?: string | number;
+  type?: string;
+  title?: string;
+  url?: string;
+  author_name?: string;
+  year?: string;
+}
+
+interface DoubanSubjectSearchItem {
+  id?: number;
+  title?: string;
+  url?: string;
+  abstract?: string;
+  rating?: {
+    value?: number;
+    count?: number;
+  };
+}
+
+interface WeReadSearchBookInfo {
+  bookId?: string;
+  title?: string;
+  author?: string;
+  publisher?: string;
+  intro?: string;
+  newRating?: number;
+  newRatingCount?: number;
+}
+
+interface WeReadHtmlEntry {
+  href: string;
+  title: string;
+  author: string;
+  description: string;
+}
+
 export interface BookFinderResult {
   normalizedQuery: string;
-  sections: BookFinderSections;
+  results: BookCandidate[];
   markdown: string;
 }
 
@@ -88,42 +101,16 @@ export function listMissingBookFinderConfig(env: NodeJS.ProcessEnv = process.env
   return REQUIRED_ENV_NAMES.filter((name) => !env[name]?.trim());
 }
 
-export function sanitizeBookSelection(selection: BookSelection, candidates: BookCandidate[]): BookSelection {
-  const allowedIds = new Set(candidates.map((candidate) => candidate.id));
-  return {
-    foundationIds: sanitizeIdList(selection.foundationIds, allowedIds),
-    practiceIds: sanitizeIdList(selection.practiceIds, allowedIds),
-    logicIds: sanitizeIdList(selection.logicIds, allowedIds),
-    topRatedIds: sanitizeIdList(selection.topRatedIds, allowedIds),
-  };
-}
+export function renderBookFinderMarkdown(query: string, results: BookCandidate[]): string {
+  void query;
 
-export function sanitizeDynamicBookSelection(
-  sections: Array<DynamicBookSectionSelection | null | undefined>,
-  candidates: BookCandidate[],
-): DynamicBookSectionSelection[] {
-  const allowedIds = new Set(candidates.map((candidate) => candidate.id));
-
-  return sections
-    .map((section) => {
-      const title = section?.title?.trim() ?? "";
-      const bookIds = sanitizeIdList(section?.bookIds ?? [], allowedIds);
-      return title && bookIds.length > 0 ? { title, bookIds } : null;
+  return results
+    .flatMap((book, index) => {
+      const block = renderBookBlock(index + 1, book);
+      return index < results.length - 1 ? [...block, "---", ""] : block;
     })
-    .filter((section): section is DynamicBookSectionSelection => section !== null)
-    .slice(0, 3);
-}
-
-export function renderBookFinderMarkdown(query: string, sections: BookFinderSections): string {
-  const parts = [
-    ...sections.sections.flatMap((section, index) => index < sections.sections.length - 1
-      ? [renderSection(section.title, section.books), "", ""]
-      : [renderSection(section.title, section.books)]),
-    ...(sections.sections.length > 0 ? [""] : []),
-    renderTopRatedSection(sections.topRated),
-  ];
-
-  return parts.join("\n").trim();
+    .join("\n")
+    .trim();
 }
 
 export async function findBooksForQuery(
@@ -134,48 +121,32 @@ export async function findBooksForQuery(
   const config = readBookFinderConfig(env);
   const intent = await parseIntent(query, config, fetchImpl).catch(() => buildFallbackIntent(query));
   const searchText = normalizeSearchText(intent.searchText, intent.keywords, query);
+  const preferredLanguage = decideLanguagePreference(searchText, intent.languagePreference);
+  const searchedCandidates = preferredLanguage === "zh"
+    ? await searchChineseBooks(searchText, fetchImpl)
+    : await searchOpenLibraryWithFallback(searchText, fetchImpl);
   const candidates = await enrichCandidatesWithMetadata(
-    dedupeCandidates(await searchOpenLibraryWithFallback(searchText, fetchImpl)).slice(0, 30),
+    dedupeCandidates(searchedCandidates).slice(0, 30),
     env,
     fetchImpl,
   );
 
   if (candidates.length === 0) {
-    const emptySections: BookFinderSections = {
-      sections: [],
-      topRated: [],
-    };
-
     return {
       normalizedQuery: searchText,
-      sections: emptySections,
+      results: [],
       markdown: [
         "当前没有从公开书目数据源检索到足够可靠的结果。建议缩短关键词、改用主题词，或稍后重试。",
       ].join("\n"),
     };
   }
 
-  const modelSections = await classifyCandidates(searchText, candidates, config, fetchImpl).catch(() => null);
-  const sanitizedModelSections = modelSections ? sanitizeDynamicBookSelection(modelSections, candidates) : [];
-  const sectionSelections = sanitizedModelSections.length > 0
-    ? sanitizedModelSections
-    : buildHeuristicSections(searchText, candidates);
-  const filledSections = fillDynamicSectionGaps(sectionSelections, candidates);
-  const topRatedIds = buildTopRatedIds(candidates);
-  const candidateById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-
-  const sections: BookFinderSections = {
-    sections: filledSections.map((section) => ({
-      title: section.title,
-      books: mapIdsToCandidates(section.bookIds, candidateById),
-    })),
-    topRated: mapIdsToCandidates(topRatedIds, candidateById),
-  };
+  const results = candidates.slice(0, 10);
 
   return {
     normalizedQuery: searchText,
-    sections,
-    markdown: renderBookFinderMarkdown(searchText, sections),
+    results,
+    markdown: renderBookFinderMarkdown(searchText, results),
   };
 }
 
@@ -219,7 +190,7 @@ function applyEnvFile(filePath: string, env: NodeJS.ProcessEnv): void {
       continue;
     }
 
-    const [, key, rawValue] = match;
+    const [, key = "", rawValue = ""] = match;
     if (env[key] !== undefined) {
       continue;
     }
@@ -386,51 +357,6 @@ function normalizeSearchTokens(tokens: string[]): string[] {
   }
 
   return normalized.slice(0, 6);
-}
-
-async function classifyCandidates(
-  query: string,
-  candidates: BookCandidate[],
-  config: OpenAICompatibleConfig,
-  fetchImpl: typeof fetch,
-): Promise<DynamicBookSectionSelection[]> {
-  const payload = candidates.map((candidate) => ({
-    id: candidate.id,
-    title: candidate.title,
-    authors: candidate.authors,
-    publisher: candidate.publisher,
-    year: candidate.publishedYear,
-    categories: candidate.categories,
-    description: truncateText(candidate.description, 100),
-  }));
-
-  const responseText = await requestModelJson(
-    config,
-    [
-      {
-        role: "system",
-        content: [
-          "你是图书候选分类器。只能使用提供的候选书 ID，不允许创造新 ID。",
-          "请把候选书整理为 2 到 3 个分类。",
-          '输出必须是 JSON 对象，字段固定为 sections。',
-          'sections 中每个元素都必须包含 title 和 bookIds。',
-          "title 必须是简洁分类名，不超过 12 个字。",
-          "bookIds 只能使用候选书 ID，每个分类最多返回 5 个 ID。",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: `用户查询：${query}\n候选书目：${JSON.stringify(payload)}`,
-      },
-    ],
-    fetchImpl,
-  );
-
-  const parsed = parseJsonObject<Partial<{ sections: Array<Partial<DynamicBookSectionSelection>> }>>(responseText);
-  return (parsed.sections ?? []).map((section) => ({
-    title: typeof section.title === "string" ? section.title : "",
-    bookIds: normalizeStringArray(section.bookIds),
-  }));
 }
 
 async function requestModelJson(
@@ -608,6 +534,8 @@ function normalizeOpenLibraryCandidate(doc: {
     infoLink: `https://openlibrary.org${doc.key}`,
     previewLink: null,
     wereadLink: null,
+    wereadRecommendationScore: null,
+    wereadRecommendationCount: null,
     sourceLabel: "Open Library",
   };
 }
@@ -618,13 +546,18 @@ async function enrichCandidatesWithMetadata(
   fetchImpl: typeof fetch,
 ): Promise<BookCandidate[]> {
   const config = readBookMetadataConfig(env);
-  if (!config) {
-    return candidates;
-  }
 
   return Promise.all(candidates.map(async (candidate) => {
     try {
-      return await enrichCandidateWithMetadata(candidate, config, fetchImpl);
+      const metadataEnriched = config
+        ? await enrichCandidateWithMetadata(candidate, config, fetchImpl)
+        : candidate;
+
+      if (metadataEnriched.sourceLabel !== "豆瓣") {
+        return metadataEnriched;
+      }
+
+      return await enrichCandidateWithWeReadSearch(metadataEnriched, fetchImpl);
     } catch {
       return candidate;
     }
@@ -659,12 +592,313 @@ async function enrichCandidateWithMetadata(
       averageRating: typeof metadata.douban_rating === "number" ? metadata.douban_rating : candidate.averageRating,
       ratingSourceLabel: typeof metadata.douban_rating === "number" ? "豆瓣" : candidate.ratingSourceLabel,
       ratingScale: typeof metadata.douban_rating === "number" ? 10 : candidate.ratingScale,
-      infoLink: wereadLink ?? candidate.infoLink,
+      infoLink: candidate.infoLink,
       wereadLink,
+      wereadRecommendationScore: candidate.wereadRecommendationScore,
+      wereadRecommendationCount: candidate.wereadRecommendationCount,
     };
   }
 
   return candidate;
+}
+
+function decideLanguagePreference(searchText: string, preference: BookFinderIntent["languagePreference"]): "zh" | "en" {
+  if (preference === "zh" || preference === "en") {
+    return preference;
+  }
+
+  if (/[\u4E00-\u9FFF]/u.test(searchText)) {
+    return "zh";
+  }
+
+  return /[A-Za-z]/u.test(searchText) ? "en" : "zh";
+}
+
+async function searchChineseBooks(query: string, fetchImpl: typeof fetch): Promise<BookCandidate[]> {
+  const [suggested, searched] = await Promise.all([
+    searchDoubanSuggest(query, fetchImpl).catch(() => []),
+    searchDoubanSubjectSearch(query, fetchImpl).catch(() => []),
+  ]);
+
+  const candidates = dedupeCandidates([...suggested, ...searched]);
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  return dedupeCandidates(await hydrateDoubanCandidates(candidates, fetchImpl));
+}
+
+async function searchDoubanSuggest(query: string, fetchImpl: typeof fetch): Promise<BookCandidate[]> {
+  const url = new URL("https://book.douban.com/j/subject_suggest");
+  url.searchParams.set("q", query);
+
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`Douban suggest request failed: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json() as DoubanSubjectSuggestItem[];
+  return payload
+    .map((item) => normalizeDoubanSuggestCandidate(item))
+    .filter((candidate): candidate is BookCandidate => candidate !== null);
+}
+
+async function searchDoubanSubjectSearch(query: string, fetchImpl: typeof fetch): Promise<BookCandidate[]> {
+  const url = new URL("https://search.douban.com/book/subject_search");
+  url.searchParams.set("search_text", query);
+
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`Douban subject search failed: HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const dataText = html.match(/window\.__DATA__\s*=\s*(\{[\s\S]*?\})\s*;/u)?.[1];
+  if (!dataText) {
+    return [];
+  }
+
+  const parsed = parseJsonObject<{ items?: DoubanSubjectSearchItem[] }>(dataText);
+  return (parsed.items ?? [])
+    .map((item) => normalizeDoubanSearchCandidate(item))
+    .filter((candidate): candidate is BookCandidate => candidate !== null);
+}
+
+function normalizeDoubanSuggestCandidate(item: DoubanSubjectSuggestItem): BookCandidate | null {
+  const subjectId = normalizeDoubanSubjectId(item.id);
+  const title = item.title?.trim();
+  if (!subjectId || !title || item.type !== "b") {
+    return null;
+  }
+
+  return buildDoubanCandidate({
+    subjectId,
+    title,
+    authors: splitAuthors(item.author_name),
+    publishedYear: item.year?.trim() || "未提供",
+    infoLink: normalizeDoubanSubjectUrl(item.url, subjectId),
+  });
+}
+
+function normalizeDoubanSearchCandidate(item: DoubanSubjectSearchItem): BookCandidate | null {
+  const subjectId = normalizeDoubanSubjectId(item.id);
+  const title = item.title?.trim();
+  if (!subjectId || !title) {
+    return null;
+  }
+
+  const abstractParts = splitDoubanAbstract(item.abstract);
+  return buildDoubanCandidate({
+    subjectId,
+    title: title.replace(/\s*:\s*/gu, "："),
+    authors: abstractParts.authors,
+    publisher: abstractParts.publisher,
+    publishedYear: abstractParts.publishedYear,
+    averageRating: normalizeDoubanRating(item.rating?.value),
+    ratingsCount: normalizePositiveInteger(item.rating?.count),
+    infoLink: normalizeDoubanSubjectUrl(item.url, subjectId),
+  });
+}
+
+function buildDoubanCandidate(options: {
+  subjectId: string;
+  title: string;
+  authors?: string[];
+  publisher?: string;
+  publishedYear?: string;
+  description?: string;
+  averageRating?: number | null;
+  ratingsCount?: number | null;
+  infoLink?: string | null;
+  isbns?: string[];
+}): BookCandidate {
+  return {
+    id: `douban:${options.subjectId}`,
+    title: options.title,
+    authors: options.authors ?? [],
+    publisher: options.publisher?.trim() || "未提供",
+    publishedYear: options.publishedYear?.trim() || "未提供",
+    description: normalizeSummary(options.description ?? "豆瓣搜索结果未提供摘要。"),
+    categories: [],
+    isbns: options.isbns ?? [],
+    averageRating: options.averageRating ?? null,
+    ratingsCount: options.ratingsCount ?? null,
+    ratingSourceLabel: options.averageRating !== null && options.averageRating !== undefined ? "豆瓣" : null,
+    ratingScale: options.averageRating !== null && options.averageRating !== undefined ? 10 : null,
+    infoLink: options.infoLink ?? `https://book.douban.com/subject/${options.subjectId}/`,
+    previewLink: null,
+    wereadLink: null,
+    wereadRecommendationScore: null,
+    wereadRecommendationCount: null,
+    sourceLabel: "豆瓣",
+  };
+}
+
+function normalizeDoubanSubjectId(value: string | number | undefined): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return /^\d+$/u.test(trimmed) ? trimmed : null;
+}
+
+function normalizeDoubanSubjectUrl(value: string | undefined, subjectId: string): string {
+  const trimmed = value?.trim();
+  return trimmed || `https://book.douban.com/subject/${subjectId}/`;
+}
+
+function splitAuthors(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/[\/／]|\s{2,}|、|,/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function splitDoubanAbstract(value: string | undefined): {
+  authors: string[];
+  publisher: string;
+  publishedYear: string;
+} {
+  const parts = (value ?? "")
+    .split("/")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return {
+    authors: splitAuthors(parts[0]),
+    publisher: parts[1] ?? "未提供",
+    publishedYear: parts[2] ?? "未提供",
+  };
+}
+
+function normalizeDoubanRating(value: number | undefined): number | null {
+  return typeof value === "number" && value > 0 ? value : null;
+}
+
+async function hydrateDoubanCandidates(candidates: BookCandidate[], fetchImpl: typeof fetch): Promise<BookCandidate[]> {
+  return Promise.all(candidates.map(async (candidate) => {
+    try {
+      return await hydrateDoubanCandidate(candidate, fetchImpl);
+    } catch {
+      return candidate;
+    }
+  }));
+}
+
+async function hydrateDoubanCandidate(candidate: BookCandidate, fetchImpl: typeof fetch): Promise<BookCandidate> {
+  if (candidate.sourceLabel !== "豆瓣" || !candidate.infoLink) {
+    return candidate;
+  }
+
+  const response = await fetchImpl(candidate.infoLink);
+  if (!response.ok) {
+    throw new Error(`Douban detail request failed: HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const title = extractDoubanTitle(html) ?? candidate.title;
+  const subtitle = extractDoubanSubtitle(html);
+  const info = parseDoubanInfo(html);
+  const averageRating = parseDoubanAverageRating(html) ?? candidate.averageRating;
+  const ratingsCount = parseDoubanRatingsCount(html) ?? candidate.ratingsCount;
+  const description = parseDoubanDescription(html) ?? candidate.description;
+  const authors = info.author.length > 0 ? info.author : candidate.authors;
+  const isbns = info.isbn.length > 0 ? info.isbn : candidate.isbns;
+
+  return {
+    ...candidate,
+    title,
+    authors,
+    publisher: info.publisher || candidate.publisher,
+    publishedYear: info.publishedYear || candidate.publishedYear,
+    description,
+    isbns,
+    averageRating,
+    ratingsCount,
+    ratingSourceLabel: averageRating !== null ? "豆瓣" : candidate.ratingSourceLabel,
+    ratingScale: averageRating !== null ? 10 : candidate.ratingScale,
+  };
+}
+
+function extractDoubanTitle(html: string): string | null {
+  return decodeHtmlEntities(
+    html.match(/<span\s+property="v:itemreviewed">([\s\S]*?)<\/span>/u)?.[1]?.trim() ?? "",
+  ) || null;
+}
+
+function extractDoubanSubtitle(html: string): string | null {
+  return decodeHtmlEntities(
+    html.match(/<span\s+property="v:subtitle">([\s\S]*?)<\/span>/u)?.[1]?.trim() ?? "",
+  ) || null;
+}
+
+function parseDoubanInfo(html: string): {
+  author: string[];
+  publisher: string;
+  publishedYear: string;
+  isbn: string[];
+} {
+  const infoBlock = html.match(/<div id="info"(?:\s+class="[^"]*")?>([\s\S]*?)<\/div>/u)?.[1] ?? "";
+  const authorBlock = infoBlock.match(/作者<\/span>\s*:\s*([\s\S]*?)<br\/?\s*>/u)?.[1] ?? "";
+  const authors = [...authorBlock.matchAll(/<a[^>]*>([\s\S]*?)<\/a>/gu)]
+    .map((match) => decodeHtmlEntities(stripHtml(match[1] ?? "")))
+    .filter(Boolean);
+
+  const publisher = decodeHtmlEntities(stripHtml(infoBlock.match(/出版社:<\/span>\s*([\s\S]*?)<br\/?\s*>/u)?.[1] ?? "")) || "未提供";
+  const publishedYear = decodeHtmlEntities(stripHtml(infoBlock.match(/出版年:<\/span>\s*([\s\S]*?)<br\/?\s*>/u)?.[1] ?? "")) || "未提供";
+  const isbnText = decodeHtmlEntities(stripHtml(infoBlock.match(/ISBN:<\/span>\s*([\s\S]*?)<br\/?\s*>/u)?.[1] ?? ""));
+
+  return {
+    author: authors,
+    publisher,
+    publishedYear,
+    isbn: normalizeIsbnList(isbnText ? [isbnText] : []),
+  };
+}
+
+function parseDoubanAverageRating(html: string): number | null {
+  const value = decodeHtmlEntities(stripHtml(html.match(/<strong class="ll rating_num\s*" property="v:average">([\s\S]*?)<\/strong>/u)?.[1] ?? ""));
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseDoubanRatingsCount(html: string): number | null {
+  const value = decodeHtmlEntities(stripHtml(html.match(/<span property="v:votes">([\s\S]*?)<\/span>/u)?.[1] ?? ""));
+  return normalizePositiveInteger(Number.parseInt(value, 10));
+}
+
+function parseDoubanDescription(html: string): string | null {
+  const expanded = html.match(/<div id="link-report">[\s\S]*?<span class="all hidden">([\s\S]*?)<\/span>/u)?.[1];
+  const short = html.match(/<div id="link-report">[\s\S]*?<span class="short">([\s\S]*?)<\/span>/u)?.[1];
+  const content = expanded ?? short;
+  if (!content) {
+    return null;
+  }
+
+  const paragraphs = [...content.matchAll(/<p>([\s\S]*?)<\/p>/gu)]
+    .map((match) => normalizeSummary(decodeHtmlEntities(stripHtml(match[1] ?? ""))))
+    .filter((text) => text && text !== "(展开全部)");
+  return paragraphs.length > 0 ? paragraphs.join(" ") : null;
+}
+
+function stripHtml(value: string): string {
+  return value.replace(/<[^>]+>/gu, " ");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gu, " ")
+    .replace(/&middot;/gu, "·")
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;/gu, "'")
+    .replace(/&amp;/gu, "&")
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">");
 }
 
 async function requestBookMetadataByIsbn(
@@ -712,6 +946,227 @@ async function requestBookMetadataByIsbn(
   }
 
   return payload.data;
+}
+
+async function enrichCandidateWithWeReadSearch(candidate: BookCandidate, fetchImpl: typeof fetch): Promise<BookCandidate> {
+  if (candidate.wereadLink || !shouldSearchWeRead(candidate)) {
+    return candidate;
+  }
+
+  const query = buildWeReadSearchQuery(candidate);
+  if (!query) {
+    return candidate;
+  }
+
+  const [jsonResults, htmlEntries] = await Promise.all([
+    requestWeReadSearch(query, fetchImpl).catch(() => []),
+    requestWeReadSearchHtml(query, fetchImpl).catch(() => []),
+  ]);
+  const match = findBestWeReadMatch(candidate, jsonResults, htmlEntries);
+  if (!match) {
+    return candidate;
+  }
+
+  return {
+    ...candidate,
+    description: candidate.description === "未提供" && match.intro ? match.intro : candidate.description,
+    publisher: candidate.publisher === "未提供" && match.publisher ? match.publisher : candidate.publisher,
+    wereadLink: match.link ?? candidate.wereadLink,
+    wereadRecommendationScore: match.recommendationScore,
+    wereadRecommendationCount: match.recommendationCount,
+  };
+}
+
+function shouldSearchWeRead(candidate: BookCandidate): boolean {
+  return candidate.sourceLabel === "豆瓣" && candidate.title.trim().length > 0 && candidate.authors.length > 0;
+}
+
+function buildWeReadSearchQuery(candidate: BookCandidate): string {
+  return [candidate.title, candidate.authors[0]].filter(Boolean).join(" ").trim();
+}
+
+async function requestWeReadSearch(query: string, fetchImpl: typeof fetch): Promise<Array<{
+  title: string;
+  author: string;
+  publisher: string;
+  intro: string;
+  recommendationScore: number | null;
+  recommendationCount: number | null;
+  bookId: string;
+}>> {
+  const url = new URL("https://weread.qq.com/web/search/global");
+  url.searchParams.set("keyword", query);
+  url.searchParams.set("count", "5");
+
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`WeRead search request failed: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json() as { books?: Array<{ bookInfo?: WeReadSearchBookInfo }> };
+  return (payload.books ?? [])
+    .map((item) => normalizeWeReadBookInfo(item.bookInfo))
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+}
+
+function normalizeWeReadBookInfo(bookInfo: WeReadSearchBookInfo | undefined): {
+  title: string;
+  author: string;
+  publisher: string;
+  intro: string;
+  recommendationScore: number | null;
+  recommendationCount: number | null;
+  bookId: string;
+} | null {
+  const title = bookInfo?.title?.trim();
+  const author = bookInfo?.author?.trim();
+  const bookId = bookInfo?.bookId?.trim();
+  if (!title || !author || !bookId) {
+    return null;
+  }
+
+  return {
+    title,
+    author,
+    publisher: bookInfo?.publisher?.trim() ?? "",
+    intro: normalizeSummary(bookInfo?.intro),
+    recommendationScore: normalizeWeReadRecommendationScore(bookInfo?.newRating),
+    recommendationCount: normalizePositiveInteger(bookInfo?.newRatingCount),
+    bookId,
+  };
+}
+
+async function requestWeReadSearchHtml(query: string, fetchImpl: typeof fetch): Promise<WeReadHtmlEntry[]> {
+  const url = new URL("https://weread.qq.com/web/search/books");
+  url.searchParams.set("keyword", query);
+
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`WeRead HTML search failed: HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const itemPattern = /<li class="wr_bookList_item">([\s\S]*?)<\/li>/gu;
+  const entries: WeReadHtmlEntry[] = [];
+
+  for (const match of html.matchAll(itemPattern)) {
+    const block = match[1] ?? "";
+    const href = block.match(/<a href="([^"]+)" class="wr_bookList_item_link"><\/a>/u)?.[1]?.trim();
+    const title = decodeHtmlEntities(stripHtml(block.match(/<p class="wr_bookList_item_title">([\s\S]*?)<\/p>/u)?.[1] ?? ""));
+    const author = decodeHtmlEntities(stripHtml(block.match(/<p class="wr_bookList_item_author">([\s\S]*?)<\/p>/u)?.[1] ?? ""));
+    const description = decodeHtmlEntities(stripHtml(block.match(/<p class="wr_bookList_item_desc">([\s\S]*?)<\/p>/u)?.[1] ?? ""));
+
+    if (!href || !title || !author) {
+      continue;
+    }
+
+    entries.push({
+      href,
+      title,
+      author,
+      description: normalizeSummary(description),
+    });
+  }
+
+  return entries;
+}
+
+function findBestWeReadMatch(
+  candidate: BookCandidate,
+  jsonResults: Array<{
+    title: string;
+    author: string;
+    publisher: string;
+    intro: string;
+    recommendationScore: number | null;
+    recommendationCount: number | null;
+    bookId: string;
+  }>,
+  htmlEntries: WeReadHtmlEntry[],
+): {
+  link: string | null;
+  intro: string;
+  publisher: string;
+  recommendationScore: number | null;
+  recommendationCount: number | null;
+} | null {
+  const targetTitle = normalizeKey(candidate.title);
+  const targetAuthor = normalizeKey(candidate.authors[0] ?? "");
+  const normalizedHtmlEntries = htmlEntries.filter((entry) => {
+    return computeLooseMatchScore(targetTitle, normalizeKey(entry.title)) >= 0.6
+      && computeLooseMatchScore(targetAuthor, normalizeKey(entry.author)) >= 0.6;
+  });
+
+  for (const result of jsonResults) {
+    const titleScore = computeLooseMatchScore(targetTitle, normalizeKey(result.title));
+    const authorScore = computeLooseMatchScore(targetAuthor, normalizeKey(result.author));
+    if (titleScore < 0.6 || authorScore < 0.6) {
+      continue;
+    }
+
+    const htmlMatch = normalizedHtmlEntries.find((entry) => {
+      return computeLooseMatchScore(normalizeKey(entry.title), normalizeKey(result.title)) >= 0.6
+        && computeLooseMatchScore(normalizeKey(entry.author), normalizeKey(result.author)) >= 0.6;
+    });
+
+    return {
+      link: htmlMatch ? normalizeWeReadHref(htmlMatch.href) : null,
+      intro: result.intro !== "未提供" ? result.intro : htmlMatch?.description ?? "未提供",
+      publisher: result.publisher,
+      recommendationScore: result.recommendationScore,
+      recommendationCount: result.recommendationCount,
+    };
+  }
+
+  if (normalizedHtmlEntries.length > 0) {
+    const htmlMatch = normalizedHtmlEntries[0];
+    if (!htmlMatch) {
+      return null;
+    }
+    return {
+      link: normalizeWeReadHref(htmlMatch.href),
+      intro: htmlMatch.description,
+      publisher: "",
+      recommendationScore: null,
+      recommendationCount: null,
+    };
+  }
+
+  return null;
+}
+
+function computeLooseMatchScore(left: string, right: string): number {
+  if (!left || !right) {
+    return 0;
+  }
+  if (left === right) {
+    return 1;
+  }
+  if (left.includes(right) || right.includes(left)) {
+    return 0.85;
+  }
+
+  const leftTokens = left.split(/\s+/u).filter(Boolean);
+  const rightTokens = right.split(/\s+/u).filter(Boolean);
+  const overlap = leftTokens.filter((token) => rightTokens.includes(token)).length;
+  return overlap / Math.max(leftTokens.length, rightTokens.length, 1);
+}
+
+function normalizeWeReadHref(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//u.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `https://weread.qq.com${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`;
+}
+
+function normalizeWeReadRecommendationScore(value: number | undefined): number | null {
+  return typeof value === "number" && value > 0 ? value / 10 : null;
 }
 
 async function fetchWithTimeout(
@@ -762,185 +1217,11 @@ function scoreCandidateQuality(candidate: BookCandidate): number {
     + (candidate.infoLink ? 1 : 0);
 }
 
-function buildHeuristicSelection(candidates: BookCandidate[]): BookSelection {
-  const usedIds = new Set<string>();
-  const foundationIds = selectIdsByKeywords(candidates, FOUNDATION_KEYWORDS, usedIds, 5);
-  const practiceIds = selectIdsByKeywords(candidates, PRACTICE_KEYWORDS, usedIds, 5);
-  const logicIds = selectIdsByKeywords(candidates, LOGIC_KEYWORDS, usedIds, 5);
-
-  return {
-    foundationIds,
-    practiceIds,
-    logicIds,
-    topRatedIds: buildTopRatedIds(candidates),
-  };
-}
-
-function buildHeuristicSections(searchText: string, candidates: BookCandidate[]): DynamicBookSectionSelection[] {
-  const selection = buildHeuristicSelection(candidates);
-  const topic = buildFallbackTopicLabel(searchText);
-  return [
-    { title: `${topic}入门与经典`, bookIds: selection.foundationIds },
-    { title: `${topic}实践与案例`, bookIds: selection.practiceIds },
-    { title: `${topic}思想与延展`, bookIds: selection.logicIds },
-  ].filter((section) => section.bookIds.length > 0);
-}
-
-function buildFallbackTopicLabel(searchText: string): string {
-  const normalized = normalizeSummary(searchText)
-    .replace(/[：:]/gu, " ")
-    .replace(/[，,、/\\|]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-
-  if (!normalized) {
-    return "相关书目";
-  }
-
-  return normalized.length > 8 ? `${normalized.slice(0, 7)}…` : normalized;
-}
-
-function fillSelectionGaps(selection: BookSelection, candidates: BookCandidate[]): BookSelection {
-  const usedIds = new Set<string>();
-  const foundationIds = fillIds(selection.foundationIds, candidates, usedIds, 5);
-  const practiceIds = fillIds(selection.practiceIds, candidates, usedIds, 5);
-  const logicIds = fillIds(selection.logicIds, candidates, usedIds, 5);
-  const topRatedIds = selection.topRatedIds.length > 0 ? selection.topRatedIds : buildTopRatedIds(candidates);
-
-  return {
-    foundationIds,
-    practiceIds,
-    logicIds,
-    topRatedIds,
-  };
-}
-
-function fillDynamicSectionGaps(
-  sections: DynamicBookSectionSelection[],
-  candidates: BookCandidate[],
-): DynamicBookSectionSelection[] {
-  const usedIds = new Set<string>();
-
-  return sections.map((section) => ({
-    title: section.title,
-    bookIds: fillIds(section.bookIds, candidates, usedIds, 5),
-  }));
-}
-
-function fillIds(existingIds: string[], candidates: BookCandidate[], usedIds: Set<string>, limit: number): string[] {
-  const filled: string[] = [];
-
-  for (const id of existingIds) {
-    if (usedIds.has(id)) {
-      continue;
-    }
-    filled.push(id);
-    usedIds.add(id);
-    if (filled.length >= limit) {
-      return filled;
-    }
-  }
-
-  for (const candidate of candidates) {
-    if (usedIds.has(candidate.id)) {
-      continue;
-    }
-    filled.push(candidate.id);
-    usedIds.add(candidate.id);
-    if (filled.length >= limit) {
-      return filled;
-    }
-  }
-
-  return filled;
-}
-
-function buildTopRatedIds(candidates: BookCandidate[]): string[] {
-  return candidates
-    .filter((candidate) => candidate.averageRating !== null)
-    .sort((left, right) => {
-      if ((right.averageRating ?? 0) !== (left.averageRating ?? 0)) {
-        return (right.averageRating ?? 0) - (left.averageRating ?? 0);
-      }
-      return (right.ratingsCount ?? 0) - (left.ratingsCount ?? 0);
-    })
-    .slice(0, 10)
-    .map((candidate) => candidate.id);
-}
-
-function selectIdsByKeywords(candidates: BookCandidate[], keywords: string[], usedIds: Set<string>, limit: number): string[] {
-  return candidates
-    .map((candidate) => ({
-      id: candidate.id,
-      score: keywordScore(candidate, keywords),
-      rating: candidate.averageRating ?? 0,
-    }))
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-      return right.rating - left.rating;
-    })
-    .map((entry) => entry.id)
-    .filter((id) => !usedIds.has(id))
-    .slice(0, limit)
-    .map((id) => {
-      usedIds.add(id);
-      return id;
-    });
-}
-
-function keywordScore(candidate: BookCandidate, keywords: string[]): number {
-  const haystack = [candidate.title, candidate.publisher, candidate.description, ...candidate.categories, ...candidate.authors]
-    .join(" ")
-    .toLowerCase();
-
-  return keywords.reduce((score, keyword) => score + (haystack.includes(keyword.toLowerCase()) ? 2 : 0), 0);
-}
-
-function mapIdsToCandidates(ids: string[], candidateById: Map<string, BookCandidate>): BookCandidate[] {
-  return ids
-    .map((id) => candidateById.get(id) ?? null)
-    .filter((candidate): candidate is BookCandidate => candidate !== null);
-}
-
-function renderSection(title: string, books: BookCandidate[]): string {
-  if (books.length === 0) {
-    return [`## ${title}`, "", "当前公开书目结果不足，暂无可稳定核验的推荐。"].join("\n");
-  }
-
-  return [
-    `## ${title}`,
-    "",
-    ...books.flatMap((book, index) => {
-      const block = renderBookBlock(index + 1, book);
-      return index < books.length - 1 ? [...block, "---", ""] : block;
-    }),
-  ].join("\n");
-}
-
-function renderTopRatedSection(books: BookCandidate[]): string {
-  const header = "## 4. 已核验评分最高的书目";
-  if (books.length === 0) {
-    return [header, "", "当前公开评分数据不足，无法给出可靠排名。"].join("\n");
-  }
-
-  return [
-    header,
-    "",
-    ...books.map((book, index) => `${index + 1}. 《${book.title}》${book.infoLink ? `：${book.infoLink}` : ""}`),
-  ].join("\n");
-}
-
 function renderBookBlock(index: number, book: BookCandidate): string[] {
   const authors = book.authors.length > 0 ? book.authors.join("、") : "未提供";
   const categories = book.categories.length > 0 ? book.categories.join("、") : "未提供";
-  const ratingSourceLabel = book.ratingSourceLabel ?? book.sourceLabel;
-  const ratingScale = book.ratingScale ?? 5;
-  const rating = book.averageRating !== null
-    ? `${ratingSourceLabel} 评分 ${book.averageRating}/${ratingScale}${book.ratingsCount ? `（${book.ratingsCount} 条评价）` : ""}`
-    : "暂无公开评分";
-  const wereadStatus = book.wereadLink ? book.wereadLink : "暂无数据";
+  const links = buildBookLinks(book);
+  const ratings = buildBookRatings(book);
 
   return [
     `${index}. **《${book.title}》**`,
@@ -949,9 +1230,43 @@ function renderBookBlock(index: number, book: BookCandidate): string[] {
     `- 出版年份：${book.publishedYear}`,
     `- 主要内容：${truncateText(book.description || `${book.title} 暂无公开摘要。`, 110)}`,
     `- 特色：${truncateText(buildFeatureCopy(book, categories), 110)}`,
-    `- 线上平台与评分：${rating}`,
-    `- 微信读书：${wereadStatus}`,
+    `- 链接：${links}`,
+    ...ratings,
   ];
+}
+
+function buildBookLinks(book: BookCandidate): string {
+  const links: string[] = [];
+
+  if (book.infoLink) {
+    links.push(`[${book.sourceLabel}](${book.infoLink})`);
+  }
+
+  if (book.previewLink) {
+    links.push(`[公开预览](${book.previewLink})`);
+  }
+
+  if (book.wereadLink) {
+    links.push(`[微信读书](${book.wereadLink})`);
+  }
+
+  return links.length > 0 ? links.join(" | ") : "暂无公开链接";
+}
+
+function buildBookRatings(book: BookCandidate): string[] {
+  const ratings: string[] = [];
+
+  if (book.averageRating !== null) {
+    const sourceLabel = book.ratingSourceLabel ?? book.sourceLabel;
+    const ratingScale = book.ratingScale ?? 10;
+    ratings.push(`- 【${sourceLabel}】评分：${book.averageRating}/${ratingScale}${book.ratingsCount ? `（${book.ratingsCount} 条评价）` : ""}`);
+  }
+
+  if (typeof book.wereadRecommendationScore === "number") {
+    ratings.push(`- 【微信读书】推荐值：${book.wereadRecommendationScore.toFixed(1)}%${book.wereadRecommendationCount ? `（${book.wereadRecommendationCount} 人）` : ""}`);
+  }
+
+  return ratings.length > 0 ? ratings : ["- 评分：暂无公开数据"];
 }
 
 function buildFeatureCopy(book: BookCandidate, categories: string): string {
@@ -959,6 +1274,7 @@ function buildFeatureCopy(book: BookCandidate, categories: string): string {
     categories !== "未提供" ? `主题覆盖 ${categories}` : null,
     book.previewLink ? "提供公开预览入口" : null,
     book.averageRating !== null ? "公开评分信息较完整" : null,
+    typeof book.wereadRecommendationScore === "number" ? "含微信读书推荐值" : null,
     book.wereadLink ? "提供微信读书入口" : null,
     book.sourceLabel === "Open Library" ? "适合作为补充书目线索" : null,
   ].filter((item): item is string => Boolean(item));
@@ -1006,6 +1322,10 @@ function normalizeIsbnList(value: unknown): string[] {
 function normalizeOptionalUrl(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizePositiveInteger(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function sanitizeIdList(ids: string[], allowedIds: Set<string>): string[] {
