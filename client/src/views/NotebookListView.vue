@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { formatTime } from "@/utils/format";
 import { notebooksApi, type Notebook } from "@/api/notebooks";
 import { createNotebookWorkbenchPath } from "./notebook-list-view";
+import { getNotebookListMaxWidth } from "./front-layout";
 
 const router = useRouter();
 
@@ -16,6 +17,7 @@ const showCreateModal = ref(false);
 const createTitle = ref("");
 const creating = ref(false);
 const createError = ref("");
+const pageMaxWidth = `${getNotebookListMaxWidth()}px`;
 
 async function load() {
   loading.value = true;
@@ -73,132 +75,130 @@ onMounted(load);
 </script>
 
 <template>
-  <!-- 主页面 -->
-  <div class="notebook-home">
-    <!-- 页面头部：版心标题区 -->
-    <div class="page-header">
-      <div class="header-rule-top" />
-      <div class="header-content">
-        <h1 class="page-title">我的笔记本</h1>
-        <button class="btn-create" type="button" @click="openCreateModal">
-          新建笔记本
-        </button>
+  <div>
+    <!-- 主页面 -->
+    <div class="notebook-home" :style="{ maxWidth: pageMaxWidth }">
+      <!-- 页面头部：版心标题区 -->
+      <div class="page-header">
+        <div class="header-rule-top" />
+        <div class="header-content">
+          <h1 class="page-title">我的笔记本</h1>
+          <button class="btn-create" type="button" @click="openCreateModal">
+            新建笔记本
+          </button>
+        </div>
+        <div class="header-rule-bottom" />
       </div>
-      <div class="header-rule-bottom" />
+
+      <!-- 内容区 -->
+      <div class="page-body">
+        <!-- 加载状态 -->
+        <div v-if="loading" class="state-loading">正在加载目录...</div>
+
+        <!-- 错误状态 -->
+        <div v-else-if="error" class="state-error">
+          <span class="error-mark">✕</span>
+          <span>{{ error }}</span>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="notebooks.length === 0" class="state-empty">
+          <div class="empty-icon">◇</div>
+          <p class="empty-title">尚无笔记本</p>
+          <p class="empty-hint">点击右上角「新建笔记本」开始你的第一份研究。</p>
+        </div>
+
+        <!-- 笔记本列表 -->
+        <TransitionGroup v-else class="notebook-list" tag="div" name="list-folio">
+          <button
+            v-for="notebook in notebooks"
+            :key="notebook.id"
+            type="button"
+            class="notebook-card"
+            @click="openNotebook(notebook.id)"
+          >
+            <div class="card-spine" />
+            <div class="card-body">
+              <div class="card-main">
+                <p class="card-title">{{ notebook.title }}</p>
+                <p v-if="notebook.description.trim()" class="card-desc">
+                  {{ notebook.description }}
+                </p>
+              </div>
+              <div class="card-meta">
+                <span class="card-time">{{ formatTime(notebook.updatedAt) }}</span>
+                <span class="card-arrow">→</span>
+              </div>
+            </div>
+          </button>
+        </TransitionGroup>
+      </div>
     </div>
 
-    <!-- 内容区 -->
-    <div class="page-body">
-      <!-- 加载状态 -->
-      <div v-if="loading" class="state-loading">
-        <span class="loading-dot" /><span class="loading-dot" /><span class="loading-dot" />
-        <span class="state-text">加载中</span>
-      </div>
-
-      <!-- 错误状态 -->
-      <div v-else-if="error" class="state-error">
-        <span class="error-mark">✕</span>
-        <span>{{ error }}</span>
-      </div>
-
-      <!-- 空状态 -->
-      <div v-else-if="notebooks.length === 0" class="state-empty">
-        <div class="empty-icon">◇</div>
-        <p class="empty-title">尚无笔记本</p>
-        <p class="empty-hint">点击右上角「新建笔记本」开始你的第一份研究。</p>
-      </div>
-
-      <!-- 笔记本列表 -->
-      <div v-else class="notebook-list">
-        <button
-          v-for="notebook in notebooks"
-          :key="notebook.id"
-          type="button"
-          class="notebook-card"
-          @click="openNotebook(notebook.id)"
-        >
-          <div class="card-spine" />
-          <div class="card-body">
-            <div class="card-main">
-              <p class="card-title">{{ notebook.title }}</p>
-              <p v-if="notebook.description.trim()" class="card-desc">
-                {{ notebook.description }}
-              </p>
-            </div>
-            <div class="card-meta">
-              <span class="card-time">{{ formatTime(notebook.updatedAt) }}</span>
-              <span class="card-arrow">→</span>
-            </div>
+    <!-- 新建笔记本弹窗 -->
+    <Transition name="modal">
+      <div
+        v-if="showCreateModal"
+        class="modal-backdrop"
+        @click.self="closeCreateModal"
+        @keydown="handleModalKeydown"
+      >
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-label="新建笔记本">
+          <div class="modal-header">
+            <h2 class="modal-title">新建笔记本</h2>
+            <button
+              type="button"
+              class="modal-close"
+              :disabled="creating"
+              @click="closeCreateModal"
+            >
+              ×
+            </button>
           </div>
-        </button>
+
+          <div class="modal-body">
+            <label class="field-label" for="notebook-title">名称</label>
+            <input
+              id="notebook-title"
+              v-model="createTitle"
+              class="field-input"
+              type="text"
+              placeholder="为这份研究起一个名字"
+              maxlength="120"
+              :disabled="creating"
+              @keydown.enter="handleCreate"
+            />
+            <p v-if="createError" class="field-error">{{ createError }}</p>
+          </div>
+
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn-cancel"
+              :disabled="creating"
+              @click="closeCreateModal"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="btn-confirm"
+              :disabled="creating || !createTitle.trim()"
+              @click="handleCreate"
+            >
+              <span v-if="creating" class="btn-spinner" />
+              {{ creating ? "创建中…" : "创建" }}
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </Transition>
   </div>
-
-  <!-- 新建笔记本弹窗 -->
-  <Transition name="modal">
-    <div
-      v-if="showCreateModal"
-      class="modal-backdrop"
-      @click.self="closeCreateModal"
-      @keydown="handleModalKeydown"
-    >
-      <div class="modal-panel" role="dialog" aria-modal="true" aria-label="新建笔记本">
-        <div class="modal-header">
-          <h2 class="modal-title">新建笔记本</h2>
-          <button
-            type="button"
-            class="modal-close"
-            :disabled="creating"
-            @click="closeCreateModal"
-          >
-            ×
-          </button>
-        </div>
-
-        <div class="modal-body">
-          <label class="field-label" for="notebook-title">名称</label>
-          <input
-            id="notebook-title"
-            v-model="createTitle"
-            class="field-input"
-            type="text"
-            placeholder="为这份研究起一个名字"
-            maxlength="120"
-            :disabled="creating"
-            @keydown.enter="handleCreate"
-          />
-          <p v-if="createError" class="field-error">{{ createError }}</p>
-        </div>
-
-        <div class="modal-footer">
-          <button
-            type="button"
-            class="btn-cancel"
-            :disabled="creating"
-            @click="closeCreateModal"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            class="btn-confirm"
-            :disabled="creating || !createTitle.trim()"
-            @click="handleCreate"
-          >
-            <span v-if="creating" class="btn-spinner" />
-            {{ creating ? "创建中…" : "创建" }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </Transition>
 </template>
 
 <style scoped>
 /* ─── 页面容器 ─────────────────────────────────────── */
 .notebook-home {
-  max-width: 720px;
   margin: 0 auto;
   padding: 0 1.5rem 4rem;
 }
@@ -261,31 +261,8 @@ onMounted(load);
 /* ─── 状态占位 ─────────────────────────────────────── */
 .state-loading {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  justify-content: flex-start;
   padding: 2.5rem 0;
-  color: rgba(47, 39, 31, 0.45);
-  font-size: 0.95rem;
-}
-
-.loading-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: pulse 1.2s ease-in-out infinite;
-}
-.loading-dot:nth-child(2) { animation-delay: 0.2s; }
-.loading-dot:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes pulse {
-  0%, 80%, 100% { opacity: 0.25; }
-  40% { opacity: 1; }
-}
-
-.state-text {
-  margin-left: 0.4rem;
 }
 
 .state-error {
@@ -346,7 +323,7 @@ onMounted(load);
   border-bottom: 1px solid rgba(47, 39, 31, 0.15);
   padding: 0;
   cursor: pointer;
-  transition: background-color 0.12s ease;
+  transition: background-color 0.16s ease, transform 0.14s ease;
 }
 
 .notebook-card:first-child {
@@ -355,6 +332,7 @@ onMounted(load);
 
 .notebook-card:hover {
   background-color: rgba(47, 39, 31, 0.04);
+  transform: translateX(3px);
 }
 
 .notebook-card:hover .card-arrow {
@@ -379,7 +357,7 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
-  padding: 1rem 1rem 1rem 0.85rem;
+  padding: 1.15rem 1rem 1.15rem 0.95rem;
 }
 
 .card-main {
@@ -388,7 +366,7 @@ onMounted(load);
 }
 
 .card-title {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: #2f271f;
   margin: 0;
@@ -400,7 +378,7 @@ onMounted(load);
 
 .card-desc {
   margin: 0.2em 0 0;
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   color: rgba(47, 39, 31, 0.55);
   line-height: 1.5;
   display: -webkit-box;
@@ -418,7 +396,7 @@ onMounted(load);
 }
 
 .card-time {
-  font-size: 0.8rem;
+  font-size: 0.88rem;
 }
 
 .card-arrow {
@@ -619,5 +597,24 @@ onMounted(load);
 .modal-leave-to .modal-panel {
   transform: translateY(-4px) scale(0.99);
   opacity: 0;
+}
+
+.list-folio-enter-active {
+  transition: opacity 180ms ease-out, transform 200ms ease-out;
+}
+
+.list-folio-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+@media (min-width: 860px) {
+  .page-title {
+    font-size: 1.8rem;
+  }
+
+  .card-title {
+    font-size: 1.12rem;
+  }
 }
 </style>

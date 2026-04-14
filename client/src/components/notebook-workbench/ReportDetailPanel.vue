@@ -343,7 +343,7 @@ function formatDuration(seconds: number | undefined): string {
 </script>
 
 <template>
-  <section class="h-full min-h-0 flex flex-col overflow-hidden bg-[#f8f3ea] border border-[#d8cfbe] rounded-lg">
+  <section class="h-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#f8f3ea]">
     <!-- Toolbar -->
     <div class="shrink-0 px-4 py-3 border-b border-[#e0d5c0] flex items-center gap-3">
       <!-- Back button -->
@@ -394,21 +394,8 @@ function formatDuration(seconds: number | undefined): string {
     <!-- RESEARCH REPORT MODE -->
     <!-- ════════════════════════════════════════════════════════ -->
     <template v-if="entry && isResearchReport">
-      <!-- Report title & metadata -->
-      <div class="shrink-0 px-5 pt-4 pb-2">
-        <h2
-          class="text-lg font-semibold text-[#2f271f] leading-snug"
-          style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
-        >
-          {{ entry.title || "未命名报告" }}
-        </h2>
-        <p v-if="entry.createdAt" class="mt-1 text-xs text-[#9a8a78]">
-          生成于 {{ formatTime(entry.createdAt) }}
-        </p>
-      </div>
-
       <!-- Markdown content -->
-      <div class="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+      <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-5">
         <!-- Loading state -->
         <p v-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
           正在加载报告内容…
@@ -418,7 +405,7 @@ function formatDuration(seconds: number | undefined): string {
         </p>
         <div
           v-else-if="fetchedContent"
-          class="prose-warm"
+          class="min-w-0 max-w-full prose-warm"
           v-html="renderedHtml"
         />
         <p v-else class="text-base text-[#9a8a78] leading-relaxed">
@@ -431,7 +418,7 @@ function formatDuration(seconds: number | undefined): string {
     <!-- ARTIFACT MODE -->
     <!-- ════════════════════════════════════════════════════════ -->
     <template v-else-if="entry && isArtifact">
-      <div class="flex-1 min-h-0 overflow-y-auto px-5 py-5">
+      <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-5">
         <!-- Status card -->
         <div class="rounded-lg border border-[#ddd3c2] bg-[#fffbf4] px-6 py-5">
           <!-- Type icon + title -->
@@ -516,7 +503,7 @@ function formatDuration(seconds: number | undefined): string {
         <template v-if="currentArtifactType === ArtifactType.REPORT && entry.state === 'ready'">
           <p v-if="contentLoading" class="mt-5 text-sm text-[#9a8a78] italic">正在加载报告内容…</p>
           <p v-else-if="contentError" class="mt-5 text-sm text-red-700">报告内容加载失败，请刷新页面重试。</p>
-          <div v-else-if="artifactRenderedHtml" class="mt-5 prose-warm" v-html="artifactRenderedHtml" />
+          <div v-else-if="artifactRenderedHtml" class="mt-5 min-w-0 max-w-full prose-warm" v-html="artifactRenderedHtml" />
           <p v-else class="mt-5 text-sm text-[#9a8a78]">报告内容为空。</p>
         </template>
 

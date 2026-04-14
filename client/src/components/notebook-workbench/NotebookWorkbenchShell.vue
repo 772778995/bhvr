@@ -2,12 +2,14 @@
 import { ref, watch } from "vue";
 import NotebookTopBar from "@/components/notebook-workbench/NotebookTopBar.vue";
 import ResizeDivider from "@/components/notebook-workbench/ResizeDivider.vue";
+import { getWorkbenchLoaderLabel } from "@/views/book-motion";
 
 interface Props {
   title: string;
   loading: boolean;
   error: string;
   hasData: boolean;
+  backLabel?: string;
   emptyMessage?: string;
   leftStorageKey?: string;
   rightStorageKey?: string;
@@ -18,6 +20,7 @@ interface Props {
   rightMax?: number;
   rightInitial?: number;
   centerMin?: number;
+  onBack?: () => void;
   onShare?: () => void;
   onMore?: () => void;
 }
@@ -85,8 +88,8 @@ function onRightDrag(delta: number) {
     <slot name="loader" />
 
     <div class="h-full bg-[linear-gradient(180deg,_rgba(248,242,231,0.98),_rgba(237,228,212,0.98))]">
-      <div v-if="loading" class="flex h-full items-center justify-center text-base text-[#6f6354]">
-        正在加载工作台...
+      <div v-if="loading" class="flex h-full items-center justify-center px-6 text-base text-[#6f6354]">
+        {{ getWorkbenchLoaderLabel() }}
       </div>
 
       <div v-else-if="error" class="flex h-full items-center justify-center p-6">
@@ -102,7 +105,13 @@ function onRightDrag(delta: number) {
       </div>
 
       <div v-else class="flex h-full flex-col overflow-hidden">
-        <NotebookTopBar :title="title" :on-share="props.onShare" :on-more="props.onMore" />
+        <NotebookTopBar
+          :title="title"
+          :back-label="props.backLabel"
+          :on-back="props.onBack"
+          :on-share="props.onShare"
+          :on-more="props.onMore"
+        />
 
         <div class="min-h-0 flex-1 overflow-hidden p-3 sm:p-4 lg:p-5">
           <div class="flex h-full min-h-0 gap-0">

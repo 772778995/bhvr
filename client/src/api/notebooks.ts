@@ -94,6 +94,11 @@ export interface SendMessageResponse {
   messageIds?: [string, string];
 }
 
+export interface BookFinderResponse {
+  normalizedQuery: string;
+  message: ChatMessage;
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -316,8 +321,19 @@ export const notebooksApi = {
     return request<ChatMessage[]>(`/api/notebooks/${id}/messages`);
   },
 
+  getBookFinderMessages(id: string) {
+    return request<ChatMessage[]>(`/api/notebooks/${id}/book-finder/messages`);
+  },
+
   sendMessage(id: string, body: SendMessageRequest) {
     return request<SendMessageResponse>(`/api/notebooks/${id}/chat/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  searchBooks(id: string, body: { query: string }) {
+    return request<BookFinderResponse>(`/api/notebooks/${id}/book-finder/search`, {
       method: "POST",
       body: JSON.stringify(body),
     });

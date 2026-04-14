@@ -27,7 +27,7 @@ function formatTime(raw: string): string {
 </script>
 
 <template>
-  <aside class="flex h-full min-h-0 w-68 shrink-0 flex-col border-r border-[#ded4c2] bg-[#f7f0e3]">
+  <aside class="flex h-full min-h-0 w-68 min-w-0 shrink-0 flex-col border-r border-[#ded4c2] bg-[#f7f0e3]">
     <div v-if="isEmpty" class="flex-1 px-4 py-6 text-sm leading-6 text-[#8a7864]">
       暂无书籍总结。先在右侧生成一份，再回到这里查看历史版本。
     </div>

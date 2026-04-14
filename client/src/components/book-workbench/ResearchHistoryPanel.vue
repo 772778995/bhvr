@@ -10,15 +10,15 @@ defineProps<Props>();
 </script>
 
 <template>
-  <section class="h-full w-full border border-[#d8cfbe] bg-[#f8f3ea] p-4">
+  <section class="flex h-full w-full min-h-0 flex-col border border-[#d8cfbe] bg-[#f8f3ea] p-4">
     <div
       v-if="messages.length === 0"
-      class="flex h-full items-center justify-center border border-dashed border-[#d8cfbe] bg-[#f2eadc] px-5 text-center text-base leading-8 text-[#8b7a67]"
+      class="flex min-h-0 flex-1 items-center justify-center border border-[#ddd3c2] bg-[#f2eadc] px-5 text-center text-base leading-8 text-[#8b7a67]"
     >
       自动研究开始后，这里会按时间沉淀问题与回答，方便回看研究过程。
     </div>
 
-    <ul v-else class="h-full space-y-4 overflow-y-auto pr-1">
+    <ul v-else class="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
       <li v-for="message in messages" :key="message.id">
         <div class="max-w-[90%] px-3.5 py-2.5 text-base leading-relaxed"
           :class="message.role === 'user'

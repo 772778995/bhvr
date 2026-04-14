@@ -449,7 +449,7 @@ notebooks.delete("/:id/sources/:sourceId", async (c) => {
 notebooks.get("/:id/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     try {
-      const records = await listChatMessages(id);
+      const records = await listChatMessages(id, ["manual", "research"]);
       const messages = records.map((r) => ({
         id: r.id,
         role: r.role,
@@ -476,7 +476,7 @@ notebooks.get("/:id/messages", async (c) => {
 notebooks.get("/:id/chat/messages", async (c) => {
   return await withNotebookId(c, async (id) => {
     try {
-      const records = await listChatMessages(id);
+      const records = await listChatMessages(id, ["manual", "research"]);
       const messages = records.map((r) => ({
         id: r.id,
         role: r.role,
@@ -1317,6 +1317,32 @@ notebooks.post("/:id/sources/stream/add/file", async (c) => {
   });
 });
 
+notebooks.get("/:id/book-finder/messages", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    try {
+      const records = await listChatMessages(id, ["book_finder"]);
+      const messages = records.map((r) => ({
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+        status: "done",
+      }));
+      return c.json(successResponse(messages));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json(
+        {
+          success: false,
+          message: `获取快速找书记录失败: ${message}`,
+          errorCode: "BOOK_FINDER_MESSAGES_FETCH_FAILED",
+        },
+        502
+      );
+    }
+  });
+});
+
 notebooks.post("/:id/book-finder/search", async (c) => {
   return await withNotebookId(c, async (id) => {
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
@@ -1354,7 +1380,7 @@ notebooks.post("/:id/book-finder/search", async (c) => {
         notebookId: id,
         role: "user",
         content: query,
-        source: "manual",
+        source: "book_finder",
       });
     } catch (dbErr) {
       logger.warn({ err: dbErr, notebookId: id }, "failed to persist quick book finder user message to DB");
@@ -1369,7 +1395,7 @@ notebooks.post("/:id/book-finder/search", async (c) => {
           notebookId: id,
           role: "assistant",
           content: result.markdown,
-          source: "manual",
+          source: "book_finder",
         });
       } catch (dbErr) {
         logger.warn({ err: dbErr, notebookId: id }, "failed to persist quick book finder assistant message to DB");

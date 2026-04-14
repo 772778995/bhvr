@@ -10,6 +10,7 @@ import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWork
 import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
 import ResearchHistoryPanel from "@/components/book-workbench/ResearchHistoryPanel.vue";
+import BookFinderPanel from "@/components/book-workbench/BookFinderPanel.vue";
 import BookSummaryPanel from "@/components/book-workbench/BookSummaryPanel.vue";
 import {
   getBookCenterTabButtonClass,
@@ -28,8 +29,8 @@ import { useToast } from "@/composables/useToast";
 import { useGlobalLoader } from "@/composables/useGlobalLoader";
 import { getCurrentBookSource } from "@/utils/book-source";
 import {
+  createBookFinderDisplayMessages,
   createBookFinderDraftPlaceholder,
-  createBookFinderIntroCopy,
   createBookWorkbenchHeaderState,
   createOptimisticBookFinderUserMessage,
   createStartingResearchState,
@@ -48,14 +49,14 @@ const sources = ref<Source[]>([]);
 const uploadDialogOpen = ref(false);
 const deletingSourceId = ref<string | null>(null);
 const progressMessage = ref("");
-const activeCenterTab = ref<"history" | "summary">("history");
+const activeCenterTab = ref<"history" | "book-finder" | "summary">("history");
 const reportEntries = ref<ReportEntry[]>([]);
 const selectedSummaryEntryId = ref<string | null>(null);
 const generatingBookSummary = ref(false);
 const bookFinderSending = ref(false);
-const bookFinderMode = ref(false);
 const bookFinderDraft = ref("");
 const messages = ref<ChatMessage[]>([]);
+const bookFinderPersistedMessages = ref<ChatMessage[]>([]);
 const researchActionPending = ref<ResearchActionPendingState>(null);
 const researchState = ref<ResearchState>({
   status: "idle",
@@ -95,6 +96,7 @@ const hasResearchHistory = computed(() => hasBookResearchHistory({
   researchState: researchState.value,
 }));
 const answeredRounds = computed(() => countResearchAnsweredRounds(messages.value));
+const bookFinderMessages = computed(() => createBookFinderDisplayMessages(bookFinderPersistedMessages.value));
 const canGenerateSummary = computed(() => canGenerateBookSummary({
   generating: generatingBookSummary.value,
   messages: messages.value,
@@ -102,7 +104,6 @@ const canGenerateSummary = computed(() => canGenerateBookSummary({
 }));
 const busy = computed(() => loaderVisible.value);
 const centerTransition = getBookCenterTransition();
-const bookFinderIntro = createBookFinderIntroCopy();
 const bookFinderPlaceholder = createBookFinderDraftPlaceholder();
 
 function resetWorkbenchState() {
@@ -110,11 +111,11 @@ function resetWorkbenchState() {
   sources.value = [];
   reportEntries.value = [];
   messages.value = [];
+  bookFinderPersistedMessages.value = [];
   progressMessage.value = "";
   deletingSourceId.value = null;
   generatingBookSummary.value = false;
   bookFinderSending.value = false;
-  bookFinderMode.value = false;
   bookFinderDraft.value = "";
   researchActionPending.value = null;
   selectedSummaryEntryId.value = null;
@@ -179,6 +180,19 @@ async function refreshMessages() {
   }
 }
 
+async function refreshBookFinderMessages() {
+  if (!notebookId.value) {
+    bookFinderPersistedMessages.value = [];
+    return;
+  }
+
+  try {
+    bookFinderPersistedMessages.value = await notebooksApi.getBookFinderMessages(notebookId.value);
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "刷新快速找书历史失败", "error");
+  }
+}
+
 async function loadWorkbench() {
   if (!notebookId.value) {
     error.value = "缺少书籍工作台 ID。";
@@ -195,6 +209,7 @@ async function loadWorkbench() {
     await refreshSources();
     await refreshReportEntries();
     await refreshMessages();
+    await refreshBookFinderMessages();
     connectSSE();
   } catch (err) {
     error.value = err instanceof Error ? err.message : "读取书籍来源失败";
@@ -367,11 +382,6 @@ async function onGenerateBookSummary() {
   }
 }
 
-function openBookFinder() {
-  bookFinderMode.value = true;
-  activeCenterTab.value = "history";
-}
-
 function onBookFinderDraftChange(value: string) {
   bookFinderDraft.value = value;
 }
@@ -383,17 +393,17 @@ async function onSubmitBookFinder() {
   }
 
   const optimisticMessage = createOptimisticBookFinderUserMessage(query);
-  messages.value = mergeMessages(messages.value, [optimisticMessage]);
+  bookFinderPersistedMessages.value = mergeMessages(bookFinderPersistedMessages.value, [optimisticMessage]);
   bookFinderSending.value = true;
   bookFinderDraft.value = "";
 
   try {
     const optimisticId = optimisticMessage.id;
     await notebooksApi.searchBooks(notebookId.value, { query });
-    messages.value = messages.value.filter((message) => message.id !== optimisticId);
-    await refreshMessages();
+    bookFinderPersistedMessages.value = bookFinderPersistedMessages.value.filter((message) => message.id !== optimisticId);
+    await refreshBookFinderMessages();
   } catch (err) {
-    messages.value = messages.value.filter((message) => message.id !== optimisticMessage.id);
+    bookFinderPersistedMessages.value = bookFinderPersistedMessages.value.filter((message) => message.id !== optimisticMessage.id);
     showToast(err instanceof Error ? err.message : "快速找书失败", "error");
   } finally {
     bookFinderSending.value = false;
@@ -468,7 +478,6 @@ onUnmounted(() => {
         :progress-message="progressMessage"
         :on-upload="openUploadDialog"
         :on-replace="openUploadDialog"
-        :on-book-finder="openBookFinder"
         :on-delete="onRequestDeleteSource"
       />
     </template>
@@ -485,7 +494,7 @@ onUnmounted(() => {
               @click="activeCenterTab = tab.key"
             >
               <span>{{ tab.label }}</span>
-              <span :class="getBookCenterTabIndicatorClass(activeCenterTab === tab.key)">当前标签</span>
+              <span :class="getBookCenterTabIndicatorClass(activeCenterTab === tab.key)" aria-hidden="true"></span>
             </button>
           </div>
         </div>
@@ -496,14 +505,16 @@ onUnmounted(() => {
               v-if="activeCenterTab === 'history'"
               key="history"
               :messages="messages"
-              :finder-mode="bookFinderMode"
-              :finder-intro-title="bookFinderIntro.title"
-              :finder-intro-description="bookFinderIntro.description"
-              :finder-draft="bookFinderDraft"
-              :finder-placeholder="bookFinderPlaceholder"
-              :finder-sending="bookFinderSending"
-              :on-finder-draft-change="onBookFinderDraftChange"
-              :on-finder-submit="onSubmitBookFinder"
+            />
+            <BookFinderPanel
+              v-else-if="activeCenterTab === 'book-finder'"
+              key="book-finder"
+              :messages="bookFinderMessages"
+              :draft="bookFinderDraft"
+              :placeholder="bookFinderPlaceholder"
+              :sending="bookFinderSending"
+              :on-draft-change="onBookFinderDraftChange"
+              :on-submit="onSubmitBookFinder"
             />
             <BookSummaryPanel
               v-else
@@ -526,11 +537,9 @@ onUnmounted(() => {
         :can-quick-read="hasResearchHistory"
         :busy="busy"
         :quick-read-loading="generatingBookSummary"
-        :book-finder-loading="bookFinderSending"
         :research-action-pending="researchActionPending"
         :on-toggle-research="onToggleResearch"
         :on-quick-read="onGenerateBookSummary"
-        :on-book-finder="openBookFinder"
       />
     </template>
 

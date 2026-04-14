@@ -7,7 +7,7 @@ export interface ChatMessageRecord {
   notebookId: string;
   role: "user" | "assistant";
   content: string;
-  source: "manual" | "research";
+  source: "manual" | "research" | "book_finder";
   createdAt: Date;
 }
 
@@ -24,12 +24,17 @@ export async function insertChatMessage(
 }
 
 export async function listChatMessages(
-  notebookId: string
+  notebookId: string,
+  sources?: Array<ChatMessageRecord["source"]>
 ): Promise<ChatMessageRecord[]> {
   const rows = await db
     .select()
     .from(chatMessages)
-    .where(eq(chatMessages.notebookId, notebookId))
+    .where(
+      sources && sources.length > 0
+        ? sql`${chatMessages.notebookId} = ${notebookId} AND ${chatMessages.source} IN (${sql.join(sources.map((source) => sql`${source}`), sql`, `)})`
+        : eq(chatMessages.notebookId, notebookId)
+    )
     .orderBy(asc(chatMessages.createdAt));
 
   return rows.map((row) => ({
@@ -45,7 +50,7 @@ export async function listChatMessages(
 /** Returns the number of chat messages for a notebook, optionally filtered by source. */
 export async function countChatMessages(
   notebookId: string,
-  source?: "manual" | "research"
+  source?: ChatMessageRecord["source"]
 ): Promise<number> {
   const rows = await db
     .select({ count: sql<number>`count(*)` })

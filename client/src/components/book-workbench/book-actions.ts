@@ -1,6 +1,39 @@
-import type { ResearchState } from "@/api/notebooks";
+import type { ChatMessage, ResearchState } from "@/api/notebooks";
 
-export function getResearchPrimaryActionLabel(researchState: ResearchState): string {
+export const DEFAULT_BOOK_RESEARCH_TARGET_COUNT = 20;
+
+export type ResearchActionPendingState = "starting" | "stopping" | null;
+
+export function countResearchAnsweredRounds(messages: ChatMessage[]): number {
+  let userCount = 0;
+  let assistantCount = 0;
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      userCount += 1;
+      continue;
+    }
+
+    if (message.role === "assistant") {
+      assistantCount += 1;
+    }
+  }
+
+  return Math.min(userCount, assistantCount);
+}
+
+export function getResearchPrimaryActionLabel(
+  researchState: ResearchState,
+  pendingState: ResearchActionPendingState = null,
+): string {
+  if (pendingState === "starting") {
+    return "启动中...";
+  }
+
+  if (pendingState === "stopping") {
+    return "停止中...";
+  }
+
   return researchState.status === "running" ? "停止自动研究" : "开始自动研究";
 }
 
@@ -10,6 +43,22 @@ export function getQuickReadActionLabel(loading: boolean): string {
   }
 
   return "快速读书";
+}
+
+export function getResearchRoundsCopy(answeredRounds: number): string {
+  return `当前共 ${answeredRounds} 轮问答`;
+}
+
+export function getResearchProgressCopy(researchState: ResearchState): string | null {
+  if (researchState.status === "idle") {
+    return null;
+  }
+
+  const target = researchState.targetCount > 0
+    ? researchState.targetCount
+    : DEFAULT_BOOK_RESEARCH_TARGET_COUNT;
+
+  return `${researchState.completedCount} / ${target}`;
 }
 
 export function getResearchStatusCopy(researchState: ResearchState): string {
@@ -24,8 +73,7 @@ export function getResearchStatusCopy(researchState: ResearchState): string {
   }
 
   if (researchState.status === "running") {
-    const target = researchState.targetCount > 0 ? researchState.targetCount : 20;
-    return `正在围绕当前书籍自动研究，已完成 ${researchState.completedCount} / ${target}。`;
+    return "正在围绕当前书籍自动研究，新的问题与回答会陆续写入中栏历史。";
   }
 
   return "围绕当前书籍自动生成问题并逐步整理回答，适合先快速摸清一本书的结构和重点。";

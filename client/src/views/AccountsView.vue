@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { api, type AuthStatus } from "@/api/client";
 import { formatTime } from "@/utils/format";
+import { getAccountsPageMaxWidth } from "./front-layout";
 
 type StatusTone = {
   label: string;
@@ -55,6 +56,7 @@ const statusMap: Record<AuthStatus["status"], StatusTone> = {
 };
 
 const hasAccounts = computed(() => accounts.value.length > 0);
+const pageMaxWidth = `${getAccountsPageMaxWidth()}px`;
 
 function isWaitingForLogin(accountId: string) {
   return loginWaitingIds.value.includes(accountId);
@@ -168,7 +170,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="accounts-page">
+  <div class="accounts-page" :style="{ maxWidth: pageMaxWidth }">
     <div class="page-header">
       <RouterLink class="back-link" to="/">返回首页</RouterLink>
       <div class="header-rule-top" />
@@ -187,8 +189,7 @@ onBeforeUnmount(() => {
       <p v-if="error && hasAccounts" class="state-error-banner">{{ error }}</p>
 
       <div v-if="loading && !hasAccounts" class="state-loading">
-        <span class="loading-dot" /><span class="loading-dot" /><span class="loading-dot" />
-        <span class="state-text">加载账号中</span>
+        正在加载账号...
       </div>
 
       <div v-else-if="error" class="state-error">
@@ -202,7 +203,7 @@ onBeforeUnmount(() => {
         <p class="empty-text">当服务端暴露账号后，这里会显示其登录状态与凭证操作。</p>
       </div>
 
-      <div v-else class="accounts-list">
+      <TransitionGroup v-else class="accounts-list" tag="div" name="accounts-folio">
         <article v-for="account in accounts" :key="account.accountId" class="account-card">
           <div class="account-main">
             <div class="account-meta">
@@ -252,7 +253,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </article>
-      </div>
+      </TransitionGroup>
     </div>
   </div>
 </template>
@@ -260,7 +261,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .accounts-page {
   min-height: 100%;
-  max-width: 760px;
   margin: 0 auto;
   padding: 0 1.5rem 4rem;
   background: #faf7f2;
@@ -351,32 +351,8 @@ onBeforeUnmount(() => {
 
 .state-loading {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  justify-content: flex-start;
   padding: 2rem 0;
-  color: rgba(44, 44, 44, 0.48);
-  font-size: 1rem;
-}
-
-.loading-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: currentColor;
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-.loading-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.loading-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-.state-text {
-  margin-left: 0.4rem;
 }
 
 .state-error {
@@ -441,6 +417,13 @@ onBeforeUnmount(() => {
   border: 1px solid #d4c9b0;
   background: rgba(255, 252, 246, 0.82);
   box-shadow: 0 1px 3px rgba(44, 44, 44, 0.06);
+  transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.account-card:hover {
+  transform: translateY(-2px);
+  border-color: #c7baa0;
+  background: rgba(255, 252, 246, 0.94);
 }
 
 .account-main {
@@ -517,7 +500,7 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   line-height: 1.4;
   cursor: pointer;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 
 .btn-primary {
@@ -528,6 +511,11 @@ onBeforeUnmount(() => {
 
 .btn-primary:hover:not(:disabled) {
   opacity: 0.88;
+}
+
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .btn-secondary {
@@ -546,16 +534,13 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-@keyframes pulse {
-  0%,
-  80%,
-  100% {
-    opacity: 0.25;
-  }
+.accounts-folio-enter-active {
+  transition: opacity 180ms ease-out, transform 200ms ease-out;
+}
 
-  40% {
-    opacity: 1;
-  }
+.accounts-folio-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
 @media (max-width: 640px) {
@@ -576,6 +561,16 @@ onBeforeUnmount(() => {
   .account-actions {
     width: 100%;
     min-width: 0;
+  }
+}
+
+@media (min-width: 900px) {
+  .page-title {
+    font-size: 2.15rem;
+  }
+
+  .header-note {
+    max-width: 24rem;
   }
 }
 </style>

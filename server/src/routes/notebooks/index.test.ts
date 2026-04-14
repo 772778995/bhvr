@@ -234,7 +234,7 @@ test("GET /api/notebooks falls back to browser home data when notebooklm-kit lis
       {
         id: "notebook-2",
         title: "快速读书",
-        updatedAt: "2026-04-13T08:46:31.030Z",
+        updatedAt: "2026-04-13T09:06:36.030Z",
         description: "",
       },
     ],
@@ -1631,4 +1631,57 @@ test("POST /api/notebooks/:id/book-finder/search returns explicit config error w
       process.env.OPENAI_MODEL = previousModel;
     }
   }
+});
+
+test("GET /api/notebooks/:id/messages excludes persisted book finder messages from normal history", async () => {
+  const notebookId = crypto.randomUUID();
+  const routeModule = await import("./index.js");
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+  const notebooks = routeModule.default;
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "user",
+    content: "普通手动提问",
+    source: "manual",
+  });
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "普通研究回答",
+    source: "research",
+  });
+
+  await insertChatMessage({
+    id: `book-finder-user:${crypto.randomUUID()}`,
+    notebookId,
+    role: "user",
+    content: "组织管理",
+    source: "book_finder",
+  });
+
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "# 快速找书结果\n\n检索主题：组织管理",
+    source: "book_finder",
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/messages`);
+  assert.equal(response.status, 200);
+
+  const body = await response.json() as {
+    success: boolean;
+    data: Array<{ id: string; content: string }>;
+  };
+
+  assert.equal(body.success, true);
+  assert.deepEqual(body.data.map((message) => message.content), [
+    "普通手动提问",
+    "普通研究回答",
+  ]);
 });

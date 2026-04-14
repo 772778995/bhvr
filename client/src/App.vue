@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useRoute } from "vue-router";
+import { RouterView, useRoute } from "vue-router";
 import { isWorkbenchRouteName } from "@/router/navigation";
+import { getRouteTransition } from "@/router/route-motion";
 
 const route = useRoute();
 const isWorkbenchRoute = computed(() => isWorkbenchRouteName(route.name));
+const routeTransition = computed(() => getRouteTransition({
+  to: typeof route.name === "string" ? route.name : null,
+}));
 </script>
 
 <template>
@@ -18,7 +22,11 @@ const isWorkbenchRoute = computed(() => isWorkbenchRouteName(route.name));
       </div>
     </header>
     <main :class="isWorkbenchRoute ? 'workbench-main' : 'default-main'">
-      <RouterView />
+      <RouterView v-slot="{ Component, route: activeRoute }">
+        <Transition :name="routeTransition.name" mode="out-in">
+          <component :is="Component" :key="activeRoute.fullPath" />
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>
@@ -45,7 +53,7 @@ const isWorkbenchRoute = computed(() => isWorkbenchRouteName(route.name));
 }
 
 .header-inner {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 0 1.5rem;
   height: 52px;
@@ -87,5 +95,29 @@ const isWorkbenchRoute = computed(() => isWorkbenchRouteName(route.name));
 .workbench-main {
   height: 100%;
   overflow: hidden;
+}
+
+:deep(.paper-route-enter-active) {
+  transition: opacity v-bind('`${routeTransition.durationEnterMs}ms`') ease-out,
+    transform v-bind('`${routeTransition.durationEnterMs}ms`') ease-out,
+    filter v-bind('`${routeTransition.durationEnterMs}ms`') ease-out;
+}
+
+:deep(.paper-route-leave-active) {
+  transition: opacity v-bind('`${routeTransition.durationLeaveMs}ms`') ease-in,
+    transform v-bind('`${routeTransition.durationLeaveMs}ms`') ease-in,
+    filter v-bind('`${routeTransition.durationLeaveMs}ms`') ease-in;
+}
+
+:deep(.paper-route-enter-from) {
+  opacity: 0;
+  transform: translate3d(0, v-bind('`${routeTransition.enterY}px`'), 0);
+  filter: saturate(0.96);
+}
+
+:deep(.paper-route-leave-to) {
+  opacity: 0;
+  transform: translate3d(0, v-bind('`${routeTransition.leaveY}px`'), 0);
+  filter: saturate(0.98);
 }
 </style>

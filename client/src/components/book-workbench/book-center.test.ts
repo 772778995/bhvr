@@ -13,11 +13,20 @@ import type { ReportEntry } from "@/api/notebooks";
 test("getBookCenterTabs hides summary tab until a summary exists", () => {
   assert.deepEqual(getBookCenterTabs(false), [
     { key: "history", label: "课题研究历史" },
+    { key: "book-finder", label: "快速找书" },
   ]);
   assert.deepEqual(getBookCenterTabs(true), [
     { key: "history", label: "课题研究历史" },
+    { key: "book-finder", label: "快速找书" },
     { key: "summary", label: "书籍总结" },
   ]);
+});
+
+test("getBookCenterTabs keeps 快速找书 as a dedicated middle tab", () => {
+  const tabs = getBookCenterTabs(true);
+
+  assert.equal(tabs[1]?.key, "book-finder");
+  assert.equal(tabs[1]?.label, "快速找书");
 });
 
 test("getBookSummaryEntry returns the latest builtin quick-read report", () => {
@@ -118,6 +127,7 @@ test("getBookSummaries returns builtin quick-read reports newest first", () => {
 test("getBookCenterTabIndicatorClass keeps markup decorative-only after moving underline to button edge", () => {
   assert.match(getBookCenterTabIndicatorClass(true), /sr-only/);
   assert.equal(getBookCenterTabIndicatorClass(false), getBookCenterTabIndicatorClass(true));
+  assert.doesNotMatch(getBookCenterTabIndicatorClass(true), /当前标签/);
 });
 
 test("getBookCenterTabButtonClass uses a stable bottom border for the active underline", () => {

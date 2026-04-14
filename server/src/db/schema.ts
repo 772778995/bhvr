@@ -207,7 +207,7 @@ export const chatMessages = sqliteTable(
     notebookId: text("notebook_id").notNull(),
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
-    source: text("source", { enum: ["manual", "research"] }).notNull(),
+    source: text("source", { enum: ["manual", "research", "book_finder"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

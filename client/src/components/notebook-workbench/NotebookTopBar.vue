@@ -1,6 +1,8 @@
 <script setup lang="ts">
 interface Props {
   title: string;
+  backLabel?: string;
+  onBack?: () => void;
   onShare?: () => void;
   onMore?: () => void;
 }
@@ -11,12 +13,22 @@ const props = defineProps<Props>();
 <template>
   <header class="border-b border-[#d7cfbf] bg-[#f6f0e3] px-4 py-3 text-[#2e261d] sm:px-6">
     <div class="flex items-center justify-between gap-4">
-      <h1
-        class="min-w-0 truncate text-[1.25rem] font-semibold text-[#2f2418] sm:text-[1.45rem] transition-opacity duration-200"
-        style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;"
-      >
-        {{ title }}
-      </h1>
+      <div class="min-w-0 flex items-center gap-3">
+        <button
+          v-if="props.onBack"
+          type="button"
+          class="shrink-0 border border-[#d8cfbf] bg-transparent px-3 py-1.5 text-base text-[#5d503f] transition-all duration-100 ease-in-out hover:bg-[#efe7d7] active:scale-95"
+          @click="props.onBack"
+        >
+          {{ props.backLabel ?? "返回" }}
+        </button>
+        <h1
+          class="min-w-0 truncate text-[1.25rem] font-semibold text-[#2f2418] sm:text-[1.45rem] transition-opacity duration-200"
+          style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;"
+        >
+          {{ title }}
+        </h1>
+      </div>
       <div v-if="props.onShare || props.onMore" class="flex shrink-0 items-center gap-2">
         <button
           v-if="props.onShare"
