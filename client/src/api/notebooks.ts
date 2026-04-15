@@ -253,6 +253,12 @@ export const notebooksApi = {
     });
   },
 
+  deleteNotebook(id: string) {
+    return request<{ id: string }>(`/api/notebooks/${id}`, {
+      method: "DELETE",
+    });
+  },
+
   getNotebook(id: string) {
     return request<Notebook>(`/api/notebooks/${id}`);
   },

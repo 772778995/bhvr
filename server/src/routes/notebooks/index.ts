@@ -10,6 +10,7 @@ import {
   addSourceFromUrl,
   askNotebookForResearch,
   createNotebook,
+  deleteNotebook,
   deleteSource,
   ensureNotebookAccessible,
   getNotebookDetail,
@@ -33,7 +34,7 @@ import { parseNotebookIdOrNull } from "./validate.js";
 import { countChatMessages } from "../../db/chat-messages.js";
 import { eq } from "drizzle-orm";
 import db from "../../db/index.js";
-import { summaryPresets } from "../../db/schema.js";
+import { artifacts, chatMessages, notebookSourceStates, reportEntries, researchReports, summaryPresets } from "../../db/schema.js";
 import {
   insertArtifactEntry,
   markArtifactEntryReady,
@@ -306,6 +307,30 @@ async function withNotebookAuthHandling(handler: () => Promise<Response>): Promi
   }
 }
 
+async function deleteNotebookLocalData(notebookId: string): Promise<void> {
+  const entryRows = await listEntriesByNotebookId(notebookId);
+
+  for (const entry of entryRows) {
+    if (!entry.filePath) {
+      continue;
+    }
+
+    const dir = resolveFilesDir();
+    const fullPath = resolve(dir, entry.filePath);
+    try {
+      await unlink(fullPath);
+    } catch (err) {
+      logger.warn({ err, notebookId, filePath: entry.filePath }, "Failed to delete notebook file (non-fatal)");
+    }
+  }
+
+  await db.delete(reportEntries).where(eq(reportEntries.notebookId, notebookId));
+  await db.delete(chatMessages).where(eq(chatMessages.notebookId, notebookId));
+  await db.delete(notebookSourceStates).where(eq(notebookSourceStates.notebookId, notebookId));
+  await db.delete(researchReports).where(eq(researchReports.notebookId, notebookId));
+  await db.delete(artifacts).where(eq(artifacts.notebookId, notebookId));
+}
+
 notebooks.get("/", async (c) => {
   return await withNotebookAuthHandling(async () => {
     const response = await listNotebooks();
@@ -322,6 +347,32 @@ notebooks.post("/", async (c) => {
       : "新笔记本";
     const notebook = await createNotebook({ title });
     return c.json(successResponse(notebook), 201);
+  });
+});
+
+notebooks.delete("/:id", async (c) => {
+  return await withNotebookId(c, async (id) => {
+    if (isRunning(id)) {
+      return c.json(
+        {
+          success: false,
+          message: "该笔记已有研究任务正在运行，无法删除",
+          errorCode: "RESEARCH_ALREADY_RUNNING",
+        },
+        409
+      );
+    }
+
+    return await withNotebookAuthHandling(async () => {
+      await deleteNotebook(id);
+      try {
+        await deleteNotebookLocalData(id);
+      } catch (err) {
+        logger.error({ err, notebookId: id }, "deleteNotebookLocalData failed");
+        return c.json({ success: false, message: "Failed to clean up deleted notebook data", errorCode: "INTERNAL_SERVER_ERROR" }, 500);
+      }
+      return c.json(successResponse({ id }));
+    });
   });
 });
 

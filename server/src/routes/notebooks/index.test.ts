@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -162,6 +162,174 @@ test("listNotebooks normalizes SDK output and GET /api/notebooks returns success
       },
     ],
   });
+});
+
+test("DELETE /api/notebooks/:id deletes notebook and returns successResponse", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const notebookId = crypto.randomUUID();
+  const deletedNotebookIds: string[] = [];
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function connect() {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        delete: async (ids: string | string[]) => {
+          const normalizedIds = Array.isArray(ids) ? ids : [ids];
+          deletedNotebookIds.push(...normalizedIds);
+          return {
+            deleted: normalizedIds,
+            count: normalizedIds.length,
+          };
+        },
+      };
+    },
+  });
+
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}`, {
+    method: "DELETE",
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { id: notebookId },
+  });
+  assert.deepEqual(deletedNotebookIds, [notebookId]);
+});
+
+test("DELETE /api/notebooks/:id removes notebook-scoped local records and files", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const notebookId = crypto.randomUUID();
+  const deletedNotebookIds: string[] = [];
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function connect() {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        delete: async (ids: string | string[]) => {
+          const normalizedIds = Array.isArray(ids) ? ids : [ids];
+          deletedNotebookIds.push(...normalizedIds);
+          return {
+            deleted: normalizedIds,
+            count: normalizedIds.length,
+          };
+        },
+      };
+    },
+  });
+
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+  const { insertReportEntry, listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const { insertChatMessage, listChatMessages } = await import("../../db/chat-messages.js");
+  const { setSourceEnabled, listSourceStateMap } = await import("../../source-state/service.js");
+  const { resolveFilesDir } = await import("../../lib/files-dir.js");
+
+  const entry = await insertReportEntry({
+    notebookId,
+    title: "Notebook report",
+    content: null,
+    filePath: `report-${notebookId}.md`,
+  });
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "user",
+    content: "hello",
+    source: "manual",
+  });
+  await setSourceEnabled(notebookId, "source-1", false);
+  const filePath = join(resolveFilesDir(), entry.filePath ?? "");
+  writeFileSync(filePath, "temporary content");
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    await disposeClient();
+  });
+
+  const deleteResponse = await notebooks.request(`http://localhost/${notebookId}`, {
+    method: "DELETE",
+  });
+
+  assert.equal(deleteResponse.status, 200);
+  assert.deepEqual(deletedNotebookIds, [notebookId]);
+  assert.deepEqual(await listEntriesByNotebookId(notebookId), []);
+  assert.deepEqual(await listChatMessages(notebookId), []);
+  assert.deepEqual(Array.from((await listSourceStateMap(notebookId)).entries()), []);
+  assert.equal(existsSync(filePath), false);
+
+  const entriesResponse = await notebooks.request(`http://localhost/${notebookId}/entries`);
+  assert.equal(entriesResponse.status, 200);
+  assert.deepEqual(await entriesResponse.json(), {
+    success: true,
+    data: [],
+  });
+
+  const messagesResponse = await notebooks.request(`http://localhost/${notebookId}/messages`);
+  assert.equal(messagesResponse.status, 200);
+  assert.deepEqual(await messagesResponse.json(), {
+    success: true,
+    data: [],
+  });
+});
+
+test("DELETE /api/notebooks/:id rejects deletion while research is running", async () => {
+  const notebookId = crypto.randomUUID();
+  const routeModule = await import("./index.js");
+  const notebooks = routeModule.default;
+
+  registry.start(notebookId, 3);
+
+  try {
+    const response = await notebooks.request(`http://localhost/${notebookId}`, {
+      method: "DELETE",
+    });
+
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "该笔记已有研究任务正在运行，无法删除",
+      errorCode: "RESEARCH_ALREADY_RUNNING",
+    });
+  } finally {
+    registry.stop(notebookId);
+  }
 });
 
 test("GET /api/notebooks falls back to browser home data when notebooklm-kit list is denied", async (t) => {

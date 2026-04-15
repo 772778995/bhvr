@@ -1,16 +1,30 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import { formatTime } from "@/utils/format";
-import { notebooksApi, type Notebook } from "@/api/notebooks";
-import { createNotebookWorkbenchPath } from "./notebook-list-view";
+import { notebooksApi } from "@/api/notebooks";
+import { createNotebookListViewModel, createNotebookWorkbenchPath } from "./notebook-list-view";
 import { getNotebookListMaxWidth } from "./front-layout";
 
 const router = useRouter();
-
-const notebooks = ref<Notebook[]>([]);
-const loading = ref(true);
-const error = ref("");
+const {
+  notebooks,
+  loading,
+  error,
+  actionError,
+  pendingDeleteNotebook,
+  deletingNotebookId,
+  openNotebook,
+  requestDeleteNotebook,
+  cancelDeleteNotebook,
+  confirmDeleteNotebook,
+} = createNotebookListViewModel({
+  onMounted,
+  navigate: (path: string) => {
+    void router.push(path);
+  },
+});
 
 // 新建笔记本状态
 const showCreateModal = ref(false);
@@ -18,23 +32,6 @@ const createTitle = ref("");
 const creating = ref(false);
 const createError = ref("");
 const pageMaxWidth = `${getNotebookListMaxWidth()}px`;
-
-async function load() {
-  loading.value = true;
-  try {
-    notebooks.value = await notebooksApi.getNotebooks();
-    error.value = "";
-  } catch (cause) {
-    notebooks.value = [];
-    error.value = cause instanceof Error ? cause.message : "笔记本列表加载失败";
-  } finally {
-    loading.value = false;
-  }
-}
-
-function openNotebook(id: string) {
-  void router.push(createNotebookWorkbenchPath(id));
-}
 
 function openCreateModal() {
   createTitle.value = "";
@@ -70,8 +67,6 @@ async function handleCreate() {
 function handleModalKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") closeCreateModal();
 }
-
-onMounted(load);
 </script>
 
 <template>
@@ -82,9 +77,9 @@ onMounted(load);
       <div class="page-header">
         <div class="header-rule-top" />
         <div class="header-content">
-          <h1 class="page-title">我的笔记本</h1>
+          <h1 class="page-title">锐捷读书</h1>
           <button class="btn-create" type="button" @click="openCreateModal">
-            新建笔记本
+            新建读书笔记
           </button>
         </div>
         <div class="header-rule-bottom" />
@@ -92,6 +87,11 @@ onMounted(load);
 
       <!-- 内容区 -->
       <div class="page-body">
+        <div v-if="actionError" class="state-error state-inline-error">
+          <span class="error-mark">✕</span>
+          <span>{{ actionError }}</span>
+        </div>
+
         <!-- 加载状态 -->
         <div v-if="loading" class="state-loading">正在加载目录...</div>
 
@@ -110,15 +110,13 @@ onMounted(load);
 
         <!-- 笔记本列表 -->
         <TransitionGroup v-else class="notebook-list" tag="div" name="list-folio">
-          <button
+          <article
             v-for="notebook in notebooks"
             :key="notebook.id"
-            type="button"
             class="notebook-card"
-            @click="openNotebook(notebook.id)"
           >
             <div class="card-spine" />
-            <div class="card-body">
+            <button type="button" class="card-body" @click="openNotebook(notebook.id)">
               <div class="card-main">
                 <p class="card-title">{{ notebook.title }}</p>
                 <p v-if="notebook.description.trim()" class="card-desc">
@@ -129,8 +127,17 @@ onMounted(load);
                 <span class="card-time">{{ formatTime(notebook.updatedAt) }}</span>
                 <span class="card-arrow">→</span>
               </div>
-            </div>
-          </button>
+            </button>
+            <button
+              type="button"
+              class="card-delete"
+              :disabled="deletingNotebookId === notebook.id"
+              :aria-label="`删除《${notebook.title}》`"
+              @click="requestDeleteNotebook(notebook)"
+            >
+              {{ deletingNotebookId === notebook.id ? "删除中…" : "删除" }}
+            </button>
+          </article>
         </TransitionGroup>
       </div>
     </div>
@@ -193,6 +200,16 @@ onMounted(load);
         </div>
       </div>
     </Transition>
+
+    <ConfirmDialog
+      :visible="pendingDeleteNotebook !== null"
+      title="删除笔记本"
+      :message="`确定要删除《${pendingDeleteNotebook?.title ?? ''}》吗？此操作不可撤销。`"
+      confirm-text="删除"
+      :danger="true"
+      @confirm="confirmDeleteNotebook"
+      @cancel="cancelDeleteNotebook"
+    />
   </div>
 </template>
 
@@ -277,6 +294,10 @@ onMounted(load);
   border-radius: 2px;
 }
 
+.state-inline-error {
+  margin-bottom: 1rem;
+}
+
 .error-mark {
   font-size: 0.8rem;
   opacity: 0.7;
@@ -316,13 +337,11 @@ onMounted(load);
 
 .notebook-card {
   display: flex;
+  align-items: stretch;
   width: 100%;
-  text-align: left;
   background: transparent;
-  border: none;
   border-bottom: 1px solid rgba(47, 39, 31, 0.15);
   padding: 0;
-  cursor: pointer;
   transition: background-color 0.16s ease, transform 0.14s ease;
 }
 
@@ -330,12 +349,14 @@ onMounted(load);
   border-top: 1px solid rgba(47, 39, 31, 0.15);
 }
 
-.notebook-card:hover {
+.notebook-card:hover,
+.notebook-card:focus-within {
   background-color: rgba(47, 39, 31, 0.04);
   transform: translateX(3px);
 }
 
-.notebook-card:hover .card-arrow {
+.notebook-card:hover .card-arrow,
+.notebook-card:focus-within .card-arrow {
   transform: translateX(3px);
 }
 
@@ -347,7 +368,8 @@ onMounted(load);
   border-radius: 0;
 }
 
-.notebook-card:hover .card-spine {
+.notebook-card:hover .card-spine,
+.notebook-card:focus-within .card-spine {
   background-color: #2f271f;
 }
 
@@ -358,6 +380,18 @@ onMounted(load);
   justify-content: space-between;
   gap: 1.5rem;
   padding: 1.15rem 1rem 1.15rem 0.95rem;
+   min-width: 0;
+   text-align: left;
+   font: inherit;
+   color: inherit;
+   background: transparent;
+   border: none;
+   cursor: pointer;
+}
+
+.card-body:focus-visible {
+  outline: 2px solid rgba(47, 39, 31, 0.24);
+  outline-offset: -2px;
 }
 
 .card-main {
@@ -403,6 +437,37 @@ onMounted(load);
   font-size: 0.95rem;
   transition: transform 0.15s ease;
   color: rgba(47, 39, 31, 0.35);
+}
+
+.card-delete {
+  align-self: center;
+  flex-shrink: 0;
+  margin-right: 0.95rem;
+  padding: 0.38rem 0.68rem;
+  font-size: 0.82rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: #7a2010;
+  background: transparent;
+  border: 1px solid rgba(122, 32, 16, 0.18);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.card-delete:hover:not(:disabled),
+.card-delete:focus-visible {
+  background: rgba(122, 32, 16, 0.08);
+  border-color: rgba(122, 32, 16, 0.36);
+}
+
+.card-delete:focus-visible {
+  outline: none;
+}
+
+.card-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ─── 弹窗 ─────────────────────────────────────── */

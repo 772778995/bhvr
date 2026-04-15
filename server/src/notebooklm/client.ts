@@ -1174,6 +1174,18 @@ export async function createNotebook(input: CreateNotebookInput): Promise<Notebo
   }
 }
 
+export async function deleteNotebook(notebookId: string): Promise<void> {
+  try {
+    await runNotebookRequest(async (client) => {
+      await client.notebooks.delete(notebookId);
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ notebookId, err }, "deleteNotebook: sdk.notebooks.delete failed");
+    throw new Error(`Failed to delete notebook: ${message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Artifact operations
 // ---------------------------------------------------------------------------

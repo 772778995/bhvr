@@ -81,3 +81,81 @@ test("view model registers load on mounted and navigates through router push", a
 
   assert.deepEqual(calls, ["load", "/book/nb-7"]);
 });
+
+test("requestDeleteNotebook and cancelDeleteNotebook track the pending notebook", async () => {
+  const notebook: Notebook = {
+    id: "nb-1",
+    title: "Weekly research",
+    description: "Latest notes",
+    updatedAt: "2026-04-07T10:00:00.000Z",
+  };
+
+  const state = createNotebookListState({
+    fetchNotebooks: async () => [notebook],
+  });
+
+  await state.load();
+  state.requestDeleteNotebook(notebook);
+  assert.equal(state.pendingDeleteNotebook.value?.id, "nb-1");
+
+  state.cancelDeleteNotebook();
+  assert.equal(state.pendingDeleteNotebook.value, null);
+});
+
+test("confirmDeleteNotebook removes the deleted notebook from the list", async () => {
+  const notebooks: Notebook[] = [
+    {
+      id: "nb-1",
+      title: "Weekly research",
+      description: "Latest notes",
+      updatedAt: "2026-04-07T10:00:00.000Z",
+    },
+    {
+      id: "nb-2",
+      title: "Archive",
+      description: "",
+      updatedAt: "2026-04-06T10:00:00.000Z",
+    },
+  ];
+  const deleted: string[] = [];
+
+  const state = createNotebookListState({
+    fetchNotebooks: async () => notebooks,
+    deleteNotebook: async (id: string) => {
+      deleted.push(id);
+    },
+  });
+
+  await state.load();
+  state.requestDeleteNotebook(notebooks[0]);
+  await state.confirmDeleteNotebook();
+
+  assert.deepEqual(deleted, ["nb-1"]);
+  assert.deepEqual(state.notebooks.value.map((notebook) => notebook.id), ["nb-2"]);
+  assert.equal(state.pendingDeleteNotebook.value, null);
+  assert.equal(state.actionError.value, "");
+});
+
+test("confirmDeleteNotebook keeps the list and stores an action error when deletion fails", async () => {
+  const notebook: Notebook = {
+    id: "nb-1",
+    title: "Weekly research",
+    description: "Latest notes",
+    updatedAt: "2026-04-07T10:00:00.000Z",
+  };
+
+  const state = createNotebookListState({
+    fetchNotebooks: async () => [notebook],
+    deleteNotebook: async () => {
+      throw new Error("delete failed");
+    },
+  });
+
+  await state.load();
+  state.requestDeleteNotebook(notebook);
+  await state.confirmDeleteNotebook();
+
+  assert.deepEqual(state.notebooks.value, [notebook]);
+  assert.equal(state.pendingDeleteNotebook.value, null);
+  assert.equal(state.actionError.value, "delete failed");
+});

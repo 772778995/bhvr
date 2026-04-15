@@ -58,3 +58,26 @@ test("getChatMessages requests the dedicated manual chat endpoint", async () => 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("deleteNotebook requests the notebook deletion endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedMethod = "";
+
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    assert.equal(String(input), "/api/notebooks/book-1");
+    capturedMethod = init?.method ?? "GET";
+
+    return new Response(JSON.stringify({ success: true, data: { id: "book-1" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const result = await notebooksApi.deleteNotebook("book-1");
+    assert.equal(capturedMethod, "DELETE");
+    assert.deepEqual(result, { id: "book-1" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

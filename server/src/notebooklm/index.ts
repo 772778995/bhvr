@@ -20,6 +20,7 @@ export {
   deleteSource,
   sendNotebookChatMessage,
   createNotebook,
+  deleteNotebook,
   // Artifact operations
   createArtifact,
   getArtifact,
