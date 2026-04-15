@@ -374,7 +374,8 @@ function formatDuration(seconds: number | undefined): string {
           class="space-y-4"
         >
           <div class="border border-[#d8cfbe] bg-[#fbf6ed] px-4 py-4 text-base leading-7 text-[#5d4f3d]">
-            当前展示的是书籍导图的 Markdown 回退摘要，说明 JSON 导图暂未生成成功或当前环境缺少导图转换配置。
+            <p>当前展示的是这次“书籍导图”生成流程保留下来的摘要回退内容。</p>
+            <p class="mt-2 text-sm leading-6 text-[#756553]">本次产出没有生成可渲染的 JSON 导图，但你仍然可以先阅读这份摘要。</p>
           </div>
           <p v-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
             正在加载报告内容…

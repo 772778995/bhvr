@@ -45,6 +45,7 @@ const notebook = ref<Notebook | null>(null);
 const sources = ref<Source[]>([]);
 const uploadDialogOpen = ref(false);
 const deletingSourceId = ref<string | null>(null);
+const deletingSummaryEntryId = ref<string | null>(null);
 const progressMessage = ref("");
 const activeCenterTab = ref<"chat" | "summary" | "book-finder">("chat");
 const reportEntries = ref<ReportEntry[]>([]);
@@ -113,6 +114,7 @@ function resetWorkbenchState() {
   bookFinderPersistedMessages.value = [];
   progressMessage.value = "";
   deletingSourceId.value = null;
+  deletingSummaryEntryId.value = null;
   generatingBookSummary.value = false;
   generatingDeepReading.value = false;
   generatingMindmap.value = false;
@@ -273,6 +275,14 @@ function onCancelDeleteSource() {
   deletingSourceId.value = null;
 }
 
+function onRequestDeleteSummaryEntry(entryId: string) {
+  deletingSummaryEntryId.value = entryId;
+}
+
+function onCancelDeleteSummaryEntry() {
+  deletingSummaryEntryId.value = null;
+}
+
 async function onConfirmDeleteSource() {
   if (!notebookId.value || !deletingSourceId.value) {
     return;
@@ -288,6 +298,32 @@ async function onConfirmDeleteSource() {
     showToast("当前书籍已删除。", "info");
   } catch (err) {
     showToast(err instanceof Error ? err.message : "删除书籍失败", "error");
+  }
+}
+
+async function onConfirmDeleteSummaryEntry() {
+  if (!notebookId.value || !deletingSummaryEntryId.value) {
+    return;
+  }
+
+  const entryId = deletingSummaryEntryId.value;
+  deletingSummaryEntryId.value = null;
+
+  try {
+    await notebooksApi.deleteEntry(notebookId.value, entryId);
+    await refreshReportEntries();
+
+    const stillSelected = selectedSummaryEntryId.value
+      ? bookSummaries.value.some((entry) => entry.id === selectedSummaryEntryId.value)
+      : false;
+
+    if (!stillSelected) {
+      selectedSummaryEntryId.value = bookSummaries.value[0]?.id ?? null;
+    }
+
+    showToast("阅读产出已删除。", "info");
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "删除阅读产出失败", "error");
   }
 }
 
@@ -615,6 +651,7 @@ watch(
           :on-configure-deep-reading="openDeepReadingPromptDialog"
           :on-mindmap="onGenerateMindmap"
           :on-select-entry="onSelectSummaryEntry"
+          :on-delete-history-entry="onRequestDeleteSummaryEntry"
         />
       </template>
 
@@ -635,6 +672,17 @@ watch(
         :danger="true"
         @confirm="onConfirmDeleteSource"
         @cancel="onCancelDeleteSource"
+      />
+
+      <ConfirmDialog
+        :visible="Boolean(deletingSummaryEntryId)"
+        title="删除阅读产出"
+        message="删除后，这条阅读产出会从历史版本中移除，且无法恢复。"
+        confirm-text="删除"
+        cancel-text="取消"
+        :danger="true"
+        @confirm="onConfirmDeleteSummaryEntry"
+        @cancel="onCancelDeleteSummaryEntry"
       />
 
       <div

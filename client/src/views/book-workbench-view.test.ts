@@ -345,7 +345,8 @@ test("ReportDetailPanel renders book mindmap entries with markdown fallback", ()
   assert.match(source, /presetId === "builtin-book-mindmap"/);
   assert.match(source, /contentJson\?\.kind === "book_mindmap"/);
   assert.match(source, /导图 JSON 不可用时，退回 Markdown 摘要/);
-  assert.match(source, /当前展示的是书籍导图的 Markdown 回退摘要/);
+  assert.match(source, /当前展示的是这次“书籍导图”生成流程保留下来的摘要回退内容。/);
+  assert.match(source, /本次产出没有生成可渲染的 JSON 导图，但你仍然可以先阅读这份摘要。/);
 });
 
 test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {
@@ -354,4 +355,17 @@ test("ReportDetailPanel prioritizes book mindmap rendering before markdown loadi
   assert.match(source, /v-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"/);
   assert.match(source, /v-else-if="contentLoading"/);
   assert.match(source, /v-else-if="contentError"/);
+});
+
+test("BookWorkbenchView wires history entry deletion through the shared confirm dialog flow", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /const deletingSummaryEntryId = ref<string \| null>\(null\)/);
+  assert.match(source, /function onRequestDeleteSummaryEntry\(entryId: string\) \{[\s\S]*deletingSummaryEntryId\.value = entryId;[\s\S]*\}/);
+  assert.match(source, /async function onConfirmDeleteSummaryEntry\(\) \{[\s\S]*notebooksApi\.deleteEntry\(notebookId\.value, entryId\)/);
+  assert.match(source, /showToast\("阅读产出已删除。", "info"\)/);
+  assert.match(source, /:on-delete-history-entry="onRequestDeleteSummaryEntry"/);
+  assert.match(source, /title="删除阅读产出"/);
+  assert.match(source, /message="删除后，这条阅读产出会从历史版本中移除，且无法恢复。"/);
+  assert.match(source, /@confirm="onConfirmDeleteSummaryEntry"/);
 });

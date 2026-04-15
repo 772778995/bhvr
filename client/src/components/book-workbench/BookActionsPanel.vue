@@ -17,6 +17,7 @@ interface Props {
   onConfigureDeepReading: () => void | Promise<void>;
   onMindmap: () => void | Promise<void>;
   onSelectEntry: (entryId: string) => void;
+  onDeleteHistoryEntry: (entryId: string) => void | Promise<void>;
 }
 
 const props = defineProps<Props>();
@@ -52,19 +53,35 @@ function formatTime(raw: string): string {
           历史版本
         </div>
         <div v-if="hasHistory" class="mt-4 min-h-0 flex-1 overflow-y-auto pr-1 space-y-2">
-          <button
+          <div
             v-for="entry in historyEntries"
             :key="entry.id"
-            type="button"
-            class="w-full border px-3 py-3 text-left transition-colors duration-100"
-            :class="selectedEntryId === entry.id
-              ? 'border-[#3a2e20] bg-[#efe1c5] text-[#2f271f]'
-              : 'border-[#d7ccb8] bg-[#fffaf1] text-[#5d4f3d] hover:border-[#c7b89d] hover:bg-[#f4ecd9]'"
-            @click="onSelectEntry(entry.id)"
+            class="relative"
           >
-            <p class="text-base leading-6 font-medium">{{ entry.title || '未命名阅读产出' }}</p>
-            <p class="mt-2 text-sm leading-6 text-[#8a7864]">{{ formatTime(entry.updatedAt) }}</p>
-          </button>
+            <button
+              type="button"
+              class="w-full border px-3 py-3 pr-12 text-left transition-colors duration-100"
+              :class="selectedEntryId === entry.id
+                ? 'border-[#3a2e20] bg-[#efe1c5] text-[#2f271f]'
+                : 'border-[#d7ccb8] bg-[#fffaf1] text-[#5d4f3d] hover:border-[#c7b89d] hover:bg-[#f4ecd9]'"
+              @click="onSelectEntry(entry.id)"
+            >
+              <p class="text-base leading-6 font-medium">{{ entry.title || '未命名阅读产出' }}</p>
+              <p class="mt-2 text-sm leading-6 text-[#8a7864]">{{ formatTime(entry.updatedAt) }}</p>
+            </button>
+            <button
+              type="button"
+              class="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center text-[#8a7864] transition-all duration-100 hover:bg-[#eadfc9] hover:text-[#4b3e2f] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="Boolean(busy)"
+              aria-label="删除阅读产出"
+              @click.stop="onDeleteHistoryEntry(entry.id)"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 4l8 8" />
+                <path d="M12 4 4 12" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div v-else class="mt-4 flex flex-1 items-center border border-dashed border-[#d7ccb8] bg-[#fbf6ed] px-4 text-base leading-7 text-[#8a7864]">
           暂无阅读产出。生成后会在这里按时间沉淀版本记录。
