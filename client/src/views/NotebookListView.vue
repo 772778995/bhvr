@@ -123,9 +123,8 @@ function handleModalKeydown(e: KeyboardEvent) {
                   {{ notebook.description }}
                 </p>
               </div>
-              <div class="card-meta">
+<div class="card-meta">
                 <span class="card-time">{{ formatTime(notebook.updatedAt) }}</span>
-                <span class="card-arrow">→</span>
               </div>
             </button>
 <button
@@ -474,11 +473,12 @@ function handleModalKeydown(e: KeyboardEvent) {
   border: none;
   border-radius: 2px;
   cursor: pointer;
-  transition: color 0.12s ease, opacity 0.12s ease;
+  transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 
 .card-delete:hover:not(:disabled),
 .card-delete:focus-visible {
+  background-color: rgba(122, 32, 16, 0.1);
   color: #b82820;
 }
 
