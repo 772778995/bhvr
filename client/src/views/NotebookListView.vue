@@ -128,14 +128,34 @@ function handleModalKeydown(e: KeyboardEvent) {
                 <span class="card-arrow">→</span>
               </div>
             </button>
-            <button
+<button
               type="button"
               class="card-delete"
               :disabled="deletingNotebookId === notebook.id"
               :aria-label="`删除《${notebook.title}》`"
               @click="requestDeleteNotebook(notebook)"
             >
-              {{ deletingNotebookId === notebook.id ? "删除中…" : "删除" }}
+              <svg
+                v-if="deletingNotebookId === notebook.id"
+                class="icon-sm"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" />
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+              </svg>
+              <svg
+                v-else
+                class="icon-sm"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
             </button>
           </article>
         </TransitionGroup>
@@ -442,23 +462,24 @@ function handleModalKeydown(e: KeyboardEvent) {
 .card-delete {
   align-self: center;
   flex-shrink: 0;
-  margin-right: 0.95rem;
-  padding: 0.38rem 0.68rem;
-  font-size: 0.82rem;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  color: #7a2010;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-right: 0.6rem;
+  padding: 0;
+  color: #8a3020;
   background: transparent;
-  border: 1px solid rgba(122, 32, 16, 0.18);
+  border: none;
   border-radius: 2px;
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  transition: color 0.12s ease, opacity 0.12s ease;
 }
 
 .card-delete:hover:not(:disabled),
 .card-delete:focus-visible {
-  background: rgba(122, 32, 16, 0.08);
-  border-color: rgba(122, 32, 16, 0.36);
+  color: #b82820;
 }
 
 .card-delete:focus-visible {
@@ -468,6 +489,11 @@ function handleModalKeydown(e: KeyboardEvent) {
 .card-delete:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.icon-sm {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 
 /* ─── 弹窗 ─────────────────────────────────────── */
