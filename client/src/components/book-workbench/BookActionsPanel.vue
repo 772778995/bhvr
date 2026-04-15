@@ -8,10 +8,12 @@ interface Props {
   busy?: boolean;
   quickReadLoading?: boolean;
   deepReadingLoading?: boolean;
+  mindmapLoading?: boolean;
   historyEntries: ReportEntry[];
   selectedEntryId?: string | null;
   onQuickRead: () => void | Promise<void>;
   onDeepReading: () => void | Promise<void>;
+  onMindmap: () => void | Promise<void>;
   onSelectEntry: (entryId: string) => void;
 }
 
@@ -19,9 +21,11 @@ const props = defineProps<Props>();
 
 const quickReadLabel = computed(() => getBookActionLabel("quick-read", Boolean(props.quickReadLoading)));
 const deepReadingLabel = computed(() => getBookActionLabel("deep-reading", Boolean(props.deepReadingLoading)));
-const actionBusy = computed(() => Boolean(props.quickReadLoading) || Boolean(props.deepReadingLoading));
+const mindmapLabel = computed(() => getBookActionLabel("mindmap", Boolean(props.mindmapLoading)));
+const actionBusy = computed(() => Boolean(props.quickReadLoading) || Boolean(props.deepReadingLoading) || Boolean(props.mindmapLoading));
 const quickReadDisabled = computed(() => !props.hasBook || Boolean(props.busy) || actionBusy.value);
 const deepReadingDisabled = computed(() => !props.hasBook || Boolean(props.busy) || actionBusy.value);
+const mindmapDisabled = computed(() => !props.hasBook || Boolean(props.busy) || actionBusy.value);
 const hasHistory = computed(() => props.historyEntries.length > 0);
 
 function formatTime(raw: string): string {
@@ -56,12 +60,12 @@ function formatTime(raw: string): string {
               : 'border-[#d7ccb8] bg-[#fffaf1] text-[#5d4f3d] hover:border-[#c7b89d] hover:bg-[#f4ecd9]'"
             @click="onSelectEntry(entry.id)"
           >
-            <p class="text-base leading-6 font-medium">{{ entry.title || '未命名总结' }}</p>
+            <p class="text-base leading-6 font-medium">{{ entry.title || '未命名阅读产出' }}</p>
             <p class="mt-2 text-sm leading-6 text-[#8a7864]">{{ formatTime(entry.updatedAt) }}</p>
           </button>
         </div>
         <div v-else class="mt-4 flex flex-1 items-center border border-dashed border-[#d7ccb8] bg-[#fbf6ed] px-4 text-base leading-7 text-[#8a7864]">
-          暂无书籍总结。生成后会在这里按时间沉淀版本记录。
+          暂无阅读产出。生成后会在这里按时间沉淀版本记录。
         </div>
       </section>
 
@@ -70,7 +74,7 @@ function formatTime(raw: string): string {
           阅读操作
         </div>
         <p class="mt-3 text-base leading-7 text-[#5d4f3d]">
-          直接基于当前上传书籍生成书籍简述或详细解读，不再依赖额外问答历史。
+          直接基于当前上传书籍生成书籍简述、详细解读或书籍导图。
         </p>
         <button
           type="button"
@@ -90,8 +94,17 @@ function formatTime(raw: string): string {
           {{ deepReadingLabel }}
         </button>
 
+        <button
+          type="button"
+          class="mt-3 inline-flex w-full items-center justify-center border border-[#cab79c] bg-[#e8dfcf] px-4 py-3 text-base text-[#4b3e2f] transition-all duration-100 hover:bg-[#ddd2c0] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="mindmapDisabled"
+          @click="onMindmap"
+        >
+          {{ mindmapLabel }}
+        </button>
+
         <p v-if="!hasBook" class="mt-3 text-sm leading-6 text-[#8a7864]">
-          先在左侧上传一本书，再生成书籍简述或详细解读。
+          先在左侧上传一本书，再生成书籍简述、详细解读或书籍导图。
         </p>
       </section>
     </div>

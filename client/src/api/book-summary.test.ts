@@ -54,3 +54,26 @@ test("generateBookSummary supports the builtin deep-reading preset", async () =>
     globalThis.fetch = originalFetch;
   }
 });
+
+test("generateBookSummary supports the builtin book mindmap preset", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody: unknown = null;
+
+  globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+    capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+
+    return new Response(JSON.stringify({ success: true, data: { message: "书籍导图已生成" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const result = await generateBookSummary("nb-book-1", "builtin-book-mindmap");
+
+    assert.deepEqual(capturedBody, { presetId: "builtin-book-mindmap" });
+    assert.equal(result.message, "书籍导图已生成");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

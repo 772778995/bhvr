@@ -30,6 +30,7 @@ export async function insertReportEntry(record: {
   title: string;
   content: string | null;
   filePath?: string;
+  contentJson?: string | null;
   state?: EntryState;
   errorMessage?: string | null;
   presetId?: string | null;
@@ -43,6 +44,7 @@ export async function insertReportEntry(record: {
       state: record.state ?? "ready",
       content: record.content ?? null,
       filePath: record.filePath ?? null,
+      contentJson: record.contentJson ?? null,
       errorMessage: record.errorMessage ?? null,
       presetId: record.presetId ?? null,
     })

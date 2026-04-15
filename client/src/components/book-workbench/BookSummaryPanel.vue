@@ -52,10 +52,10 @@ function closeFullscreen() {
         />
         <div v-else key="empty" class="flex h-full items-center justify-center px-6 text-base leading-7 text-[#8a7864]">
           <template v-if="hasEntries">
-            先从右侧历史版本里选择一份书籍总结。
+            先从右侧历史版本里选择一份阅读产出。
           </template>
           <template v-else>
-            暂无书籍总结。上传书籍后可直接在右侧生成。
+            暂无阅读产出。上传书籍后可直接在右侧生成。
           </template>
         </div>
       </Transition>
@@ -74,7 +74,7 @@ function closeFullscreen() {
             <div class="flex items-center justify-between border-b border-[#d8cfbe] bg-[#fbf6ed] px-6 py-4">
               <div class="min-w-0">
                 <h2 class="truncate text-[1.1rem] leading-tight text-[#34281d]" style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;">
-                  {{ entry.title || '未命名总结' }}
+                  {{ entry.title || '未命名阅读产出' }}
                 </h2>
                 <p class="mt-1 text-sm text-[#8a7864]">全屏阅读模式</p>
               </div>
