@@ -10,27 +10,27 @@ import {
 } from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
-test("getBookCenterTabs keeps 对话、书籍总结、快速找书 as the stable middle order", () => {
+test("getBookCenterTabs keeps 对话、阅读产出、快速找书 as the stable middle order", () => {
   assert.deepEqual(getBookCenterTabs(false), [
     { key: "chat", label: "对话" },
-    { key: "summary", label: "书籍总结" },
+    { key: "summary", label: "阅读产出" },
     { key: "book-finder", label: "快速找书" },
   ]);
   assert.deepEqual(getBookCenterTabs(true), [
     { key: "chat", label: "对话" },
-    { key: "summary", label: "书籍总结" },
+    { key: "summary", label: "阅读产出" },
     { key: "book-finder", label: "快速找书" },
   ]);
 });
 
-test("getBookCenterTabs puts 书籍总结 before 快速找书", () => {
+test("getBookCenterTabs puts 阅读产出 before 快速找书", () => {
   const tabs = getBookCenterTabs(true);
 
   assert.equal(tabs[0]?.key, "chat");
   assert.equal(tabs[0]?.label, "对话");
   assert.equal(tabs[1]?.key, "summary");
   assert.equal(tabs[2]?.key, "book-finder");
-  assert.equal(tabs[1]?.label, "书籍总结");
+  assert.equal(tabs[1]?.label, "阅读产出");
   assert.equal(tabs[2]?.label, "快速找书");
 });
 
@@ -57,11 +57,11 @@ test("getBookSummaryEntry returns the latest supported book summary report", () 
     {
       id: "entry-3",
       entryType: "research_report",
-      title: "最新详细解读",
+      title: "最新书籍导图",
       state: "ready",
-      presetId: "builtin-deep-reading",
-      createdAt: "2026-04-13T11:00:00.000Z",
-      updatedAt: "2026-04-13T11:00:00.000Z",
+      presetId: "builtin-book-mindmap",
+      createdAt: "2026-04-13T12:00:00.000Z",
+      updatedAt: "2026-04-13T12:00:00.000Z",
     },
   ];
 
@@ -98,13 +98,22 @@ test("getBookSummaryEntry only returns supported book summary presets", () => {
       createdAt: "2026-04-13T11:00:00.000Z",
       updatedAt: "2026-04-13T11:00:00.000Z",
     },
+    {
+      id: "entry-mindmap",
+      entryType: "research_report",
+      title: "书籍导图",
+      state: "ready",
+      presetId: "builtin-book-mindmap",
+      createdAt: "2026-04-13T12:00:00.000Z",
+      updatedAt: "2026-04-13T12:00:00.000Z",
+    },
   ];
 
-  assert.equal(getBookSummaryEntry(entries)?.id, "entry-deep-reading");
+  assert.equal(getBookSummaryEntry(entries)?.id, "entry-mindmap");
   assert.equal(getBookSummaryEntry(entries.slice(0, 1)), null);
 });
 
-test("getBookSummaries returns quick-read and deep-reading reports newest first", () => {
+test("getBookSummaries returns quick-read, deep-reading, and mindmap reports newest first", () => {
   const entries: ReportEntry[] = [
     {
       id: "entry-older",
@@ -127,9 +136,9 @@ test("getBookSummaries returns quick-read and deep-reading reports newest first"
     {
       id: "entry-latest",
       entryType: "research_report",
-      title: "最新详细解读",
+      title: "最新书籍导图",
       state: "ready",
-      presetId: "builtin-deep-reading",
+      presetId: "builtin-book-mindmap",
       createdAt: "2026-04-13T11:00:00.000Z",
       updatedAt: "2026-04-13T11:00:00.000Z",
     },

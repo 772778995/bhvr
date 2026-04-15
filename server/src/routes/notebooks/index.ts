@@ -75,9 +75,10 @@ import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 import { recordBookSourceStat } from "../../db/book-source-stats.js";
 import { extractPdfText } from "../../pdf/extract-text.js";
 import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finder/service.js";
+import { buildBookMindmapFromSummary } from "../../book-mindmap/service.js";
 
 const notebooks = new Hono();
-const BOOK_REPORT_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading"]);
+const BOOK_REPORT_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading", "builtin-book-mindmap"]);
 
 // ---------------------------------------------------------------------------
 // File storage helpers
@@ -747,7 +748,9 @@ notebooks.post("/:id/report/generate", async (c) => {
       const sources = await getNotebookSources(id);
       const noSourceMessage = rawPresetId === "builtin-deep-reading"
         ? "当前书籍尚未上传，无法生成详细解读"
-        : "当前书籍尚未上传，无法生成书籍简述";
+        : rawPresetId === "builtin-book-mindmap"
+          ? "当前书籍尚未上传，无法生成书籍导图"
+          : "当前书籍尚未上传，无法生成书籍简述";
       if (sources.length <= 0) {
         return c.json(
           {
@@ -829,8 +832,28 @@ notebooks.post("/:id/report/generate", async (c) => {
         ? "书籍简述"
         : rawPresetId === "builtin-deep-reading"
           ? "详细解读"
+          : rawPresetId === "builtin-book-mindmap"
+            ? "书籍导图"
           : "研究报告";
       const title = titleMatch?.[1]?.trim() ?? fallbackTitle;
+
+      let contentJson: string | null = null;
+      let successMessage = rawPresetId === "builtin-quick-read"
+        ? "书籍简述已生成"
+        : rawPresetId === "builtin-deep-reading"
+          ? "详细解读已生成"
+          : rawPresetId === "builtin-book-mindmap"
+            ? "书籍导图已生成"
+            : "研究报告已生成";
+
+      if (rawPresetId === "builtin-book-mindmap") {
+        try {
+          contentJson = JSON.stringify(await buildBookMindmapFromSummary(result.answer, process.env, fetch));
+        } catch (mindmapErr) {
+          logger.warn({ err: mindmapErr, notebookId: id }, "book mindmap JSON generation failed, falling back to markdown entry");
+          successMessage = "书籍导图摘要已生成，当前回退为 Markdown 阅读";
+        }
+      }
 
       let reportFilename: string | undefined;
       try {
@@ -848,15 +871,10 @@ notebooks.post("/:id/report/generate", async (c) => {
         title,
         content: null,
         filePath: reportFilename,
+        contentJson,
         state: "ready",
         presetId: rawPresetId || null,
       });
-
-      const successMessage = rawPresetId === "builtin-quick-read"
-        ? "书籍简述已生成"
-        : rawPresetId === "builtin-deep-reading"
-          ? "详细解读已生成"
-          : "研究报告已生成";
 
       return c.json(
         successResponse({

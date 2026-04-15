@@ -51,6 +51,7 @@ const reportEntries = ref<ReportEntry[]>([]);
 const selectedSummaryEntryId = ref<string | null>(null);
 const generatingBookSummary = ref(false);
 const generatingDeepReading = ref(false);
+const generatingMindmap = ref(false);
 const sending = ref(false);
 const bookFinderSending = ref(false);
 const bookFinderDraft = ref("");
@@ -84,8 +85,9 @@ const centerTabs = computed(() => getBookCenterTabs(bookSummaries.value.length >
 const hasData = computed(() => true);
 const hasBook = computed(() => currentBook.value !== null);
 const bookFinderMessages = computed(() => createBookFinderDisplayMessages(bookFinderPersistedMessages.value));
+const isGeneratingReadingOutput = computed(() => Boolean(generatingBookSummary.value) || Boolean(generatingDeepReading.value) || Boolean(generatingMindmap.value));
 const canGenerateSummary = computed(() => canGenerateBookSummary({
-  generating: generatingBookSummary.value,
+  generating: isGeneratingReadingOutput.value,
   hasBook: hasBook.value,
 }));
 const busy = computed(() => loaderVisible.value);
@@ -102,6 +104,7 @@ function resetWorkbenchState() {
   deletingSourceId.value = null;
   generatingBookSummary.value = false;
   generatingDeepReading.value = false;
+  generatingMindmap.value = false;
   sending.value = false;
   bookFinderSending.value = false;
   bookFinderDraft.value = "";
@@ -304,48 +307,74 @@ async function onSendMessage(content: string) {
   }
 }
 
-async function onGenerateBookSummary() {
-  if (!notebookId.value || !canGenerateSummary.value) {
+async function generateReadingOutput(options: {
+  presetId: "builtin-quick-read" | "builtin-deep-reading" | "builtin-book-mindmap";
+  begin: () => void;
+  end: () => void;
+  successMessage: string;
+  failureMessage: string;
+}) {
+  if (!notebookId.value || !canGenerateSummary.value || isGeneratingReadingOutput.value) {
     return;
   }
 
-  generatingBookSummary.value = true;
+  options.begin();
   try {
-    await generateBookSummary(notebookId.value);
+    const result = await generateBookSummary(notebookId.value, options.presetId);
     await refreshReportEntries();
     const newestSummary = getBookSummaryEntry(reportEntries.value);
     if (newestSummary) {
       selectedSummaryEntryId.value = newestSummary.id;
       activeCenterTab.value = "summary";
     }
-    showToast("书籍简述已生成。", "info");
+    showToast(result.message || options.successMessage, "info");
   } catch (err) {
-    showToast(err instanceof Error ? err.message : "生成书籍简述失败", "error");
+    showToast(err instanceof Error ? err.message : options.failureMessage, "error");
   } finally {
-    generatingBookSummary.value = false;
+    options.end();
   }
 }
 
-async function onGenerateDeepReading() {
-  if (!notebookId.value || !canGenerateSummary.value) {
-    return;
-  }
+async function onGenerateBookSummary() {
+  await generateReadingOutput({
+    presetId: "builtin-quick-read",
+    begin: () => {
+      generatingBookSummary.value = true;
+    },
+    end: () => {
+      generatingBookSummary.value = false;
+    },
+    successMessage: "书籍简述已生成。",
+    failureMessage: "生成书籍简述失败",
+  });
+}
 
-  generatingDeepReading.value = true;
-  try {
-    await generateBookSummary(notebookId.value, "builtin-deep-reading");
-    await refreshReportEntries();
-    const newestSummary = getBookSummaryEntry(reportEntries.value);
-    if (newestSummary) {
-      selectedSummaryEntryId.value = newestSummary.id;
-      activeCenterTab.value = "summary";
-    }
-    showToast("详细解读已生成。", "info");
-  } catch (err) {
-    showToast(err instanceof Error ? err.message : "生成详细解读失败", "error");
-  } finally {
-    generatingDeepReading.value = false;
-  }
+async function onGenerateDeepReading() {
+  await generateReadingOutput({
+    presetId: "builtin-deep-reading",
+    begin: () => {
+      generatingDeepReading.value = true;
+    },
+    end: () => {
+      generatingDeepReading.value = false;
+    },
+    successMessage: "详细解读已生成。",
+    failureMessage: "生成详细解读失败",
+  });
+}
+
+async function onGenerateMindmap() {
+  await generateReadingOutput({
+    presetId: "builtin-book-mindmap",
+    begin: () => {
+      generatingMindmap.value = true;
+    },
+    end: () => {
+      generatingMindmap.value = false;
+    },
+    successMessage: "书籍导图已生成。",
+    failureMessage: "生成书籍导图失败",
+  });
 }
 
 function onBookFinderDraftChange(value: string) {
@@ -486,18 +515,20 @@ watch(
     </template>
 
     <template #right>
-      <BookActionsPanel
-        :has-book="hasBook"
-        :busy="busy"
-        :quick-read-loading="generatingBookSummary"
-        :deep-reading-loading="generatingDeepReading"
-        :history-entries="bookSummaries"
-        :selected-entry-id="currentBookSummary?.id ?? null"
-        :on-quick-read="onGenerateBookSummary"
-        :on-deep-reading="onGenerateDeepReading"
-        :on-select-entry="onSelectSummaryEntry"
-      />
-    </template>
+        <BookActionsPanel
+          :has-book="hasBook"
+          :busy="busy"
+          :quick-read-loading="generatingBookSummary"
+          :deep-reading-loading="generatingDeepReading"
+          :mindmap-loading="generatingMindmap"
+          :history-entries="bookSummaries"
+          :selected-entry-id="currentBookSummary?.id ?? null"
+          :on-quick-read="onGenerateBookSummary"
+          :on-deep-reading="onGenerateDeepReading"
+          :on-mindmap="onGenerateMindmap"
+          :on-select-entry="onSelectSummaryEntry"
+        />
+      </template>
 
     <template #dialogs>
       <UploadBookDialog

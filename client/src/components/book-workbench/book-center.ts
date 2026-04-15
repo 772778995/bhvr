@@ -1,9 +1,9 @@
 import type { ReportEntry } from "@/api/notebooks";
 
-const BOOK_SUMMARY_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading"]);
+const BOOK_SUMMARY_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading", "builtin-book-mindmap"]);
 
 const CHAT_TAB = { key: "chat", label: "对话" } as const;
-const SUMMARY_TAB = { key: "summary", label: "书籍总结" } as const;
+const SUMMARY_TAB = { key: "summary", label: "阅读产出" } as const;
 const BOOK_FINDER_TAB = { key: "book-finder", label: "快速找书" } as const;
 
 export function getBookCenterTabs(hasSummary: boolean) {

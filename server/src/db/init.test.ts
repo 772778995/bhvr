@@ -105,3 +105,32 @@ test("importing db/index refreshes builtin book presets with the latest prompts"
     }
   }
 });
+
+test("importing db/index seeds the builtin book mindmap preset", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "notebooklm-db-mindmap-preset-"));
+  const databasePath = join(tempDir, "mindmap-preset.db");
+  const client = createClient({ url: `file:${databasePath}` });
+
+  try {
+    const result = runDbInit(databasePath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const preset = (await client.execute({
+      sql: "SELECT name, description, prompt FROM summary_presets WHERE id = ?",
+      args: ["builtin-book-mindmap"],
+    })).rows[0];
+
+    assert.equal(preset?.name, "书籍导图");
+    assert.match(String(preset?.description ?? ""), /结构化摘要/);
+    assert.match(String(preset?.prompt ?? ""), /核心主旨/);
+    assert.match(String(preset?.prompt ?? ""), /关键概念/);
+    assert.match(String(preset?.prompt ?? ""), /论证脉络/);
+  } finally {
+    client.close();
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Windows may keep a transient lock on the sqlite file after the child exits.
+    }
+  }
+});

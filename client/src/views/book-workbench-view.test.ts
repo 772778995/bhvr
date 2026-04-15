@@ -267,6 +267,7 @@ test("BookSummaryPanel removes the old top summary header and supports true full
   assert.match(source, /<section :class="layout\.shellClass">[\s\S]*<Teleport to="body">[\s\S]*<\/Teleport>[\s\S]*<\/section>/s);
   assert.match(source, /<Teleport to="body">/);
   assert.match(source, /全屏阅读/);
+  assert.match(source, /阅读产出/);
   assert.doesNotMatch(source, /版本切换保留在顶部，正文区域直接全宽展开阅读。/);
   assert.doesNotMatch(source, /<select/);
   assert.doesNotMatch(source, /书籍总结\n/);
@@ -277,7 +278,9 @@ test("BookActionsPanel no longer renders auto-research controls", () => {
 
   assert.match(source, /getBookActionLabel\("quick-read"/);
   assert.match(source, /getBookActionLabel\("deep-reading"/);
+  assert.match(source, /getBookActionLabel\("mindmap"/);
   assert.match(source, /onDeepReading/);
+  assert.match(source, /onMindmap/);
   assert.doesNotMatch(source, /自动研究\n/);
   assert.doesNotMatch(source, /自动研究</);
   assert.doesNotMatch(source, /onToggleResearch/);
@@ -293,10 +296,47 @@ test("BookWorkbenchView moves summary history into the right panel", () => {
   assert.match(source, /function onSelectSummaryEntry\(entryId: string\) \{[\s\S]*selectedSummaryEntryId\.value = entryId;[\s\S]*activeCenterTab\.value = "summary";[\s\S]*\}/);
 });
 
+test("BookWorkbenchView wires the book mindmap action and loading state", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /const generatingMindmap = ref\(false\)/);
+  assert.match(source, /presetId: "builtin-book-mindmap"/);
+  assert.match(source, /successMessage: "书籍导图已生成。"/);
+  assert.match(source, /showToast\(result\.message \|\| options\.successMessage, "info"\)/);
+  assert.match(source, /:mindmap-loading="generatingMindmap"/);
+  assert.match(source, /:on-mindmap="onGenerateMindmap"/);
+});
+
+test("BookWorkbenchView uses a shared reading-output guard for quick, deep, and mindmap generation", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /const isGeneratingReadingOutput = computed\(\(\) => Boolean\(generatingBookSummary\.value\) \|\| Boolean\(generatingDeepReading\.value\) \|\| Boolean\(generatingMindmap\.value\)\)/);
+  assert.match(source, /async function generateReadingOutput\(/);
+  assert.match(source, /if \(!notebookId\.value \|\| !canGenerateSummary\.value \|\| isGeneratingReadingOutput\.value\) \{/);
+  assert.doesNotMatch(source, /async function onGenerateBookSummary\(\) \{\s*if \(!notebookId\.value \|\| !canGenerateSummary\.value\)/s);
+});
+
 test("ReportDetailPanel no longer keeps the markdown download toolbar button", () => {
   const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /下载 \.md/);
   assert.doesNotMatch(source, /const isMarkdownEntry/);
   assert.doesNotMatch(source, /function downloadMarkdown/);
+});
+
+test("ReportDetailPanel renders book mindmap entries with markdown fallback", () => {
+  const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /BookMindmapTree/);
+  assert.match(source, /presetId === "builtin-book-mindmap"/);
+  assert.match(source, /contentJson\?\.kind === "book_mindmap"/);
+  assert.match(source, /导图 JSON 不可用时，退回 Markdown 摘要/);
+});
+
+test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {
+  const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /v-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"/);
+  assert.match(source, /v-else-if="contentLoading"/);
+  assert.match(source, /v-else-if="contentError"/);
 });

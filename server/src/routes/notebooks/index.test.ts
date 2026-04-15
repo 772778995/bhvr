@@ -951,6 +951,360 @@ test("POST /api/notebooks/:id/report/generate returns preset-specific no-book me
     message: "当前书籍尚未上传，无法生成详细解读",
     errorCode: "NO_BOOK_SOURCES",
   });
+
+  const mindmapResponse = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
+  });
+  assert.equal(mindmapResponse.status, 400);
+  assert.deepEqual(await mindmapResponse.json(), {
+    success: false,
+    message: "当前书籍尚未上传，无法生成书籍导图",
+    errorCode: "NO_BOOK_SOURCES",
+  });
+});
+
+test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON content and markdown file", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
+  const originalToken = process.env.OPENAI_TOKEN;
+  const originalModel = process.env.OPENAI_MODEL;
+  const notebookId = crypto.randomUUID();
+  const summaryMarkdown = [
+    "# 深度参与",
+    "",
+    "- 核心主旨：把工作拆到足够诚实。",
+    "- 关键概念：反馈、循环、组织纪律。",
+  ].join("\n");
+  const modelPayload = {
+    kind: "book_mindmap",
+    version: 1,
+    title: "深度参与",
+    root: {
+      label: "深度参与",
+      note: "把工作拆到足够诚实。",
+      children: [
+        {
+          label: "核心问题",
+          note: "为什么组织会失去反馈。",
+          children: [],
+        },
+      ],
+    },
+  };
+
+  process.env.OPENAI_BASE_URL = "https://openai.example.com/v1";
+  process.env.OPENAI_TOKEN = "test-token";
+  process.env.OPENAI_MODEL = "test-model";
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === "https://openai.example.com/v1/chat/completions") {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(modelPayload) } }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  };
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: summaryMarkdown,
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const { listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    if (originalToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = originalToken;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍导图已生成" },
+  });
+
+  const entries = await listEntriesByNotebookId(notebookId);
+  const mindmapEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
+  assert.ok(mindmapEntry);
+  assert.equal(mindmapEntry?.entryType, "research_report");
+  assert.ok(mindmapEntry?.filePath);
+  assert.match(mindmapEntry?.filePath ?? "", /report-.+\.md$/);
+  assert.equal(mindmapEntry?.content, null);
+  assert.ok(mindmapEntry?.contentJson);
+  assert.equal(JSON.parse(mindmapEntry?.contentJson ?? "{}").kind, "book_mindmap");
+
+  const markdownPath = join(tempDataFilesDir, mindmapEntry?.filePath ?? "");
+  assert.equal(readFileSync(markdownPath, "utf8"), summaryMarkdown);
+});
+
+test("POST /api/notebooks/:id/report/generate keeps markdown fallback when builtin book mindmap lacks openai config", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
+  const originalToken = process.env.OPENAI_TOKEN;
+  const originalModel = process.env.OPENAI_MODEL;
+  const notebookId = crypto.randomUUID();
+
+  delete process.env.OPENAI_BASE_URL;
+  delete process.env.OPENAI_TOKEN;
+  delete process.env.OPENAI_MODEL;
+
+  globalThis.fetch = async () =>
+    new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: "# 深度参与\n\n结构化摘要",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const { listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    if (originalToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = originalToken;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍导图摘要已生成，当前回退为 Markdown 阅读" },
+  });
+
+  const entries = await listEntriesByNotebookId(notebookId);
+  const mindmapEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
+  assert.ok(mindmapEntry);
+  assert.ok(mindmapEntry?.filePath);
+  assert.equal(mindmapEntry?.contentJson, null);
+  assert.equal(readFileSync(join(tempDataFilesDir, mindmapEntry?.filePath ?? ""), "utf8"), "# 深度参与\n\n结构化摘要");
+});
+
+test("POST /api/notebooks/:id/report/generate keeps markdown fallback when builtin book mindmap json is invalid", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
+  const originalToken = process.env.OPENAI_TOKEN;
+  const originalModel = process.env.OPENAI_MODEL;
+  const notebookId = crypto.randomUUID();
+
+  process.env.OPENAI_BASE_URL = "https://openai.example.com/v1";
+  process.env.OPENAI_TOKEN = "test-token";
+  process.env.OPENAI_MODEL = "test-model";
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === "https://openai.example.com/v1/chat/completions") {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ root: { label: "   " } }) } }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  };
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: "# 深度参与\n\n结构化摘要",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const { listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    if (originalToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = originalToken;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍导图摘要已生成，当前回退为 Markdown 阅读" },
+  });
+
+  const entries = await listEntriesByNotebookId(notebookId);
+  const mindmapEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
+  assert.ok(mindmapEntry);
+  assert.equal(mindmapEntry?.contentJson, null);
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {
