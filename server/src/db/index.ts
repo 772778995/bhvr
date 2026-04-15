@@ -252,11 +252,7 @@ await client.execute({
 await client.execute({
   sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
         VALUES (?, ?, ?, ?, 1, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          description = excluded.description,
-          prompt = excluded.prompt,
-          updated_at = excluded.updated_at`,
+        ON CONFLICT(id) DO NOTHING`,
   args: [
     "builtin-book-mindmap",
     "书籍导图",
@@ -270,11 +266,7 @@ await client.execute({
 await client.execute({
   sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
         VALUES (?, ?, ?, ?, 1, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          description = excluded.description,
-          prompt = excluded.prompt,
-          updated_at = excluded.updated_at`,
+        ON CONFLICT(id) DO NOTHING`,
   args: [
     "builtin-deep-reading",
     "详细解读",
@@ -288,11 +280,7 @@ await client.execute({
 await client.execute({
   sql: `INSERT INTO summary_presets (id, name, description, prompt, is_builtin, created_at, updated_at)
         VALUES (?, ?, ?, ?, 1, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          description = excluded.description,
-          prompt = excluded.prompt,
-          updated_at = excluded.updated_at`,
+        ON CONFLICT(id) DO NOTHING`,
   args: [
     "builtin-quick-read",
     "书籍简述",

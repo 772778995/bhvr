@@ -148,6 +148,8 @@ const renderedHtml = computed(() => {
   return renderMarkdown(fetchedContent.value);
 });
 
+const showBookMindmapMarkdownFallbackNotice = computed(() => isBookMindmapReport.value && !hasBookMindmapJson.value);
+
 const bookMindmapTree = computed<BookMindmapView | null>(() => {
   if (!hasBookMindmapJson.value) {
     return null;
@@ -367,6 +369,28 @@ function formatDuration(seconds: number | undefined): string {
           :title="bookMindmapTree.title"
           :root="bookMindmapTree.root"
         />
+        <div
+          v-else-if="showBookMindmapMarkdownFallbackNotice"
+          class="space-y-4"
+        >
+          <div class="border border-[#d8cfbe] bg-[#fbf6ed] px-4 py-4 text-base leading-7 text-[#5d4f3d]">
+            当前展示的是书籍导图的 Markdown 回退摘要，说明 JSON 导图暂未生成成功或当前环境缺少导图转换配置。
+          </div>
+          <p v-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
+            正在加载报告内容…
+          </p>
+          <p v-else-if="contentError" class="text-base text-red-700 leading-relaxed">
+            报告内容加载失败，请刷新页面重试。
+          </p>
+          <div
+            v-else-if="fetchedContent"
+            class="min-w-0 max-w-full prose-warm"
+            v-html="renderedHtml"
+          />
+          <p v-else class="text-base text-[#9a8a78] leading-relaxed">
+            报告内容为空。
+          </p>
+        </div>
         <p v-else-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
           正在加载报告内容…
         </p>

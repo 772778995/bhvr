@@ -18,8 +18,8 @@ test("normalizeBookMindmapPayload trims labels, truncates copy, and drops invali
           label: "  组织反馈  ",
           note: "B".repeat(400),
           children: [
-            { label: "   ", note: "无效节点" },
-            { label: "实践", children: "not-array" },
+            { label: "   ", note: "无效节点", children: [] },
+            { label: "实践", children: "not-array" as unknown as [] },
           ],
         },
       ],
@@ -39,7 +39,7 @@ test("normalizeBookMindmapPayload trims labels, truncates copy, and drops invali
 
 test("normalizeBookMindmapPayload enforces a usable root node", () => {
   assert.throws(
-    () => normalizeBookMindmapPayload({ root: { label: "   " } }),
+    () => normalizeBookMindmapPayload({ root: { label: "   ", children: [] } }),
     /书籍导图 JSON 缺少有效根节点/,
   );
 });
@@ -69,7 +69,7 @@ test("buildBookMindmapFromSummary requests openai-compatible json and returns cl
                 root: {
                   label: "深度参与",
                   note: "把工作拆到足够诚实。",
-                  children: [{ label: "核心问题", note: "为什么组织失去反馈。" }],
+                  children: [{ label: "核心问题", note: "为什么组织失去反馈。", children: [] }],
                 },
               } satisfies Partial<BookMindmapPayload>),
             },

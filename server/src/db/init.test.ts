@@ -56,7 +56,7 @@ test("importing db/index initializes required tables for a fresh database", asyn
   }
 });
 
-test("importing db/index refreshes builtin book presets with the latest prompts", async () => {
+test("importing db/index keeps user-updated builtin book preset prompts across restarts", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "notebooklm-db-preset-refresh-"));
   const databasePath = join(tempDir, "preset-refresh.db");
   const client = createClient({ url: `file:${databasePath}` });
@@ -86,16 +86,12 @@ test("importing db/index refreshes builtin book presets with the latest prompts"
       args: ["builtin-deep-reading"],
     })).rows[0];
 
-    assert.equal(quickPreset?.name, "书籍简述");
-    assert.match(String(quickPreset?.description ?? ""), /300字/);
-    assert.match(String(quickPreset?.prompt ?? ""), /300字以内/);
-    assert.match(String(quickPreset?.prompt ?? ""), /关键案例/);
-    assert.match(String(quickPreset?.prompt ?? ""), /适用人群/);
+    assert.equal(quickPreset?.name, "快速读书");
+    assert.equal(String(quickPreset?.description ?? ""), "旧说明");
+    assert.equal(String(quickPreset?.prompt ?? ""), "旧的书籍简述 prompt");
 
     assert.equal(deepPreset?.name, "详细解读");
-    assert.match(String(deepPreset?.prompt ?? ""), /5000字以内/);
-    assert.match(String(deepPreset?.prompt ?? ""), /延展阅读/);
-    assert.match(String(deepPreset?.prompt ?? ""), /企业/);
+    assert.equal(String(deepPreset?.prompt ?? ""), "旧的详细解读 prompt");
   } finally {
     client.close();
     try {

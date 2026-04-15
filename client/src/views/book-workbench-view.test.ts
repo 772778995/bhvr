@@ -281,10 +281,24 @@ test("BookActionsPanel no longer renders auto-research controls", () => {
   assert.match(source, /getBookActionLabel\("mindmap"/);
   assert.match(source, /onDeepReading/);
   assert.match(source, /onMindmap/);
+  assert.match(source, /onConfigureQuickRead/);
+  assert.match(source, /onConfigureDeepReading/);
   assert.doesNotMatch(source, /自动研究\n/);
   assert.doesNotMatch(source, /自动研究</);
   assert.doesNotMatch(source, /onToggleResearch/);
   assert.doesNotMatch(source, /researchState/);
+});
+
+test("BookWorkbenchView wires prompt configuration state for quick-read and deep-reading", () => {
+  const source = readFileSync(new URL("./BookWorkbenchView.vue", import.meta.url), "utf8");
+
+  assert.match(source, /getBookSummaryPreset/);
+  assert.match(source, /updateBookSummaryPreset/);
+  assert.match(source, /const promptDialogOpen = ref\(false\)/);
+  assert.match(source, /const promptDialogMode = ref<"quick-read" \| "deep-reading" \| null>\(null\)/);
+  assert.match(source, /:on-configure-quick-read="openQuickReadPromptDialog"/);
+  assert.match(source, /:on-configure-deep-reading="openDeepReadingPromptDialog"/);
+  assert.match(source, /保存提示词/);
 });
 
 test("BookWorkbenchView moves summary history into the right panel", () => {
@@ -331,6 +345,7 @@ test("ReportDetailPanel renders book mindmap entries with markdown fallback", ()
   assert.match(source, /presetId === "builtin-book-mindmap"/);
   assert.match(source, /contentJson\?\.kind === "book_mindmap"/);
   assert.match(source, /导图 JSON 不可用时，退回 Markdown 摘要/);
+  assert.match(source, /当前展示的是书籍导图的 Markdown 回退摘要/);
 });
 
 test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {

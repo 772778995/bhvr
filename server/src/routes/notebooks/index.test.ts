@@ -705,6 +705,126 @@ test("POST /api/notebooks/:id/report/generate persists builtin quick-read preset
   assert.equal(summaryEntry?.presetId, "builtin-quick-read");
 });
 
+test("POST /api/notebooks/:id/report/generate uses fixed titles for builtin book outputs instead of model headings", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
+  const originalToken = process.env.OPENAI_TOKEN;
+  const originalModel = process.env.OPENAI_MODEL;
+  const notebookId = crypto.randomUUID();
+
+  process.env.OPENAI_BASE_URL = "https://openai.example.com/v1";
+  process.env.OPENAI_TOKEN = "test-token";
+  process.env.OPENAI_MODEL = "test-model";
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === "https://openai.example.com/v1/chat/completions") {
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              title: "模型乱起的导图标题",
+              root: {
+                label: "模型乱起的根节点",
+                children: [],
+              },
+            }),
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  };
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+
+  const responses = [
+    "# 模型自定义标题\n\n这是书籍简述内容。",
+    "# 完全不叫详细解读\n\n这是详细解读内容。",
+    "# 另一套标题\n\n这是导图摘要。",
+  ];
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: responses.shift() ?? "# 兜底标题\n\n内容",
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    if (originalToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = originalToken;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+    await disposeClient();
+  });
+
+  for (const presetId of ["builtin-quick-read", "builtin-deep-reading", "builtin-book-mindmap"] as const) {
+    const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ presetId }),
+    });
+    assert.equal(response.status, 200);
+  }
+
+  const entries = await listEntriesByNotebookId(notebookId);
+  assert.equal(entries.find((entry) => entry.presetId === "builtin-quick-read")?.title, "书籍简述");
+  assert.equal(entries.find((entry) => entry.presetId === "builtin-deep-reading")?.title, "详细解读");
+  assert.equal(entries.find((entry) => entry.presetId === "builtin-book-mindmap")?.title, "书籍导图");
+});
+
 test("POST /api/notebooks/:id/report/generate allows quick-read generation while auto research is running", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;

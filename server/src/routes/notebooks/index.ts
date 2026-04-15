@@ -79,7 +79,33 @@ import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finde
 import { buildBookMindmapFromSummary } from "../../book-mindmap/service.js";
 
 const notebooks = new Hono();
-const BOOK_REPORT_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading", "builtin-book-mindmap"]);
+const BOOK_REPORT_METADATA = {
+  "builtin-quick-read": {
+    title: "书籍简述",
+    successMessage: "书籍简述已生成",
+    noSourceMessage: "当前书籍尚未上传，无法生成书籍简述",
+  },
+  "builtin-deep-reading": {
+    title: "详细解读",
+    successMessage: "详细解读已生成",
+    noSourceMessage: "当前书籍尚未上传，无法生成详细解读",
+  },
+  "builtin-book-mindmap": {
+    title: "书籍导图",
+    successMessage: "书籍导图已生成",
+    noSourceMessage: "当前书籍尚未上传，无法生成书籍导图",
+  },
+} as const;
+
+type BookReportPresetId = keyof typeof BOOK_REPORT_METADATA;
+
+const BOOK_REPORT_PRESET_IDS = new Set<string>(Object.keys(BOOK_REPORT_METADATA));
+
+function getBookReportMetadata(presetId: string): (typeof BOOK_REPORT_METADATA)[BookReportPresetId] | null {
+  return presetId in BOOK_REPORT_METADATA
+    ? BOOK_REPORT_METADATA[presetId as BookReportPresetId]
+    : null;
+}
 
 // ---------------------------------------------------------------------------
 // File storage helpers
@@ -782,6 +808,7 @@ notebooks.post("/:id/report/generate", async (c) => {
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
     const rawPresetId = typeof body["presetId"] === "string" ? body["presetId"].trim() : "";
     const isBookReportPreset = BOOK_REPORT_PRESET_IDS.has(rawPresetId);
+    const bookReportMetadata = getBookReportMetadata(rawPresetId);
 
     if (!isBookReportPreset) {
       const msgCount = await countChatMessages(id);
@@ -797,11 +824,7 @@ notebooks.post("/:id/report/generate", async (c) => {
       }
     } else {
       const sources = await getNotebookSources(id);
-      const noSourceMessage = rawPresetId === "builtin-deep-reading"
-        ? "当前书籍尚未上传，无法生成详细解读"
-        : rawPresetId === "builtin-book-mindmap"
-          ? "当前书籍尚未上传，无法生成书籍导图"
-          : "当前书籍尚未上传，无法生成书籍简述";
+      const noSourceMessage = bookReportMetadata?.noSourceMessage ?? "当前书籍尚未上传，无法生成书籍简述";
       if (sources.length <= 0) {
         return c.json(
           {
@@ -879,23 +902,13 @@ notebooks.post("/:id/report/generate", async (c) => {
 
       // Extract title from the first heading line, or use a default
       const titleMatch = result.answer.match(/^#+\s+(.+)/m);
-      const fallbackTitle = rawPresetId === "builtin-quick-read"
-        ? "书籍简述"
-        : rawPresetId === "builtin-deep-reading"
-          ? "详细解读"
-          : rawPresetId === "builtin-book-mindmap"
-            ? "书籍导图"
-          : "研究报告";
-      const title = titleMatch?.[1]?.trim() ?? fallbackTitle;
+      const fallbackTitle = bookReportMetadata?.title ?? "研究报告";
+      const title = bookReportMetadata
+        ? bookReportMetadata.title
+        : titleMatch?.[1]?.trim() ?? fallbackTitle;
 
       let contentJson: string | null = null;
-      let successMessage = rawPresetId === "builtin-quick-read"
-        ? "书籍简述已生成"
-        : rawPresetId === "builtin-deep-reading"
-          ? "详细解读已生成"
-          : rawPresetId === "builtin-book-mindmap"
-            ? "书籍导图已生成"
-            : "研究报告已生成";
+      let successMessage = bookReportMetadata?.successMessage ?? "研究报告已生成";
 
       if (rawPresetId === "builtin-book-mindmap") {
         try {

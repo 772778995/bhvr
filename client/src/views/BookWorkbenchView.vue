@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { ChatMessage, Notebook, ReportEntry, SendMessageHistoryItem, Source } from "@/api/notebooks";
 import { notebooksApi } from "@/api/notebooks";
 import { uploadBookSourcePdf } from "@/api/book-source";
-import { generateBookSummary } from "@/api/book-summary";
+import { generateBookSummary, getBookSummaryPreset, updateBookSummaryPreset } from "@/api/book-summary";
 import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWorkbenchShell.vue";
 import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
@@ -55,6 +55,12 @@ const generatingMindmap = ref(false);
 const sending = ref(false);
 const bookFinderSending = ref(false);
 const bookFinderDraft = ref("");
+const promptDialogOpen = ref(false);
+const promptDialogMode = ref<"quick-read" | "deep-reading" | null>(null);
+const promptDialogPrompt = ref("");
+const promptDialogLoading = ref(false);
+const promptDialogSaving = ref(false);
+const promptDialogError = ref("");
 const messages = ref<ChatMessage[]>([]);
 const bookFinderPersistedMessages = ref<ChatMessage[]>([]);
 const activeConversationId = ref<string | null>(null);
@@ -93,6 +99,11 @@ const canGenerateSummary = computed(() => canGenerateBookSummary({
 const busy = computed(() => loaderVisible.value);
 const centerTransition = getBookCenterTransition();
 const bookFinderPlaceholder = createBookFinderDraftPlaceholder();
+const promptDialogLabel = computed(() => promptDialogMode.value === "deep-reading" ? "详细解读" : "书籍简述");
+
+function resolvePromptPresetId(mode: "quick-read" | "deep-reading") {
+  return mode === "deep-reading" ? "builtin-deep-reading" : "builtin-quick-read";
+}
 
 function resetWorkbenchState() {
   notebook.value = null;
@@ -108,6 +119,12 @@ function resetWorkbenchState() {
   sending.value = false;
   bookFinderSending.value = false;
   bookFinderDraft.value = "";
+  promptDialogOpen.value = false;
+  promptDialogMode.value = null;
+  promptDialogPrompt.value = "";
+  promptDialogLoading.value = false;
+  promptDialogSaving.value = false;
+  promptDialogError.value = "";
   activeConversationId.value = null;
   conversationHistory.value = [];
   selectedSummaryEntryId.value = null;
@@ -377,6 +394,75 @@ async function onGenerateMindmap() {
   });
 }
 
+async function openPromptDialog(mode: "quick-read" | "deep-reading") {
+  if (busy.value) {
+    return;
+  }
+
+  promptDialogOpen.value = true;
+  promptDialogMode.value = mode;
+  promptDialogPrompt.value = "";
+  promptDialogError.value = "";
+  promptDialogLoading.value = true;
+
+  try {
+    const preset = await getBookSummaryPreset(resolvePromptPresetId(mode));
+    promptDialogPrompt.value = preset.prompt;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "读取提示词失败";
+    promptDialogError.value = message;
+    showToast(message, "error");
+  } finally {
+    promptDialogLoading.value = false;
+  }
+}
+
+function openQuickReadPromptDialog() {
+  void openPromptDialog("quick-read");
+}
+
+function openDeepReadingPromptDialog() {
+  void openPromptDialog("deep-reading");
+}
+
+function closePromptDialog() {
+  if (promptDialogSaving.value) {
+    return;
+  }
+
+  promptDialogOpen.value = false;
+  promptDialogMode.value = null;
+  promptDialogPrompt.value = "";
+  promptDialogError.value = "";
+  promptDialogLoading.value = false;
+}
+
+async function savePromptDialog() {
+  if (!promptDialogMode.value || promptDialogLoading.value || promptDialogSaving.value) {
+    return;
+  }
+
+  const prompt = promptDialogPrompt.value.trim();
+  if (!prompt) {
+    promptDialogError.value = "提示词不能为空。";
+    return;
+  }
+
+  promptDialogSaving.value = true;
+  promptDialogError.value = "";
+  try {
+    await updateBookSummaryPreset(resolvePromptPresetId(promptDialogMode.value), prompt);
+    showToast(`${promptDialogLabel.value}提示词已更新。`, "info");
+    closePromptDialog();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "保存提示词失败";
+    promptDialogError.value = message;
+    showToast(message, "error");
+  } finally {
+    promptDialogSaving.value = false;
+  }
+}
+
 function onBookFinderDraftChange(value: string) {
   bookFinderDraft.value = value;
 }
@@ -524,7 +610,9 @@ watch(
           :history-entries="bookSummaries"
           :selected-entry-id="currentBookSummary?.id ?? null"
           :on-quick-read="onGenerateBookSummary"
+          :on-configure-quick-read="openQuickReadPromptDialog"
           :on-deep-reading="onGenerateDeepReading"
+          :on-configure-deep-reading="openDeepReadingPromptDialog"
           :on-mindmap="onGenerateMindmap"
           :on-select-entry="onSelectSummaryEntry"
         />
@@ -548,6 +636,73 @@ watch(
         @confirm="onConfirmDeleteSource"
         @cancel="onCancelDeleteSource"
       />
+
+      <div
+        v-if="promptDialogOpen"
+        class="fixed inset-0 z-40 bg-[#20170f]/35"
+        @click="closePromptDialog"
+      ></div>
+      <div v-if="promptDialogOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <section
+          class="w-full max-w-3xl border border-[#d8cfbe] bg-[#f8f3ea] shadow-[0_24px_70px_rgba(47,39,31,0.18)]"
+          @click.stop
+        >
+          <header class="flex items-start justify-between gap-4 border-b border-[#d8cfbe] bg-[#fbf6ed] px-5 py-4">
+            <div>
+              <p class="text-sm tracking-[0.18em] text-[#8a7864] uppercase">输出提示词</p>
+              <h2 class="mt-2 text-[1.1rem] leading-tight text-[#34281d]" style="font-family: Georgia, 'Times New Roman', 'Noto Serif SC', serif;">
+                {{ promptDialogLabel }}
+              </h2>
+            </div>
+            <button
+              type="button"
+              class="border border-[#d8cfbe] bg-[#fffaf2] px-3 py-2 text-sm text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
+              :disabled="promptDialogSaving"
+              @click="closePromptDialog"
+            >
+              关闭
+            </button>
+          </header>
+
+          <div class="px-5 py-5">
+            <p class="text-base leading-7 text-[#5d4f3d]">
+              修改后，后续生成会直接使用新的提示词。这里改的是当前内置阅读动作的实际输出指令。
+            </p>
+            <p v-if="promptDialogError" class="mt-4 border border-[#d9c1b8] bg-[#fbefe9] px-4 py-3 text-sm leading-6 text-[#8b4b3c]">
+              {{ promptDialogError }}
+            </p>
+            <p v-if="promptDialogLoading" class="mt-4 text-base leading-7 text-[#8a7864]">
+              正在加载提示词...
+            </p>
+            <textarea
+              v-else
+              v-model="promptDialogPrompt"
+              rows="14"
+              class="mt-4 w-full border border-[#cab79c] bg-[#fffaf1] px-4 py-3 text-base leading-7 text-[#34281d] outline-none transition-colors duration-100 focus:border-[#a48d68]"
+              placeholder="请输入输出提示词"
+            ></textarea>
+          </div>
+
+          <footer class="flex items-center justify-end gap-3 border-t border-[#d8cfbe] bg-[#fbf6ed] px-5 py-4">
+            <button
+              type="button"
+              class="border border-[#d8cfbe] bg-[#fffaf2] px-4 py-2 text-sm text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
+              :disabled="promptDialogSaving"
+              @click="closePromptDialog"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="border border-[#3a2e20] bg-[#3a2e20] px-4 py-2 text-sm text-[#f8f3ea] transition-colors duration-100 hover:bg-[#2f271f] disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="promptDialogLoading || promptDialogSaving || !promptDialogPrompt.trim()"
+              @click="savePromptDialog"
+            >
+              {{ promptDialogSaving ? "保存中..." : "保存提示词" }}
+            </button>
+          </footer>
+        </section>
+      </div>
     </template>
   </NotebookWorkbenchShell>
 </template>

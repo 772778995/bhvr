@@ -12,7 +12,9 @@ interface Props {
   historyEntries: ReportEntry[];
   selectedEntryId?: string | null;
   onQuickRead: () => void | Promise<void>;
+  onConfigureQuickRead: () => void | Promise<void>;
   onDeepReading: () => void | Promise<void>;
+  onConfigureDeepReading: () => void | Promise<void>;
   onMindmap: () => void | Promise<void>;
   onSelectEntry: (entryId: string) => void;
 }
@@ -76,23 +78,65 @@ function formatTime(raw: string): string {
         <p class="mt-3 text-base leading-7 text-[#5d4f3d]">
           直接基于当前上传书籍生成书籍简述、详细解读或书籍导图。
         </p>
-        <button
-          type="button"
-          class="mt-5 inline-flex w-full items-center justify-center border border-[#cab79c] bg-[#fbf5ea] px-4 py-3 text-base text-[#4b3e2f] transition-all duration-100 hover:bg-[#f3ead8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="quickReadDisabled"
-          @click="onQuickRead"
-        >
-          {{ quickReadLabel }}
-        </button>
+        <div class="mt-5 flex items-stretch gap-2">
+          <button
+            type="button"
+            class="inline-flex flex-1 items-center justify-center border border-[#cab79c] bg-[#fbf5ea] px-4 py-3 text-base text-[#4b3e2f] transition-all duration-100 hover:bg-[#f3ead8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="quickReadDisabled"
+            @click="onQuickRead"
+          >
+            {{ quickReadLabel }}
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center border border-[#cab79c] bg-[#fbf5ea] px-3 text-[#5d4f3d] transition-all duration-100 hover:bg-[#f3ead8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="Boolean(busy) || Boolean(quickReadLoading)"
+            aria-label="配置书籍简述提示词"
+            @click="onConfigureQuickRead"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="1.75" />
+              <path d="M8 2.25v1.1" />
+              <path d="M8 12.65v1.1" />
+              <path d="M13.75 8h-1.1" />
+              <path d="M3.35 8h-1.1" />
+              <path d="m12.07 3.93-.78.78" />
+              <path d="m4.71 11.29-.78.78" />
+              <path d="m12.07 12.07-.78-.78" />
+              <path d="m4.71 4.71-.78-.78" />
+            </svg>
+          </button>
+        </div>
 
-        <button
-          type="button"
-          class="mt-3 inline-flex w-full items-center justify-center border border-[#cab79c] bg-[#efe5d2] px-4 py-3 text-base text-[#4b3e2f] transition-all duration-100 hover:bg-[#e7dcc8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="deepReadingDisabled"
-          @click="onDeepReading"
-        >
-          {{ deepReadingLabel }}
-        </button>
+        <div class="mt-3 flex items-stretch gap-2">
+          <button
+            type="button"
+            class="inline-flex flex-1 items-center justify-center border border-[#cab79c] bg-[#efe5d2] px-4 py-3 text-base text-[#4b3e2f] transition-all duration-100 hover:bg-[#e7dcc8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="deepReadingDisabled"
+            @click="onDeepReading"
+          >
+            {{ deepReadingLabel }}
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center border border-[#cab79c] bg-[#efe5d2] px-3 text-[#5d4f3d] transition-all duration-100 hover:bg-[#e7dcc8] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="Boolean(busy) || Boolean(deepReadingLoading)"
+            aria-label="配置详细解读提示词"
+            @click="onConfigureDeepReading"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="1.75" />
+              <path d="M8 2.25v1.1" />
+              <path d="M8 12.65v1.1" />
+              <path d="M13.75 8h-1.1" />
+              <path d="M3.35 8h-1.1" />
+              <path d="m12.07 3.93-.78.78" />
+              <path d="m4.71 11.29-.78.78" />
+              <path d="m12.07 12.07-.78-.78" />
+              <path d="m4.71 4.71-.78-.78" />
+            </svg>
+          </button>
+        </div>
 
         <button
           type="button"
