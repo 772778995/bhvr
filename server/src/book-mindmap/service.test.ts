@@ -97,3 +97,17 @@ test("buildBookMindmapFromSummary surfaces explicit config errors", async () => 
     /书籍导图依赖 OPENAI_BASE_URL \/ OPENAI_TOKEN \/ OPENAI_MODEL 配置/,
   );
 });
+
+test("buildBookMindmapFromSummary does not read workspace env when a custom env object is provided", async () => {
+  let called = false;
+
+  await assert.rejects(
+    () => buildBookMindmapFromSummary("# 摘要", {} as NodeJS.ProcessEnv, async () => {
+      called = true;
+      return new Response(null, { status: 500 });
+    }),
+    /书籍导图依赖 OPENAI_BASE_URL \/ OPENAI_TOKEN \/ OPENAI_MODEL 配置/,
+  );
+
+  assert.equal(called, false);
+});

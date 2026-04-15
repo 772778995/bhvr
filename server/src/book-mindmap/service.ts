@@ -123,7 +123,9 @@ function sanitizeText(value: unknown, limit: number): string | undefined {
 }
 
 function readOpenAIConfig(env: NodeJS.ProcessEnv): OpenAICompatibleConfig {
-  loadWorkspaceEnv(env);
+  if (env === process.env) {
+    loadWorkspaceEnv(env);
+  }
   const missing = REQUIRED_ENV_NAMES.filter((name) => !env[name]?.trim());
   if (missing.length > 0) {
     throw new Error("书籍导图依赖 OPENAI_BASE_URL / OPENAI_TOKEN / OPENAI_MODEL 配置");
