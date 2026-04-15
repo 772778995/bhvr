@@ -17,7 +17,7 @@ const routeTransition = computed(() => getRouteTransition({
       <div class="header-inner">
         <router-link to="/" class="brand-link">
           <span class="brand-mark">◈</span>
-          <span class="brand-name">NotebookLM 研究引擎</span>
+          <span class="brand-name">锐捷管理参谋</span>
         </router-link>
       </div>
     </header>

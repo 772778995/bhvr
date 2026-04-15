@@ -1,6 +1,11 @@
 import { defineConfig, presetWind4 } from "unocss";
 
 export default defineConfig({
+  content: {
+    pipeline: {
+      include: [/\.(vue|ts|tsx|js|jsx|html)($|\?)/],
+    },
+  },
   presets: [presetWind4()],
   theme: {
     colors: {
