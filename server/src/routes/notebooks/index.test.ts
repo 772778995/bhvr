@@ -1003,9 +1003,9 @@ test("POST /api/notebooks/:id/report/generate sends enabled source ids for built
 
   assert.equal(response.status, 200);
   assert.deepEqual(captured[0]?.sourceIds, ["source-a", "source-b"]);
-  assert.match(captured[0]?.prompt ?? "", /300字以内/);
+  assert.match(captured[0]?.prompt ?? "", /300\s*字以内/);
   assert.match(captured[0]?.prompt ?? "", /关键案例/);
-  assert.match(captured[0]?.prompt ?? "", /适用人群/);
+  assert.match(captured[0]?.prompt ?? "", /适读人群/);
 });
 
 test("POST /api/notebooks/:id/report/generate allows builtin quick-read without prior chat history when book sources exist", async (t) => {
@@ -1164,9 +1164,9 @@ test("POST /api/notebooks/:id/report/generate allows builtin deep-reading withou
     success: true,
     data: { message: "详细解读已生成" },
   });
-  assert.match(capturedPrompts[0] ?? "", /5000字以内/);
-  assert.match(capturedPrompts[0] ?? "", /延展阅读/);
-  assert.match(capturedPrompts[0] ?? "", /企业/);
+  assert.match(capturedPrompts[0] ?? "", /5000\s*字以内/);
+  assert.match(capturedPrompts[0] ?? "", /关键概念与方法/);
+  assert.match(capturedPrompts[0] ?? "", /实践启发/);
 });
 
 test("POST /api/notebooks/:id/report/generate returns preset-specific no-book messages", async (t) => {
@@ -1390,7 +1390,10 @@ test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON
   assert.equal(readFileSync(markdownPath, "utf8"), summaryMarkdown);
 });
 
-test("POST /api/notebooks/:id/report/generate keeps markdown fallback when builtin book mindmap lacks openai config", async (t) => {
+test("POST /api/notebooks/:id/report/generate fails when builtin book mindmap lacks openai config", async (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "book-mindmap-no-fallback-"));
+  const prevDataFilesDir = process.env.DATA_FILES_DIR;
+  process.env.DATA_FILES_DIR = tempDir;
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;
   const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
@@ -1465,6 +1468,9 @@ test("POST /api/notebooks/:id/report/generate keeps markdown fallback when built
     else process.env.OPENAI_TOKEN = originalToken;
     if (originalModel === undefined) delete process.env.OPENAI_MODEL;
     else process.env.OPENAI_MODEL = originalModel;
+    if (prevDataFilesDir === undefined) delete process.env.DATA_FILES_DIR;
+    else process.env.DATA_FILES_DIR = prevDataFilesDir;
+    rmSync(tempDir, { recursive: true, force: true });
     await disposeClient();
   });
 
@@ -1474,21 +1480,23 @@ test("POST /api/notebooks/:id/report/generate keeps markdown fallback when built
     body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
   });
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), {
-    success: true,
-    data: { message: "书籍导图摘要已生成，当前回退为 Markdown 阅读" },
+    success: false,
+    message: "书籍导图生成失败",
+    errorCode: "REPORT_GENERATION_FAILED",
   });
 
   const entries = await listEntriesByNotebookId(notebookId);
   const mindmapEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
-  assert.ok(mindmapEntry);
-  assert.ok(mindmapEntry?.filePath);
-  assert.equal(mindmapEntry?.contentJson, null);
-  assert.equal(readFileSync(join(tempDataFilesDir, mindmapEntry?.filePath ?? ""), "utf8"), "# 深度参与\n\n结构化摘要");
+  assert.equal(mindmapEntry, undefined);
+  assert.deepEqual(readdirSync(tempDir), []);
 });
 
-test("POST /api/notebooks/:id/report/generate keeps markdown fallback when builtin book mindmap json is invalid", async (t) => {
+test("POST /api/notebooks/:id/report/generate fails when builtin book mindmap json is invalid", async (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "book-mindmap-no-fallback-"));
+  const prevDataFilesDir = process.env.DATA_FILES_DIR;
+  process.env.DATA_FILES_DIR = tempDir;
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;
   const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
@@ -1574,6 +1582,9 @@ test("POST /api/notebooks/:id/report/generate keeps markdown fallback when built
     else process.env.OPENAI_TOKEN = originalToken;
     if (originalModel === undefined) delete process.env.OPENAI_MODEL;
     else process.env.OPENAI_MODEL = originalModel;
+    if (prevDataFilesDir === undefined) delete process.env.DATA_FILES_DIR;
+    else process.env.DATA_FILES_DIR = prevDataFilesDir;
+    rmSync(tempDir, { recursive: true, force: true });
     await disposeClient();
   });
 
@@ -1583,16 +1594,17 @@ test("POST /api/notebooks/:id/report/generate keeps markdown fallback when built
     body: JSON.stringify({ presetId: "builtin-book-mindmap" }),
   });
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), {
-    success: true,
-    data: { message: "书籍导图摘要已生成，当前回退为 Markdown 阅读" },
+    success: false,
+    message: "书籍导图生成失败",
+    errorCode: "REPORT_GENERATION_FAILED",
   });
 
   const entries = await listEntriesByNotebookId(notebookId);
   const mindmapEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
-  assert.ok(mindmapEntry);
-  assert.equal(mindmapEntry?.contentJson, null);
+  assert.equal(mindmapEntry, undefined);
+  assert.deepEqual(readdirSync(tempDir), []);
 });
 
 test("GET /api/notebooks/:id/messages remains available when auth requires re-login", async () => {

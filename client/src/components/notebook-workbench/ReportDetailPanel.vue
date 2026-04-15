@@ -9,6 +9,11 @@ import {
 } from "@/api/notebooks";
 import { renderMarkdown } from "@/utils/markdown";
 import { getAudioPlayerKey } from "./report-detail-audio";
+import {
+  isBookMindmapReportEntry,
+  resolveReportDetailContentRequest,
+  shouldRenderResearchReportMarkdown,
+} from "./report-detail-content";
 import BookMindmapTree from "@/components/book-workbench/BookMindmapTree.vue";
 
 interface Props {
@@ -37,7 +42,7 @@ const activeEntry = computed(() => props.entry);
 
 const isResearchReport = computed(() => props.entry?.entryType === 'research_report');
 const isArtifact = computed(() => props.entry?.entryType === 'artifact');
-const isBookMindmapReport = computed(() => props.entry?.entryType === "research_report" && props.entry?.presetId === "builtin-book-mindmap");
+const isBookMindmapReport = computed(() => isBookMindmapReportEntry(props.entry));
 const hasBookMindmapJson = computed(() => isBookMindmapReport.value && props.entry?.contentJson?.kind === "book_mindmap");
 
 // ---------------------------------------------------------------------------
@@ -86,41 +91,19 @@ watch(
 
     if (!newId) return;
 
-    const entry = activeEntry.value;
-    const isResearchRep = entry?.entryType === "research_report";
-    const isReportArtifact = entry?.entryType === "artifact" && entry?.artifactType === "report";
-
-    if (!isResearchRep && !isReportArtifact) return;
-
-    // If the entry still carries inline content (legacy rows), use it directly
-    if (isResearchRep && entry?.content) {
-      fetchedContent.value = entry.content;
+    const request = resolveReportDetailContentRequest(activeEntry.value, contentCache, notebooksApi.fetchEntryContent);
+    if (request.kind === "skip") {
       return;
     }
 
-    // For report artifacts: fall back to inline contentJson.content for old DB rows without fileUrl
-    if (isReportArtifact && !entry?.fileUrl) {
-      const inlineContent = entry?.contentJson?.content;
-      if (typeof inlineContent === "string" && inlineContent) {
-        fetchedContent.value = inlineContent;
-      }
+    if (request.kind === "inline" || request.kind === "cache") {
+      fetchedContent.value = request.content;
       return;
     }
-
-    // Check cache first
-    if (contentCache.has(newId)) {
-      fetchedContent.value = contentCache.get(newId)!;
-      return;
-    }
-
-    // Need to fetch from fileUrl
-    const url = entry?.fileUrl;
-    if (!url) return;
 
     contentLoading.value = true;
     try {
-      const text = await notebooksApi.fetchEntryContent(url);
-      contentCache.set(newId, text);
+      const text = await request.load();
       // Guard: entry may have changed while awaiting
       if (props.entry?.id === newId) {
         fetchedContent.value = text;
@@ -148,8 +131,6 @@ const renderedHtml = computed(() => {
   return renderMarkdown(fetchedContent.value);
 });
 
-const showBookMindmapMarkdownFallbackNotice = computed(() => isBookMindmapReport.value && !hasBookMindmapJson.value);
-
 const bookMindmapTree = computed<BookMindmapView | null>(() => {
   if (!hasBookMindmapJson.value) {
     return null;
@@ -160,7 +141,6 @@ const bookMindmapTree = computed<BookMindmapView | null>(() => {
     return null;
   }
 
-  // 导图 JSON 不可用时，退回 Markdown 摘要。
   return {
     title: typeof payload.title === "string" ? payload.title : activeEntry.value?.title ?? undefined,
     root: payload.root as BookMindmapNodeView,
@@ -369,29 +349,6 @@ function formatDuration(seconds: number | undefined): string {
           :title="bookMindmapTree.title"
           :root="bookMindmapTree.root"
         />
-        <div
-          v-else-if="showBookMindmapMarkdownFallbackNotice"
-          class="space-y-4"
-        >
-          <div class="border border-[#d8cfbe] bg-[#fbf6ed] px-4 py-4 text-base leading-7 text-[#5d4f3d]">
-            <p>当前展示的是这次“书籍导图”生成流程保留下来的摘要回退内容。</p>
-            <p class="mt-2 text-sm leading-6 text-[#756553]">本次产出没有生成可渲染的 JSON 导图，但你仍然可以先阅读这份摘要。</p>
-          </div>
-          <p v-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
-            正在加载报告内容…
-          </p>
-          <p v-else-if="contentError" class="text-base text-red-700 leading-relaxed">
-            报告内容加载失败，请刷新页面重试。
-          </p>
-          <div
-            v-else-if="fetchedContent"
-            class="min-w-0 max-w-full prose-warm"
-            v-html="renderedHtml"
-          />
-          <p v-else class="text-base text-[#9a8a78] leading-relaxed">
-            报告内容为空。
-          </p>
-        </div>
         <p v-else-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
           正在加载报告内容…
         </p>
@@ -399,7 +356,7 @@ function formatDuration(seconds: number | undefined): string {
           报告内容加载失败，请刷新页面重试。
         </p>
         <div
-          v-else-if="fetchedContent"
+          v-else-if="shouldRenderResearchReportMarkdown(entry, fetchedContent)"
           class="min-w-0 max-w-full prose-warm"
           v-html="renderedHtml"
         />

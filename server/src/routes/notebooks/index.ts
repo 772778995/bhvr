@@ -914,8 +914,15 @@ notebooks.post("/:id/report/generate", async (c) => {
         try {
           contentJson = JSON.stringify(await buildBookMindmapFromSummary(result.answer, process.env, fetch));
         } catch (mindmapErr) {
-          logger.warn({ err: mindmapErr, notebookId: id }, "book mindmap JSON generation failed, falling back to markdown entry");
-          successMessage = "书籍导图摘要已生成，当前回退为 Markdown 阅读";
+          logger.warn({ err: mindmapErr, notebookId: id }, "book mindmap JSON generation failed");
+          return c.json(
+            {
+              success: false,
+              message: "书籍导图生成失败",
+              errorCode: "REPORT_GENERATION_FAILED",
+            },
+            502
+          );
         }
       }
 
