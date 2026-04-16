@@ -22,9 +22,9 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.9",
     "notebooklm-kit": "^2.2.0",
-    "pdf-parse": "^2.4.5",
     "pino": "^10.3.1",
     "shared": "*",
+    "unpdf": "^1.6.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -37,10 +37,16 @@ function closeFullscreen() {
       <button
         v-if="entry"
         type="button"
-        class="absolute right-4 top-4 z-10 rounded-md border border-[#d8cfbe] bg-[#fbf6ed]/92 px-3 py-2 text-sm text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
+        aria-label="全屏阅读"
+        class="absolute right-4 top-4 z-10 rounded-md border border-[#d8cfbe] bg-[#fbf6ed]/92 px-2 py-2 text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
         @click="openFullscreen"
       >
-        全屏阅读
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="5,1 1,1 1,5" />
+          <polyline points="11,1 15,1 15,5" />
+          <polyline points="5,15 1,15 1,11" />
+          <polyline points="11,15 15,15 15,11" />
+        </svg>
       </button>
 
       <Transition :name="layout.detailTransitionName" mode="out-in">
@@ -87,8 +93,8 @@ function closeFullscreen() {
               </button>
             </div>
 
-            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8">
-              <ReportDetailPanel :notebook-id="notebookId" :entry="entry" />
+            <div :class="entry?.contentJson?.kind === 'mermaid_mindmap' ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8'">
+              <ReportDetailPanel :notebook-id="notebookId" :entry="entry" :compact="entry?.contentJson?.kind === 'mermaid_mindmap'" />
             </div>
           </div>
         </div>

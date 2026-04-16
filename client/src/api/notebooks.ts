@@ -365,10 +365,10 @@ export const notebooksApi = {
   },
 
   /** Trigger report generation from completed Q&A answers. */
-  generateReport(id: string, presetId?: string) {
+  generateReport(id: string, presetId?: string, extraBody?: Record<string, unknown>) {
     return request<GenerateReportResponse>(`/api/notebooks/${id}/report/generate`, {
       method: "POST",
-      body: JSON.stringify(presetId ? { presetId } : {}),
+      body: JSON.stringify({ ...(presetId ? { presetId } : {}), ...extraBody }),
     });
   },
 

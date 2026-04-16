@@ -5,10 +5,13 @@ const REQUIRED_ENV_NAMES = ["OPENAI_BASE_URL", "OPENAI_TOKEN", "OPENAI_MODEL"] a
 
 let loadedEnvTargets = new WeakSet<NodeJS.ProcessEnv>();
 
+export type DiagramType = "mindmap" | "flowchart" | "timeline" | "sequenceDiagram" | "classDiagram" | "gantt";
+
 export interface MermaidMindmapPayload {
   kind: "mermaid_mindmap";
   version: 1;
   code: string;
+  diagramType?: string;
 }
 
 interface OpenAICompatibleConfig {
@@ -25,10 +28,67 @@ interface OpenAIChatCompletionResponse {
   }>;
 }
 
-export async function buildBookMindmapFromSummary(
+export function getDiagramSystemPrompt(diagramType: DiagramType): string {
+  switch (diagramType) {
+    case "mindmap":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid mindmap 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "格式范例：",
+        "mindmap",
+        "  root((书名))",
+        "    核心主旨",
+        "      具体观点",
+        "    章节结构",
+        "      第一章",
+        "      第二章",
+        "约束：缩进用两个空格，节点文字简短，最多 4 层深度，children 最多 8 个。",
+      ].join("\n");
+
+    case "flowchart":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid flowchart 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "代码必须以 flowchart TD 开头。",
+        "约束：节点文字简短，最多 4 层深度。",
+      ].join("\n");
+
+    case "timeline":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid timeline 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "代码必须以 timeline 开头，按时间点列出书中关键事件/阶段。",
+        "约束：节点文字简短。",
+      ].join("\n");
+
+    case "sequenceDiagram":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid sequenceDiagram 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "代码必须以 sequenceDiagram 开头，描述书中核心角色/概念的交互或依赖关系。",
+      ].join("\n");
+
+    case "classDiagram":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid classDiagram 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "代码必须以 classDiagram 开头，描述书中核心概念/类的关系。",
+      ].join("\n");
+
+    case "gantt":
+      return [
+        "你负责把书籍结构化摘要压缩成 Mermaid gantt 代码。",
+        "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+        "代码必须以 gantt 开头，必须包含 dateFormat YYYY-MM-DD 行，日期格式严格使用 YYYY-MM-DD，不能用其他格式。",
+      ].join("\n");
+  }
+}
+
+export async function buildBookDiagramFromSummary(
   summaryMarkdown: string,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
+  diagramType: DiagramType = "mindmap",
 ): Promise<MermaidMindmapPayload> {
   const config = readOpenAIConfig(env);
   const responseText = await requestModelJson(
@@ -36,39 +96,36 @@ export async function buildBookMindmapFromSummary(
     [
       {
         role: "system",
-        content: [
-          "你负责把书籍结构化摘要压缩成 Mermaid mindmap 代码。",
-          "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
-          "格式范例：",
-          "mindmap",
-          "  root((书名))",
-          "    核心主旨",
-          "      具体观点",
-          "    章节结构",
-          "      第一章",
-          "      第二章",
-          "约束：缩进用两个空格，节点文字简短，最多 4 层深度，children 最多 8 个。",
-        ].join("\n"),
+        content: getDiagramSystemPrompt(diagramType),
       },
       {
         role: "user",
-        content: `请把下面这份书籍结构化摘要转成 Mermaid mindmap 代码：\n\n${summaryMarkdown}`,
+        content: `请把下面这份书籍结构化摘要转成 Mermaid ${diagramType} 代码：\n\n${summaryMarkdown}`,
       },
     ],
     fetchImpl,
   );
 
-  return parseMermaidMindmapPayload(responseText);
+  return parseMermaidMindmapPayload(responseText, diagramType);
 }
 
-export function parseMermaidMindmapPayload(rawCode: string): MermaidMindmapPayload {
+// Backward-compatible alias
+export const buildBookMindmapFromSummary = (
+  summaryMarkdown: string,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<MermaidMindmapPayload> => buildBookDiagramFromSummary(summaryMarkdown, env, fetchImpl, "mindmap");
+
+export function parseMermaidMindmapPayload(rawCode: string, diagramType: DiagramType = "mindmap"): MermaidMindmapPayload {
   const extracted = extractMermaidCode(rawCode);
-  const sanitized = sanitizeMermaidMindmapCode(extracted);
-  if (!sanitized.startsWith("mindmap")) {
+  const sanitized = sanitizeMermaidCode(extracted, diagramType);
+
+  const keyword = diagramType;
+  if (!sanitized.startsWith(keyword)) {
     const preview = extracted.trim().slice(0, 50);
-    throw new Error(`Mermaid mindmap code must start with 'mindmap', got: ${preview}`);
+    throw new Error(`Mermaid ${diagramType} code must start with '${keyword}', got: ${preview}`);
   }
-  return { kind: "mermaid_mindmap", version: 1, code: sanitized };
+  return { kind: "mermaid_mindmap", version: 1, code: sanitized, diagramType };
 }
 
 function extractMermaidCode(value: string): string {
@@ -78,6 +135,16 @@ function extractMermaidCode(value: string): string {
   }
   return value;
 }
+
+export function sanitizeMermaidCode(raw: string, diagramType: DiagramType = "mindmap"): string {
+  if (diagramType === "mindmap") {
+    return sanitizeMindmapCode(raw);
+  }
+  return sanitizeGenericDiagramCode(raw, diagramType);
+}
+
+// Keep old name as alias for backward compatibility
+export const sanitizeMermaidMindmapCode = (raw: string): string => sanitizeMermaidCode(raw, "mindmap");
 
 /**
  * Cleans LLM-generated Mermaid mindmap code so the Mermaid parser can accept it.
@@ -93,23 +160,20 @@ function extractMermaidCode(value: string): string {
  * 3. Converts tab indentation to 2-space indentation
  * 4. Stops at the first non-indented line after the header (strips LLM postamble)
  */
-function sanitizeMermaidMindmapCode(raw: string): string {
+function sanitizeMindmapCode(raw: string): string {
   const lines = raw.split(/\r?\n/u);
   const result: string[] = [];
   let pastHeader = false;
 
   for (const line of lines) {
-    // Normalize tabs → 2 spaces per tab stop
     const normalized = line.replace(/\t/gu, "  ");
     const trimmed = normalized.trim();
 
-    // Skip blank lines regardless of position
     if (!trimmed) {
       continue;
     }
 
     if (!pastHeader) {
-      // Scan for the "mindmap" keyword, skipping any LLM preamble
       if (trimmed === "mindmap") {
         pastHeader = true;
         result.push("mindmap");
@@ -117,10 +181,37 @@ function sanitizeMermaidMindmapCode(raw: string): string {
       continue;
     }
 
-    // After the "mindmap" header, every valid node line must be indented.
-    // A non-indented non-blank line signals LLM postamble — stop here.
     if (!normalized.startsWith(" ")) {
       break;
+    }
+
+    result.push(normalized);
+  }
+
+  return result.join("\n");
+}
+
+function sanitizeGenericDiagramCode(raw: string, keyword: string): string {
+  const lines = raw.split(/\r?\n/u);
+  const result: string[] = [];
+  let pastHeader = false;
+
+  for (const line of lines) {
+    const normalized = line.replace(/\t/gu, "  ");
+    const trimmed = normalized.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    if (!pastHeader) {
+      // Look for the keyword line (possibly with extra tokens like "flowchart TD")
+      if (trimmed === keyword || trimmed.startsWith(keyword + " ") || trimmed.startsWith(keyword + "\t")) {
+        pastHeader = true;
+        result.push(normalized.trim());
+        continue;
+      }
+      continue;
     }
 
     result.push(normalized);

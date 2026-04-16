@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { ChatMessage, Notebook, ReportEntry, SendMessageHistoryItem, Source } from "@/api/notebooks";
 import { notebooksApi } from "@/api/notebooks";
 import { uploadBookSourcePdf } from "@/api/book-source";
-import { generateBookSummary, getBookSummaryPreset, updateBookSummaryPreset } from "@/api/book-summary";
+import { generateBookDiagram, generateBookSummary, getBookSummaryPreset, updateBookSummaryPreset } from "@/api/book-summary";
 import NotebookWorkbenchShell from "@/components/notebook-workbench/NotebookWorkbenchShell.vue";
 import BookSourcePanel from "@/components/book-workbench/BookSourcePanel.vue";
 import BookActionsPanel from "@/components/book-workbench/BookActionsPanel.vue";
@@ -20,6 +20,7 @@ import {
 } from "@/components/book-workbench/book-center";
 import { canGenerateBookSummary } from "@/components/book-workbench/book-view-state";
 import UploadBookDialog from "@/components/book-workbench/UploadBookDialog.vue";
+import BookDiagramTypeDialog from "@/components/book-workbench/BookDiagramTypeDialog.vue";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import AppToast from "@/components/ui/AppToast.vue";
 import FullscreenLoader from "@/components/ui/FullscreenLoader.vue";
@@ -57,6 +58,7 @@ const sending = ref(false);
 const bookFinderSending = ref(false);
 const bookFinderDraft = ref("");
 const promptDialogOpen = ref(false);
+const diagramDialogOpen = ref(false);
 const promptDialogMode = ref<"quick-read" | "deep-reading" | null>(null);
 const promptDialogPrompt = ref("");
 const promptDialogLoading = ref(false);
@@ -122,6 +124,7 @@ function resetWorkbenchState() {
   bookFinderSending.value = false;
   bookFinderDraft.value = "";
   promptDialogOpen.value = false;
+  diagramDialogOpen.value = false;
   promptDialogMode.value = null;
   promptDialogPrompt.value = "";
   promptDialogLoading.value = false;
@@ -417,17 +420,34 @@ async function onGenerateDeepReading() {
 }
 
 async function onGenerateMindmap() {
-  await generateReadingOutput({
-    presetId: "builtin-book-mindmap",
-    begin: () => {
-      generatingMindmap.value = true;
-    },
-    end: () => {
-      generatingMindmap.value = false;
-    },
-    successMessage: "书籍导图已生成。",
-    failureMessage: "生成书籍导图失败",
-  });
+  if (!canGenerateSummary.value || isGeneratingReadingOutput.value) {
+    return;
+  }
+  diagramDialogOpen.value = true;
+}
+
+async function onDiagramDialogGenerate(diagramType: string) {
+  diagramDialogOpen.value = false;
+  if (!notebookId.value) return;
+  generatingMindmap.value = true;
+  try {
+    const result = await generateBookDiagram(notebookId.value, diagramType);
+    await refreshReportEntries();
+    const newestEntry = getBookSummaryEntry(reportEntries.value);
+    if (newestEntry) {
+      selectedSummaryEntryId.value = newestEntry.id;
+      activeCenterTab.value = "summary";
+    }
+    showToast(result.message || "书籍导图已生成。", "info");
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : "生成书籍导图失败", "error");
+  } finally {
+    generatingMindmap.value = false;
+  }
+}
+
+function onDiagramDialogClose() {
+  diagramDialogOpen.value = false;
 }
 
 async function openPromptDialog(mode: "quick-read" | "deep-reading") {
@@ -661,6 +681,12 @@ watch(
         :busy="busy"
         :on-close="closeUploadDialog"
         :on-pick-file="onUploadBook"
+      />
+
+      <BookDiagramTypeDialog
+        :open="diagramDialogOpen"
+        :on-generate="onDiagramDialogGenerate"
+        :on-close="onDiagramDialogClose"
       />
 
       <ConfirmDialog

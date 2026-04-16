@@ -76,7 +76,7 @@ import { insertChatMessage, listChatMessages } from "../../db/chat-messages.js";
 import { recordBookSourceStat } from "../../db/book-source-stats.js";
 import { extractPdfText } from "../../pdf/extract-text.js";
 import { findBooksForQuery, listMissingBookFinderConfig } from "../../book-finder/service.js";
-import { buildBookMindmapFromSummary } from "../../book-mindmap/service.js";
+import { buildBookDiagramFromSummary, type DiagramType } from "../../book-mindmap/service.js";
 
 const notebooks = new Hono();
 const BOOK_REPORT_METADATA = {
@@ -807,6 +807,9 @@ notebooks.post("/:id/report/generate", async (c) => {
     // Resolve summaryPrompt: use preset if provided, else fall back to built-in default
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
     const rawPresetId = typeof body["presetId"] === "string" ? body["presetId"].trim() : "";
+    const rawDiagramType = typeof body["diagramType"] === "string" ? body["diagramType"].trim() : "";
+    const VALID_DIAGRAM_TYPES = new Set(["mindmap", "flowchart", "timeline", "sequenceDiagram", "classDiagram", "gantt"]);
+    const diagramType: DiagramType = VALID_DIAGRAM_TYPES.has(rawDiagramType) ? rawDiagramType as DiagramType : "mindmap";
     const isBookReportPreset = BOOK_REPORT_PRESET_IDS.has(rawPresetId);
     const bookReportMetadata = getBookReportMetadata(rawPresetId);
 
@@ -912,7 +915,7 @@ notebooks.post("/:id/report/generate", async (c) => {
 
       if (rawPresetId === "builtin-book-mindmap") {
         try {
-          contentJson = JSON.stringify(await buildBookMindmapFromSummary(result.answer, process.env, fetch));
+          contentJson = JSON.stringify(await buildBookDiagramFromSummary(result.answer, process.env, fetch, diagramType));
         } catch (mindmapErr) {
           logger.warn({ err: mindmapErr, notebookId: id }, "book mindmap JSON generation failed");
           return c.json(
@@ -1462,6 +1465,12 @@ notebooks.get("/:id/book-finder/messages", async (c) => {
   });
 });
 
+function buildBookFinderQueryWithHistory(query: string, userHistory: string[]): string {
+  if (userHistory.length === 0) return query;
+  const lines = userHistory.map((h) => `- ${h}`).join("\n");
+  return `[对话上下文]\n用户之前问过：\n${lines}\n\n[当前问题]\n${query}`;
+}
+
 notebooks.post("/:id/book-finder/search", async (c) => {
   return await withNotebookId(c, async (id) => {
     const body = await c.req.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
@@ -1505,8 +1514,21 @@ notebooks.post("/:id/book-finder/search", async (c) => {
       logger.warn({ err: dbErr, notebookId: id }, "failed to persist quick book finder user message to DB");
     }
 
+    // 读取历史上下文（过滤掉本次刚插入的用户消息）
+    let enrichedQuery = query;
     try {
-      const result = await findBooksForQuery(query, process.env, fetch, {
+      const history = await listChatMessages(id, ["book_finder"]);
+      const userHistory = history
+        .filter((r) => r.id !== userMessageId && r.role === "user")
+        .slice(-5)
+        .map((r) => r.content);
+      enrichedQuery = buildBookFinderQueryWithHistory(query, userHistory);
+    } catch {
+      // 历史读取失败不阻断主流程
+    }
+
+    try {
+      const result = await findBooksForQuery(enrichedQuery, process.env, fetch, {
         recordSourceStat: recordBookSourceStat,
       });
 

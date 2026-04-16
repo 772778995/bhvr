@@ -2748,3 +2748,230 @@ test("GET /api/notebooks/:id/chat/messages returns only manual chat messages for
     "普通对话回答",
   ]);
 });
+
+test("POST /api/notebooks/:id/report/generate with diagramType=flowchart returns flowchart mermaid content", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalConnect = NotebookLMClient.prototype.connect;
+  const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
+  const originalNotebooks = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "notebooks");
+  const originalSources = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "sources");
+  const originalBaseUrl = process.env.OPENAI_BASE_URL;
+  const originalToken = process.env.OPENAI_TOKEN;
+  const originalModel = process.env.OPENAI_MODEL;
+  const notebookId = crypto.randomUUID();
+  const summaryMarkdown = [
+    "# 深度参与",
+    "",
+    "- 核心主旨：把工作拆到足够诚实。",
+    "- 关键概念：反馈、循环、组织纪律。",
+  ].join("\n");
+  const flowchartCode = [
+    "flowchart TD",
+    "  A[深度参与] --> B[核心主旨]",
+    "  A --> C[关键概念]",
+    "  B --> D[把工作拆到足够诚实]",
+    "  C --> E[反馈]",
+    "  C --> F[循环]",
+  ].join("\n");
+
+  process.env.OPENAI_BASE_URL = "https://openai.example.com/v1";
+  process.env.OPENAI_TOKEN = "test-token";
+  process.env.OPENAI_MODEL = "test-model";
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === "https://openai.example.com/v1/chat/completions") {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: flowchartCode } }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response('<html><script>var data = {"SNlM0e":"fake-token"}</script></html>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  };
+
+  NotebookLMClient.prototype.connect = async function () {};
+  Object.defineProperty(NotebookLMClient.prototype, "notebooks", {
+    configurable: true,
+    get() {
+      return {
+        get: async () => ({ projectId: notebookId, title: "Notebook Under Test" }),
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "sources", {
+    configurable: true,
+    get() {
+      return {
+        list: async () => [
+          { sourceId: "source-a", title: "Book Source", type: SourceType.TEXT, status: SourceStatus.READY },
+        ],
+      };
+    },
+  });
+  Object.defineProperty(NotebookLMClient.prototype, "generation", {
+    configurable: true,
+    get() {
+      return {
+        chat: async () => ({
+          text: summaryMarkdown,
+          citations: [],
+        }),
+      };
+    },
+  });
+
+  const routeModule = await import("./index.js");
+  const { disposeClient } = await import("../../notebooklm/index.js");
+  const { listEntriesByNotebookId } = await import("../../db/report-entries.js");
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    NotebookLMClient.prototype.connect = originalConnect;
+    if (originalNotebooks) {
+      Object.defineProperty(NotebookLMClient.prototype, "notebooks", originalNotebooks);
+    }
+    if (originalSources) {
+      Object.defineProperty(NotebookLMClient.prototype, "sources", originalSources);
+    }
+    if (originalGeneration) {
+      Object.defineProperty(NotebookLMClient.prototype, "generation", originalGeneration);
+    }
+    if (originalBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = originalBaseUrl;
+    if (originalToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = originalToken;
+    if (originalModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = originalModel;
+    await disposeClient();
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/report/generate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ presetId: "builtin-book-mindmap", diagramType: "flowchart" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    data: { message: "书籍导图已生成" },
+  });
+
+  const entries = await listEntriesByNotebookId(notebookId);
+  const diagramEntry = entries.find((entry) => entry.presetId === "builtin-book-mindmap");
+  assert.ok(diagramEntry);
+  assert.ok(diagramEntry?.contentJson);
+  const contentJson = JSON.parse(diagramEntry?.contentJson ?? "{}");
+  assert.equal(contentJson.kind, "mermaid_mindmap");
+  assert.ok(contentJson.code.startsWith("flowchart"), `Expected code to start with "flowchart", got: ${contentJson.code.slice(0, 30)}`);
+});
+
+test("POST /api/notebooks/:id/book-finder/search injects conversation history into findBooksForQuery query", async (t) => {
+  const previousBaseUrl = process.env.OPENAI_BASE_URL;
+  const previousToken = process.env.OPENAI_TOKEN;
+  const previousModel = process.env.OPENAI_MODEL;
+  const originalFetch = globalThis.fetch;
+  const notebookId = crypto.randomUUID();
+
+  process.env.OPENAI_BASE_URL = "https://llm.example.test/v1";
+  process.env.OPENAI_TOKEN = "token";
+  process.env.OPENAI_MODEL = "book-model";
+  resetWorkspaceEnvCacheForTests();
+
+  const { insertChatMessage } = await import("../../db/chat-messages.js");
+
+  // 预插入 2 条 book_finder user 历史消息
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "user",
+    content: "历史问题一",
+    source: "book_finder",
+  });
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "assistant",
+    content: "历史回答一",
+    source: "book_finder",
+  });
+  await insertChatMessage({
+    id: crypto.randomUUID(),
+    notebookId,
+    role: "user",
+    content: "历史问题二",
+    source: "book_finder",
+  });
+
+  let capturedQuery: string | null = null;
+
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url === "https://llm.example.test/v1/chat/completions") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { messages?: Array<{ role: string; content: string }> };
+      const prompt = body.messages?.[0]?.content ?? "";
+      // capture the full messages for the first call (query normalization)
+      if (capturedQuery === null) {
+        const userMsg = body.messages?.find((m) => m.role === "user");
+        capturedQuery = userMsg?.content ?? prompt;
+      }
+      const content = prompt.includes("字段固定为 sections")
+        ? JSON.stringify({ sections: [] })
+        : JSON.stringify({ searchText: "test", keywords: ["test"], languagePreference: "zh" });
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.startsWith("https://openlibrary.org/search.json")) {
+      return new Response(JSON.stringify({ docs: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (url.includes("annas-archive.gl") || url.includes("z-lib.fm") || url.includes("gutenberg.org")) {
+      return new Response("", { status: 200, headers: { "content-type": "text/html" } });
+    }
+
+    throw new Error(`Unexpected URL in context injection test: ${url}`);
+  };
+
+  const routeModule = await import(`./index.js?book-finder-history=${Date.now()}`);
+  const notebooks = routeModule.default;
+
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    resetWorkspaceEnvCacheForTests();
+    if (previousBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = previousBaseUrl;
+    if (previousToken === undefined) delete process.env.OPENAI_TOKEN;
+    else process.env.OPENAI_TOKEN = previousToken;
+    if (previousModel === undefined) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = previousModel;
+  });
+
+  const response = await notebooks.request(`http://localhost/${notebookId}/book-finder/search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "当前问题" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(capturedQuery !== null, "fetch should have been called for LLM");
+  const cq = capturedQuery as string;
+  assert.ok(
+    cq.includes("历史问题一") && cq.includes("历史问题二"),
+    `Expected captured query to contain history, got: ${cq.slice(0, 200)}`,
+  );
+  assert.ok(
+    cq.includes("[对话上下文]"),
+    `Expected captured query to contain context prefix, got: ${cq.slice(0, 200)}`,
+  );
+});

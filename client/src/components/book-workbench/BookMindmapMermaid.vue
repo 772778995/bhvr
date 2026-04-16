@@ -5,6 +5,7 @@ import mermaid from "mermaid";
 interface Props {
   code: string;
   title?: string;
+  compact?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -45,25 +46,11 @@ watch(() => props.code, (newCode) => {
 </script>
 
 <template>
-  <section class="mx-auto w-full max-w-5xl">
-    <!-- Header -->
-    <div
-      v-if="title"
-      class="mb-5 pb-3 border-b border-[#ddd3c2] flex items-baseline gap-3"
-    >
-      <h2
-        class="text-xl font-semibold text-[#2f271f] leading-snug"
-        style="font-family: 'Noto Serif SC', 'Source Han Serif SC', serif"
-      >
-        {{ title }}
-      </h2>
-      <span class="text-xs text-[#9a8a78] tracking-wide">阅读导图</span>
-    </div>
-
+  <section :class="compact ? 'w-full h-full' : 'mx-auto w-full max-w-5xl'">
     <!-- SVG render area -->
     <div
       v-if="svgHtml && !renderError"
-      class="overflow-x-auto rounded-lg border border-[#ddd3c2] bg-[#fffbf4] px-4 py-6"
+      :class="compact ? 'w-full h-full overflow-auto' : 'overflow-x-auto rounded-lg border border-[#ddd3c2] bg-[#fffbf4] px-4 py-6'"
     >
       <div
         class="flex justify-center min-w-0"

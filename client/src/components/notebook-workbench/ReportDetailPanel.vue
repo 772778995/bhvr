@@ -20,6 +20,7 @@ interface Props {
   notebookId: string;
   entry?: ReportEntry;
   onBack?: () => void;
+  compact?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -330,11 +331,12 @@ function formatDuration(seconds: number | undefined): string {
     <!-- RESEARCH REPORT MODE -->
     <!-- ════════════════════════════════════════════════════════ -->
     <template v-if="entry && isResearchReport">
-      <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-5">
+      <div :class="compact ? 'min-h-0 min-w-0 flex-1 overflow-y-auto' : 'min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-5'">
         <BookMindmapMermaid
           v-if="isBookMindmapReport && hasMermaidMindmapJson && mermaidMindmapCode"
           :code="mermaidMindmapCode"
           :title="mermaidMindmapTitle"
+          :compact="compact"
         />
         <p v-else-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
           正在加载报告内容…

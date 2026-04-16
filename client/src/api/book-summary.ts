@@ -8,6 +8,10 @@ export function generateBookSummary(notebookId: string, presetId: BookSummaryPre
   return notebooksApi.generateReport(notebookId, presetId);
 }
 
+export function generateBookDiagram(notebookId: string, diagramType: string) {
+  return notebooksApi.generateReport(notebookId, "builtin-book-mindmap", { diagramType });
+}
+
 export function getBookSummaryPreset(presetId: ConfigurableBookSummaryPresetId): Promise<SummaryPreset> {
   return api.getPreset(presetId);
 }
