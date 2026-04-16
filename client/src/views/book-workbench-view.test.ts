@@ -356,14 +356,6 @@ test("ReportDetailPanel prioritizes book mindmap rendering before markdown loadi
   assert.match(source, /v-else-if="contentError"/);
 });
 
-test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {
-  const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
-
-  assert.match(source, /v-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"/);
-  assert.match(source, /v-else-if="contentLoading"/);
-  assert.match(source, /v-else-if="contentError"/);
-});
-
 test("ReportDetailPanel does not fetch or render markdown fallback for book mindmap reports", () => {
   const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
 
