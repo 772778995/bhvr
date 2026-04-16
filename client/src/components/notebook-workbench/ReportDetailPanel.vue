@@ -14,24 +14,12 @@ import {
   resolveReportDetailContentRequest,
   shouldRenderResearchReportMarkdown,
 } from "./report-detail-content";
-import BookMindmapTree from "@/components/book-workbench/BookMindmapTree.vue";
 import BookMindmapMermaid from "@/components/book-workbench/BookMindmapMermaid.vue";
 
 interface Props {
   notebookId: string;
   entry?: ReportEntry;
   onBack?: () => void;
-}
-
-interface BookMindmapNodeView {
-  label: string;
-  note?: string;
-  children?: BookMindmapNodeView[];
-}
-
-interface BookMindmapView {
-  title?: string;
-  root: BookMindmapNodeView;
 }
 
 const props = defineProps<Props>();
@@ -44,7 +32,6 @@ const activeEntry = computed(() => props.entry);
 const isResearchReport = computed(() => props.entry?.entryType === 'research_report');
 const isArtifact = computed(() => props.entry?.entryType === 'artifact');
 const isBookMindmapReport = computed(() => isBookMindmapReportEntry(props.entry));
-const hasBookMindmapJson = computed(() => isBookMindmapReport.value && props.entry?.contentJson?.kind === "book_mindmap");
 const hasMermaidMindmapJson = computed(() =>
   isBookMindmapReport.value && props.entry?.contentJson?.kind === "mermaid_mindmap"
 );
@@ -145,22 +132,6 @@ watch(
 const renderedHtml = computed(() => {
   if (!fetchedContent.value) return "";
   return renderMarkdown(fetchedContent.value);
-});
-
-const bookMindmapTree = computed<BookMindmapView | null>(() => {
-  if (!hasBookMindmapJson.value) {
-    return null;
-  }
-
-  const payload = activeEntry.value?.contentJson as Record<string, unknown> | undefined;
-  if (!payload || typeof payload.root !== "object" || payload.root === null) {
-    return null;
-  }
-
-  return {
-    title: typeof payload.title === "string" ? payload.title : activeEntry.value?.title ?? undefined,
-    root: payload.root as BookMindmapNodeView,
-  };
 });
 
 /** True when the current entry has loadable markdown content (research report OR report artifact). */
@@ -364,11 +335,6 @@ function formatDuration(seconds: number | undefined): string {
           v-if="isBookMindmapReport && hasMermaidMindmapJson && mermaidMindmapCode"
           :code="mermaidMindmapCode"
           :title="mermaidMindmapTitle"
-        />
-        <BookMindmapTree
-          v-else-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"
-          :title="bookMindmapTree.title"
-          :root="bookMindmapTree.root"
         />
         <p v-else-if="contentLoading" class="text-base text-[#9a8a78] leading-relaxed italic">
           正在加载报告内容…

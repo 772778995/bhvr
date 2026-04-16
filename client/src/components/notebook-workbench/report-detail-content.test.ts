@@ -31,8 +31,9 @@ test("resolveReportDetailContentRequest skips markdown loading for builtin book 
   const entry = createReportEntry({
     presetId: "builtin-book-mindmap",
     contentJson: {
-      kind: "book_mindmap",
-      root: { label: "深度参与" },
+      kind: "mermaid_mindmap",
+      version: 1,
+      code: "mindmap\n  root((深度参与))",
     },
   });
 

@@ -338,16 +338,22 @@ test("ReportDetailPanel no longer keeps the markdown download toolbar button", (
   assert.doesNotMatch(source, /function downloadMarkdown/);
 });
 
-test("ReportDetailPanel renders book mindmap entries only when json mindmap data exists", () => {
+test("ReportDetailPanel renders book mindmap entries using Mermaid renderer when mermaid data exists", () => {
   const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
 
-  assert.match(source, /BookMindmapTree/);
+  assert.match(source, /BookMindmapMermaid/);
   assert.match(source, /isBookMindmapReportEntry/);
-  assert.match(source, /contentJson\?\.kind === "book_mindmap"/);
-  assert.doesNotMatch(source, /导图 JSON 不可用时，退回 Markdown 摘要/);
-  assert.doesNotMatch(source, /showBookMindmapMarkdownFallbackNotice/);
-  assert.doesNotMatch(source, /当前展示的是这次“书籍导图”生成流程保留下来的摘要回退内容。/);
-  assert.doesNotMatch(source, /本次产出没有生成可渲染的 JSON 导图，但你仍然可以先阅读这份摘要。/);
+  assert.match(source, /contentJson\?\.kind === "mermaid_mindmap"/);
+  assert.doesNotMatch(source, /BookMindmapTree/);
+  assert.doesNotMatch(source, /contentJson\?\.kind === "book_mindmap"/);
+});
+
+test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {
+  const source = readFileSync(new URL("../components/notebook-workbench/ReportDetailPanel.vue", import.meta.url), "utf8");
+
+  assert.match(source, /v-if="isBookMindmapReport && hasMermaidMindmapJson && mermaidMindmapCode"/);
+  assert.match(source, /v-else-if="contentLoading"/);
+  assert.match(source, /v-else-if="contentError"/);
 });
 
 test("ReportDetailPanel prioritizes book mindmap rendering before markdown loading states", () => {

@@ -1253,7 +1253,7 @@ test("POST /api/notebooks/:id/report/generate returns preset-specific no-book me
   });
 });
 
-test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON content and markdown file", async (t) => {
+test("POST /api/notebooks/:id/report/generate persists builtin book mindmap Mermaid content and markdown file", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalConnect = NotebookLMClient.prototype.connect;
   const originalGeneration = Object.getOwnPropertyDescriptor(NotebookLMClient.prototype, "generation");
@@ -1269,22 +1269,14 @@ test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON
     "- 核心主旨：把工作拆到足够诚实。",
     "- 关键概念：反馈、循环、组织纪律。",
   ].join("\n");
-  const modelPayload = {
-    kind: "book_mindmap",
-    version: 1,
-    title: "深度参与",
-    root: {
-      label: "深度参与",
-      note: "把工作拆到足够诚实。",
-      children: [
-        {
-          label: "核心问题",
-          note: "为什么组织会失去反馈。",
-          children: [],
-        },
-      ],
-    },
-  };
+  const mermaidCode = [
+    "mindmap",
+    "  root((深度参与))",
+    "    核心主旨",
+    "      把工作拆到足够诚实",
+    "    核心问题",
+    "      为什么组织会失去反馈",
+  ].join("\n");
 
   process.env.OPENAI_BASE_URL = "https://openai.example.com/v1";
   process.env.OPENAI_TOKEN = "test-token";
@@ -1294,7 +1286,7 @@ test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON
     const url = String(input);
     if (url === "https://openai.example.com/v1/chat/completions") {
       return new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(modelPayload) } }],
+        choices: [{ message: { content: mermaidCode } }],
       }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -1384,7 +1376,7 @@ test("POST /api/notebooks/:id/report/generate persists builtin book mindmap JSON
   assert.match(mindmapEntry?.filePath ?? "", /report-.+\.md$/);
   assert.equal(mindmapEntry?.content, null);
   assert.ok(mindmapEntry?.contentJson);
-  assert.equal(JSON.parse(mindmapEntry?.contentJson ?? "{}").kind, "book_mindmap");
+  assert.equal(JSON.parse(mindmapEntry?.contentJson ?? "{}").kind, "mermaid_mindmap");
 
   const markdownPath = join(tempDataFilesDir, mindmapEntry?.filePath ?? "");
   assert.equal(readFileSync(markdownPath, "utf8"), summaryMarkdown);
