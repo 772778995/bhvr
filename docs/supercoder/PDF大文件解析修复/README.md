@@ -1,6 +1,6 @@
 # PDF 大文件解析修复
 
-**状态：** 进行中
+**状态：** 完成
 
 ## 设计结论
 
@@ -46,6 +46,7 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
 | 日期 | 变更 | 原因 |
 |------|------|------|
 | 2026-04-16 | 初始设计 | — |
+| 2026-04-16 | 实施完成；补充扫描件检测与细化错误消息 | 调试发现用户 PDF 为 510 页扫描件（CNKI/Anna's Archive），无文字层；在 `extractPdfText` 中加入 `totalPages` 判断，给出明确提示 |
 
 ## 坑 / 注意事项
 
