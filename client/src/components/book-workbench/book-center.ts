@@ -2,13 +2,13 @@ import type { ReportEntry } from "@/api/notebooks";
 
 const BOOK_SUMMARY_PRESET_IDS = new Set(["builtin-quick-read", "builtin-deep-reading", "builtin-book-mindmap"]);
 
-const CHAT_TAB = { key: "chat", label: "对话" } as const;
-const SUMMARY_TAB = { key: "summary", label: "阅读产出" } as const;
+const CHAT_TAB = { key: "chat", label: "读书互动" } as const;
+const SUMMARY_TAB = { key: "summary", label: "快速读书" } as const;
 const BOOK_FINDER_TAB = { key: "book-finder", label: "快速找书" } as const;
 
 export function getBookCenterTabs(hasSummary: boolean) {
   void hasSummary;
-  return [CHAT_TAB, BOOK_FINDER_TAB, SUMMARY_TAB];
+  return [CHAT_TAB, SUMMARY_TAB, BOOK_FINDER_TAB];
 }
 
 export function getBookCenterTabButtonClass(active: boolean): string {

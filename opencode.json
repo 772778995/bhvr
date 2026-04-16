@@ -13,7 +13,35 @@
     "explore": {
       "tools": {
         "context7_*": true
-      }
+      },
+      "model": "github-copilot/claude-sonnet-4.6"
+    },
+    "implementer": {
+      "model": "github-copilot/claude-sonnet-4.6"
+    },
+    "code-reviewer": {
+      "model": "github-copilot/gpt-5.4"
+    },
+    "project-scout": {
+      "model": "github-copilot/gpt-4o"
+    },
+    "status-scout": {
+      "model": "github-copilot/gpt-4o"
+    },
+    "functional-reviewer": {
+      "model": "github-copilot/claude-sonnet-4.6"
+    },
+    "code-quality-reviewer": {
+      "model": "github-copilot/claude-sonnet-4.6"
+    },
+    "design-advisor-gpt": {
+      "model": "github-copilot/gpt-5.4"
+    },
+    "design-advisor-sonnet": {
+      "model": "github-copilot/claude-sonnet-4.6"
+    },
+    "design-advisor-gemini": {
+      "model": "github-copilot/gemini-3.1-pro-preview"
     }
   }
 }

@@ -34,7 +34,7 @@ $HEAD_SHA = git rev-parse HEAD
 在 OpenCode 中，用 `@code-reviewer` 启动审查会话，并提供以下上下文：
 
 - **已实现的内容** — 你刚刚构建的
-- **需求/计划** — 它应该做什么（规格文档或任务描述）
+- **需求/计划** — 它应该做什么（功能文档或任务描述）
 - **Base SHA** — 起始提交
 - **Head SHA** — 结束提交
 - **简要描述** — 1-2 句话总结
@@ -57,7 +57,7 @@ $HEAD_SHA = git rev-parse HEAD
 
 @code-reviewer
   已实现的内容：会话索引的验证和修复函数
-  计划/需求：来自 docs/specs/deployment-plan.md 的任务 2
+  计划/需求：来自 docs/功能类别/功能名/README.md 的任务 2
   BASE_SHA: a7981ec
   HEAD_SHA: 3df7661
   描述：添加 verifyIndex() 和 repairIndex()，处理 4 种问题类型
@@ -75,7 +75,7 @@ $HEAD_SHA = git rev-parse HEAD
 
 ## 与工作流的集成
 
-**subagent-driven-development：**
+**subagent-coordination：**
 - 每个任务后审核
 - 在问题级联之前发现它们
 - 继续下一个任务之前修复

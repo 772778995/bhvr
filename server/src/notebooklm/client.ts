@@ -24,6 +24,7 @@ import type {
   WebSearchResult,
   CreateArtifactOptions,
 } from "notebooklm-kit";
+import { Mutex } from "async-mutex";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
 import {
@@ -43,6 +44,8 @@ import {
   type AuthMeta,
   type AuthState,
 } from "./auth-profile.js";
+
+const notebooklmRequestMutex = new Mutex();
 
 const ALLOWED_DOMAINS = [
   ".google.com",
@@ -611,37 +614,44 @@ async function getClient(): Promise<NotebookLMClient> {
 }
 
 async function runNotebookRequest<T>(operation: (client: NotebookLMClient) => Promise<T>): Promise<T> {
-  const client = await getClient();
+  return notebooklmRequestMutex.runExclusive(async () => {
+    const client = await getClient();
 
-  try {
-    return await operation(client);
-  } catch (error) {
-    if (!isRecognizedAuthFailure(error)) {
-      throw error;
-    }
-
-    await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
-
-    if (!canAttemptSilentRefresh(DEFAULT_ACCOUNT_ID)) {
-      throw new NotebookRequestAuthError(error instanceof Error ? error.message : String(error));
-    }
-
-    const status = await authManager.refreshAuthProfile(DEFAULT_ACCOUNT_ID, "request-retry");
-    if (status.status !== "ready") {
-      throw new NotebookRequestAuthError(status.error ?? "Notebook authentication is unavailable");
-    }
-
-    const retryClient = await getClient();
     try {
-      return await operation(retryClient);
-    } catch (retryError) {
-      if (isRecognizedAuthFailure(retryError)) {
-        throw new NotebookRequestAuthError(retryError instanceof Error ? retryError.message : String(retryError));
+      const result = await operation(client);
+      // 释放后加 100ms 缓冲，降低服务端状态残留概率
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return result;
+    } catch (error) {
+      if (!isRecognizedAuthFailure(error)) {
+        throw error;
       }
 
-      throw retryError;
+      await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
+
+      if (!canAttemptSilentRefresh(DEFAULT_ACCOUNT_ID)) {
+        throw new NotebookRequestAuthError(error instanceof Error ? error.message : String(error));
+      }
+
+      const status = await authManager.refreshAuthProfile(DEFAULT_ACCOUNT_ID, "request-retry");
+      if (status.status !== "ready") {
+        throw new NotebookRequestAuthError(status.error ?? "Notebook authentication is unavailable");
+      }
+
+      const retryClient = await getClient();
+      try {
+        const retryResult = await operation(retryClient);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return retryResult;
+      } catch (retryError) {
+        if (isRecognizedAuthFailure(retryError)) {
+          throw new NotebookRequestAuthError(retryError instanceof Error ? retryError.message : String(retryError));
+        }
+
+        throw retryError;
+      }
     }
-  }
+  });
 }
 
 export async function listNotebooks(): Promise<NotebookDetail[]> {

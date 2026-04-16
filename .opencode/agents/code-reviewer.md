@@ -30,7 +30,7 @@ permission:
 
 {WHAT_WAS_IMPLEMENTED}
 
-## 需求/计划
+## 功能文档
 
 {PLAN_OR_REQUIREMENTS}
 
@@ -66,8 +66,7 @@ git diff {BASE_SHA}..{HEAD_SHA}
 - 所有测试通过？
 
 **需求：**
-- 满足了所有计划需求？
-- 实现与 spec 匹配？
+- 按照功能文档实现了？
 - 没有范围蔓延？
 - 记录了破坏性变更？
 

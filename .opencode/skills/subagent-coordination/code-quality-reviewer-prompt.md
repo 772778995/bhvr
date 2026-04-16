@@ -1,45 +1,33 @@
-# Code Quality Reviewer Prompt Template
+﻿# Code Quality Reviewer Prompt 模板
 
-当启动一个代码质量 reviewer subagent 会话时使用此 template。
+当调度代码质量 reviewer 子代理会话时使用此模板。
 
 **目的：** 验证实现构建良好（整洁、经过测试、可维护）
 
-**仅在 spec 合规性审查通过后才启动。**
+**仅在功能合规审查通过后才启动。**
 
 ```
-Code quality reviewer subagent session:
-  description: "Review code quality for Task N"
+代码质量 reviewer 子代理会话：
+  description: "代码质量审核：任务 N"
   prompt: |
-    你正在审查一个已经通过 spec 合规检查的任务实现质量。
+    你正在审查一个已经通过功能合规检查的任务实现质量。
 
     ## 重要：你是审查型子代理
 
     你只负责审查并上报结论。严格禁止派遣或调度任何其他子代理。
-    如需额外上下文，通过 NEEDS_CONTEXT 上报给 controller。
+    如需额外上下文，通过 NEEDS_CONTEXT 上报给主代理。
 
-    ## 任务需求
+    ## 子代理完整报告（包含任务描述、实现摘要、文件变更及 diff）
 
-    [任务完整文本或从规格派生的完整要求]
+    [直接粘贴子代理的完整报告。报告格式已包含原始任务描述和每个文件的变更摘要/diff，无需主代理额外提供上下文。]
 
-    ## Implementer 报告
+    ## 重要：使用报告中的 diff 信息定位变更范围
 
-    [来自 implementer 的报告]
+    子代理的报告已经包含每个文件的变更摘要和关键 diff hunk。
+    优先使用报告中的 diff 信息来定位当前任务的变更范围。
+    如果报告的 diff 信息不足以隔离当前任务，停止并报告 NEEDS_CONTEXT，说明缺少哪个文件的哪部分信息。
+    不要自己去读文件或跑 git diff 来猜测边界。
 
-    ## 需要重点审查的文件
-
-    [该任务实际修改的文件列表；不要让 reviewer 自己猜]
-
-    ## Task-Scoped 边界信息（边界不天然清晰时必填）
-
-    [当前任务相关的 diff hunk、精确变更范围或 controller 提供的边界说明；如果文件独占且没有预存无关改动，可写“无”]
-
-    ## 重要：不要依赖任务级 commit 边界
-
-    这个 workspace 里可能还有其他任务的变更。
-    只审查当前任务相关的文件和实现，不要把无关改动记到这个任务头上。
-    优先使用 controller 提供的 task-scoped diff hunk 或精确变更范围来定位当前任务。
-    如果文件边界清楚，可以直接阅读上面列出的文件。
-    如果文件里混有其他任务或预存改动，而 controller 没有提供足够边界信息，停止并报告 NEEDS_CONTEXT；不要从混合文件状态里猜。
 
     ## 你的工作
 
@@ -68,7 +56,7 @@ Code quality reviewer subagent session:
     - #### Minor（可选改进）
     - ### 评估
 
-    若任务边界不清，先报告 NEEDS_CONTEXT，并说明还缺哪些 task-scoped diff hunk 或精确变更范围；不要输出基于猜测的审查结论。
+    若报告中的 diff 信息不足以隔离当前任务边界，先报告 NEEDS_CONTEXT，说明缺少哪个文件的哪部分信息；由主代理恢复子代理会话补充报告，不要输出基于猜测的审查结论。
 
     每个问题必须包含 file:line 引用、问题所在、为何重要，以及在不显而易见时给出修复方向。
 ```
@@ -76,7 +64,7 @@ Code quality reviewer subagent session:
 **除标准代码质量关注点外，reviewer 还应检查：**
 - 每个文件是否有一个清晰的职责和定义明确的接口？
 - 各单元是否分解得可以独立理解和测试？
-- 实现是否遵循了计划中的文件结构？
+- 实现是否遵循了任务描述中的文件结构？
 - 此次实现是否创建了已经很大的新文件，或显著增大了现有文件？（不要标记已有的文件大小——专注于此次变更的贡献。）
 
 **代码 reviewer 返回：** 优点、问题（Critical/Important/Minor）、评估

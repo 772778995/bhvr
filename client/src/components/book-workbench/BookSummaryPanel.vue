@@ -38,8 +38,65 @@ function triggerDownload(url: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+async function svgToJpgBlob(svgEl: SVGSVGElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const svgWidth = parseFloat(svgEl.getAttribute("width") || "") || img.width;
+      const svgHeight = parseFloat(svgEl.getAttribute("height") || "") || img.height;
+      const viewBox = svgEl.getAttribute("viewBox");
+      let intrinsicWidth = svgWidth;
+      let intrinsicHeight = svgHeight;
+      if (viewBox) {
+        const parts = viewBox.split(/[\s,]+/).filter(Boolean);
+        if (parts.length >= 4) {
+          intrinsicWidth = parseFloat(parts[2]);
+          intrinsicHeight = parseFloat(parts[3]);
+        }
+      }
+      const scale = Math.max(2, Math.ceil(1200 / Math.max(intrinsicWidth, intrinsicHeight)));
+      const canvasWidth = intrinsicWidth * scale;
+      const canvasHeight = intrinsicHeight * scale;
+      const canvas = document.createElement("canvas");
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Failed to get canvas context"));
+        return;
+      }
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to create JPG blob"));
+      }, "image/jpeg", 0.92);
+    };
+    img.onerror = () => reject(new Error("Failed to load SVG"));
+    const svgHtml = svgEl.outerHTML;
+    const svgWithXml = `<?xml version="1.0" encoding="UTF-8"?>` + svgHtml;
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgWithXml)));
+  });
+}
+
 async function downloadEntry(entry: ReportEntry) {
   const baseName = sanitizeFilename(entry.title ?? "diagram");
+
+  // mindmap 类型优先尝试下载 JPG
+  if (entry.contentJson?.kind === "mermaid_mindmap") {
+    try {
+      const svgContainer = document.querySelector(".flex.justify-center.min-w-0");
+      const svgEl = svgContainer?.querySelector("svg") as SVGSVGElement | null;
+      if (svgEl) {
+        const jpgBlob = await svgToJpgBlob(svgEl);
+        triggerDownload(URL.createObjectURL(jpgBlob), `${baseName}.jpg`);
+        return;
+      }
+    } catch (e) {
+      console.warn("JPG download failed, fallback to mmd:", e);
+    }
+  }
 
   const code = entry.contentJson?.["code"];
   if (typeof code === "string" && code.trim()) {
