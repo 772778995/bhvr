@@ -8,7 +8,7 @@ const BOOK_FINDER_TAB = { key: "book-finder", label: "快速找书" } as const;
 
 export function getBookCenterTabs(hasSummary: boolean) {
   void hasSummary;
-  return [CHAT_TAB, SUMMARY_TAB, BOOK_FINDER_TAB];
+  return [CHAT_TAB, BOOK_FINDER_TAB, SUMMARY_TAB];
 }
 
 export function getBookCenterTabButtonClass(active: boolean): string {

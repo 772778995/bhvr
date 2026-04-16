@@ -10,28 +10,28 @@ import {
 } from "./book-center.js";
 import type { ReportEntry } from "@/api/notebooks";
 
-test("getBookCenterTabs keeps 对话、阅读产出、快速找书 as the stable middle order", () => {
+test("getBookCenterTabs keeps 对话、快速找书、阅读产出 as the stable middle order", () => {
   assert.deepEqual(getBookCenterTabs(false), [
     { key: "chat", label: "对话" },
-    { key: "summary", label: "阅读产出" },
     { key: "book-finder", label: "快速找书" },
+    { key: "summary", label: "阅读产出" },
   ]);
   assert.deepEqual(getBookCenterTabs(true), [
     { key: "chat", label: "对话" },
-    { key: "summary", label: "阅读产出" },
     { key: "book-finder", label: "快速找书" },
+    { key: "summary", label: "阅读产出" },
   ]);
 });
 
-test("getBookCenterTabs puts 阅读产出 before 快速找书", () => {
+test("getBookCenterTabs puts 快速找书 before 阅读产出", () => {
   const tabs = getBookCenterTabs(true);
 
   assert.equal(tabs[0]?.key, "chat");
   assert.equal(tabs[0]?.label, "对话");
-  assert.equal(tabs[1]?.key, "summary");
-  assert.equal(tabs[2]?.key, "book-finder");
-  assert.equal(tabs[1]?.label, "阅读产出");
-  assert.equal(tabs[2]?.label, "快速找书");
+  assert.equal(tabs[1]?.key, "book-finder");
+  assert.equal(tabs[2]?.key, "summary");
+  assert.equal(tabs[1]?.label, "快速找书");
+  assert.equal(tabs[2]?.label, "阅读产出");
 });
 
 test("getBookSummaryEntry returns the latest supported book summary report", () => {
