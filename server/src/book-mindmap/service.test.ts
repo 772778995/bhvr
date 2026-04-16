@@ -33,6 +33,36 @@ test("parseMermaidMindmapPayload throws when code does not start with mindmap", 
   );
 });
 
+test("parseMermaidMindmapPayload removes blank lines between nodes", () => {
+  const input = "mindmap\n\n  root((书名))\n\n    核心主旨\n\n      具体观点\n";
+  const result = parseMermaidMindmapPayload(input);
+  assert.equal(result.kind, "mermaid_mindmap");
+  assert.doesNotMatch(result.code, /\n\n/);
+  assert.match(result.code, /^mindmap/);
+  assert.match(result.code, /核心主旨/);
+});
+
+test("parseMermaidMindmapPayload normalizes tab indentation to spaces", () => {
+  const input = "mindmap\n\troot((书名))\n\t\t核心主旨";
+  const result = parseMermaidMindmapPayload(input);
+  assert.doesNotMatch(result.code, /\t/);
+  assert.match(result.code, /^mindmap\n  root/);
+});
+
+test("parseMermaidMindmapPayload strips LLM preamble before mindmap keyword", () => {
+  const input = "以下是Mermaid代码：\nmindmap\n  root((书名))\n    核心主旨";
+  const result = parseMermaidMindmapPayload(input);
+  assert.match(result.code, /^mindmap/);
+  assert.doesNotMatch(result.code, /以下是/);
+});
+
+test("parseMermaidMindmapPayload strips LLM postamble after mindmap block", () => {
+  const input = "mindmap\n  root((书名))\n    核心主旨\n以上是完整代码。";
+  const result = parseMermaidMindmapPayload(input);
+  assert.doesNotMatch(result.code, /以上是/);
+  assert.match(result.code, /核心主旨/);
+});
+
 test("buildBookMindmapFromSummary requests openai-compatible mermaid and returns payload", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 

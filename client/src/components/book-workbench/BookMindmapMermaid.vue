@@ -11,7 +11,6 @@ const props = defineProps<Props>();
 
 const svgHtml = ref<string>("");
 const renderError = ref(false);
-const containerId = `mermaid-${crypto.randomUUID().replace(/-/g, "")}`;
 
 mermaid.initialize({
   startOnLoad: false,
@@ -22,10 +21,16 @@ mermaid.initialize({
 async function renderDiagram(code: string) {
   renderError.value = false;
   svgHtml.value = "";
+  // Generate a fresh ID per render call to avoid conflicts with any stale DOM
+  // elements that Mermaid may have left behind after a previous failed render.
+  const renderId = `mermaid-${crypto.randomUUID().replace(/-/g, "")}`;
   try {
-    const { svg } = await mermaid.render(containerId, code);
+    const { svg } = await mermaid.render(renderId, code);
     svgHtml.value = svg;
-  } catch {
+  } catch (err) {
+    console.error("[BookMindmapMermaid] Mermaid render failed:", err);
+    // Clean up any stale element Mermaid left in the DOM before failing
+    document.getElementById(renderId)?.remove();
     renderError.value = true;
   }
 }

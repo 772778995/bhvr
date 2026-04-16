@@ -63,11 +63,12 @@ export async function buildBookMindmapFromSummary(
 
 export function parseMermaidMindmapPayload(rawCode: string): MermaidMindmapPayload {
   const extracted = extractMermaidCode(rawCode);
-  const trimmed = extracted.trim();
-  if (!trimmed.startsWith("mindmap")) {
-    throw new Error(`Mermaid mindmap code must start with 'mindmap', got: ${trimmed.slice(0, 50)}`);
+  const sanitized = sanitizeMermaidMindmapCode(extracted);
+  if (!sanitized.startsWith("mindmap")) {
+    const preview = extracted.trim().slice(0, 50);
+    throw new Error(`Mermaid mindmap code must start with 'mindmap', got: ${preview}`);
   }
-  return { kind: "mermaid_mindmap", version: 1, code: trimmed };
+  return { kind: "mermaid_mindmap", version: 1, code: sanitized };
 }
 
 function extractMermaidCode(value: string): string {
@@ -76,6 +77,56 @@ function extractMermaidCode(value: string): string {
     return fenced[1];
   }
   return value;
+}
+
+/**
+ * Cleans LLM-generated Mermaid mindmap code so the Mermaid parser can accept it.
+ *
+ * Mermaid's mindmap PEG grammar is sensitive to:
+ * - Blank lines between nodes (causes parse errors)
+ * - Tab characters (Mermaid expects space indentation)
+ * - Trailing non-indented lines after the mindmap block (LLM explanations)
+ *
+ * This function:
+ * 1. Finds the "mindmap" header line (skipping any LLM preamble before it)
+ * 2. Removes all blank lines
+ * 3. Converts tab indentation to 2-space indentation
+ * 4. Stops at the first non-indented line after the header (strips LLM postamble)
+ */
+function sanitizeMermaidMindmapCode(raw: string): string {
+  const lines = raw.split(/\r?\n/u);
+  const result: string[] = [];
+  let pastHeader = false;
+
+  for (const line of lines) {
+    // Normalize tabs → 2 spaces per tab stop
+    const normalized = line.replace(/\t/gu, "  ");
+    const trimmed = normalized.trim();
+
+    // Skip blank lines regardless of position
+    if (!trimmed) {
+      continue;
+    }
+
+    if (!pastHeader) {
+      // Scan for the "mindmap" keyword, skipping any LLM preamble
+      if (trimmed === "mindmap") {
+        pastHeader = true;
+        result.push("mindmap");
+      }
+      continue;
+    }
+
+    // After the "mindmap" header, every valid node line must be indented.
+    // A non-indented non-blank line signals LLM postamble — stop here.
+    if (!normalized.startsWith(" ")) {
+      break;
+    }
+
+    result.push(normalized);
+  }
+
+  return result.join("\n");
 }
 
 function readOpenAIConfig(env: NodeJS.ProcessEnv): OpenAICompatibleConfig {
