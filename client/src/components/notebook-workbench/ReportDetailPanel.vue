@@ -15,6 +15,7 @@ import {
   shouldRenderResearchReportMarkdown,
 } from "./report-detail-content";
 import BookMindmapTree from "@/components/book-workbench/BookMindmapTree.vue";
+import BookMindmapMermaid from "@/components/book-workbench/BookMindmapMermaid.vue";
 
 interface Props {
   notebookId: string;
@@ -44,6 +45,21 @@ const isResearchReport = computed(() => props.entry?.entryType === 'research_rep
 const isArtifact = computed(() => props.entry?.entryType === 'artifact');
 const isBookMindmapReport = computed(() => isBookMindmapReportEntry(props.entry));
 const hasBookMindmapJson = computed(() => isBookMindmapReport.value && props.entry?.contentJson?.kind === "book_mindmap");
+const hasMermaidMindmapJson = computed(() =>
+  isBookMindmapReport.value && props.entry?.contentJson?.kind === "mermaid_mindmap"
+);
+
+const mermaidMindmapCode = computed<string | null>(() => {
+  if (!hasMermaidMindmapJson.value) return null;
+  const payload = activeEntry.value?.contentJson as Record<string, unknown> | undefined;
+  if (!payload || typeof payload.code !== "string") return null;
+  return payload.code;
+});
+
+const mermaidMindmapTitle = computed<string | undefined>(() => {
+  if (!hasMermaidMindmapJson.value) return undefined;
+  return activeEntry.value?.title ?? undefined;
+});
 
 // ---------------------------------------------------------------------------
 // Artifact type mapping: string → numeric ArtifactType
@@ -344,8 +360,13 @@ function formatDuration(seconds: number | undefined): string {
     <!-- ════════════════════════════════════════════════════════ -->
     <template v-if="entry && isResearchReport">
       <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-5">
+        <BookMindmapMermaid
+          v-if="isBookMindmapReport && hasMermaidMindmapJson && mermaidMindmapCode"
+          :code="mermaidMindmapCode"
+          :title="mermaidMindmapTitle"
+        />
         <BookMindmapTree
-          v-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"
+          v-else-if="isBookMindmapReport && hasBookMindmapJson && bookMindmapTree"
           :title="bookMindmapTree.title"
           :root="bookMindmapTree.root"
         />

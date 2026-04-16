@@ -3,52 +3,41 @@ import test from "node:test";
 
 import {
   buildBookMindmapFromSummary,
-  normalizeBookMindmapPayload,
-  type BookMindmapPayload,
+  parseMermaidMindmapPayload,
+  type MermaidMindmapPayload,
 } from "./service.js";
 
-test("normalizeBookMindmapPayload trims labels, truncates copy, and drops invalid children", () => {
-  const payload = normalizeBookMindmapPayload({
-    title: "  深度参与  ",
-    root: {
-      label: "  深度参与  ",
-      note: "A".repeat(300),
-      children: [
-        {
-          label: "  组织反馈  ",
-          note: "B".repeat(400),
-          children: [
-            { label: "   ", note: "无效节点", children: [] },
-            { label: "实践", children: "not-array" as unknown as [] },
-          ],
-        },
-      ],
-    },
-  });
-
-  assert.equal(payload.kind, "book_mindmap");
-  assert.equal(payload.version, 1);
-  assert.equal(payload.title, "深度参与");
-  assert.equal(payload.root.label, "深度参与");
-  assert.equal(payload.root.note?.length, 160);
-  assert.equal(payload.root.children.length, 1);
-  assert.equal(payload.root.children[0]?.label, "组织反馈");
-  assert.equal(payload.root.children[0]?.note?.length, 160);
-  assert.deepEqual(payload.root.children[0]?.children, [{ label: "实践", children: [] }]);
+test("parseMermaidMindmapPayload extracts plain mindmap code", () => {
+  const result = parseMermaidMindmapPayload("mindmap\n  root((书名))\n    核心主旨");
+  assert.equal(result.kind, "mermaid_mindmap");
+  assert.equal(result.version, 1);
+  assert.match(result.code, /^mindmap/);
 });
 
-test("normalizeBookMindmapPayload enforces a usable root node", () => {
+test("parseMermaidMindmapPayload strips fenced code block markers", () => {
+  const result = parseMermaidMindmapPayload("```mermaid\nmindmap\n  root((书名))\n```");
+  assert.equal(result.kind, "mermaid_mindmap");
+  assert.match(result.code, /^mindmap/);
+  assert.doesNotMatch(result.code, /```/);
+});
+
+test("parseMermaidMindmapPayload strips plain fenced markers", () => {
+  const result = parseMermaidMindmapPayload("```\nmindmap\n  root((书名))\n```");
+  assert.match(result.code, /^mindmap/);
+});
+
+test("parseMermaidMindmapPayload throws when code does not start with mindmap", () => {
   assert.throws(
-    () => normalizeBookMindmapPayload({ root: { label: "   ", children: [] } }),
-    /书籍导图 JSON 缺少有效根节点/,
+    () => parseMermaidMindmapPayload("{\"title\": \"书名\"}"),
+    /mindmap/,
   );
 });
 
-test("buildBookMindmapFromSummary requests openai-compatible json and returns cleaned tree", async () => {
+test("buildBookMindmapFromSummary requests openai-compatible mermaid and returns payload", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
   const result = await buildBookMindmapFromSummary(
-    "# 深度参与\n\n- 核心主旨：把工作拆到足够诚实。",
+    "# 深度工作\n\n- 核心：专注创造稀缺价值。",
     {
       OPENAI_BASE_URL: "https://openai.example.com/v1",
       OPENAI_TOKEN: "token",
@@ -64,14 +53,7 @@ test("buildBookMindmapFromSummary requests openai-compatible json and returns cl
         choices: [
           {
             message: {
-              content: JSON.stringify({
-                title: "深度参与",
-                root: {
-                  label: "深度参与",
-                  note: "把工作拆到足够诚实。",
-                  children: [{ label: "核心问题", note: "为什么组织失去反馈。", children: [] }],
-                },
-              } satisfies Partial<BookMindmapPayload>),
+              content: "mindmap\n  root((深度工作))\n    核心主旨\n      专注创造稀缺价值",
             },
           },
         ],
@@ -85,10 +67,28 @@ test("buildBookMindmapFromSummary requests openai-compatible json and returns cl
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, "https://openai.example.com/v1/chat/completions");
   assert.equal(calls[0]?.body.model, "mindmap-model");
-  assert.match(JSON.stringify(calls[0]?.body.messages ?? []), /book_mindmap/);
-  assert.match(JSON.stringify(calls[0]?.body.messages ?? []), /children/);
-  assert.equal(result.kind, "book_mindmap");
-  assert.equal(result.root.children[0]?.label, "核心问题");
+  assert.match(JSON.stringify(calls[0]?.body.messages ?? []), /mindmap/);
+  assert.equal(result.kind, "mermaid_mindmap");
+  assert.match(result.code, /^mindmap/);
+  assert.match(result.code, /深度工作/);
+});
+
+test("buildBookMindmapFromSummary handles fenced code block from model", async () => {
+  const result = await buildBookMindmapFromSummary(
+    "# 测试",
+    {
+      OPENAI_BASE_URL: "https://openai.example.com/v1",
+      OPENAI_TOKEN: "token",
+      OPENAI_MODEL: "mindmap-model",
+    } as NodeJS.ProcessEnv,
+    async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "```mermaid\nmindmap\n  root((测试))\n```" } }],
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  );
+
+  assert.equal(result.kind, "mermaid_mindmap");
+  assert.match(result.code, /^mindmap/);
+  assert.doesNotMatch(result.code, /```/);
 });
 
 test("buildBookMindmapFromSummary surfaces explicit config errors", async () => {
@@ -111,3 +111,7 @@ test("buildBookMindmapFromSummary does not read workspace env when a custom env 
 
   assert.equal(called, false);
 });
+
+// Ensure the type is exported correctly (compile-time check)
+const _typeCheck: MermaidMindmapPayload = { kind: "mermaid_mindmap", version: 1, code: "mindmap\n  root((test))" };
+void _typeCheck;

@@ -2,24 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const REQUIRED_ENV_NAMES = ["OPENAI_BASE_URL", "OPENAI_TOKEN", "OPENAI_MODEL"] as const;
-const MAX_DEPTH = 4;
-const MAX_CHILDREN = 8;
-const MAX_LABEL_LENGTH = 48;
-const MAX_NOTE_LENGTH = 160;
 
 let loadedEnvTargets = new WeakSet<NodeJS.ProcessEnv>();
 
-export interface BookMindmapNode {
-  label: string;
-  note?: string;
-  children: BookMindmapNode[];
-}
-
-export interface BookMindmapPayload {
-  kind: "book_mindmap";
+export interface MermaidMindmapPayload {
+  kind: "mermaid_mindmap";
   version: 1;
-  title: string;
-  root: BookMindmapNode;
+  code: string;
 }
 
 interface OpenAICompatibleConfig {
@@ -40,7 +29,7 @@ export async function buildBookMindmapFromSummary(
   summaryMarkdown: string,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
-): Promise<BookMindmapPayload> {
+): Promise<MermaidMindmapPayload> {
   const config = readOpenAIConfig(env);
   const responseText = await requestModelJson(
     config,
@@ -48,78 +37,45 @@ export async function buildBookMindmapFromSummary(
       {
         role: "system",
         content: [
-          "你负责把书籍结构化摘要压缩成受约束 JSON 树。",
-          "输出必须是 JSON 对象，不要添加代码块。",
-          '顶层字段固定为 title、root。',
-          'root 和每个子节点只能包含 label、note、children。',
-          '最终结构会被包成 kind=book_mindmap、version=1。',
-          "label 必须简短，note 最多一句解释。",
-          `children 最多 ${MAX_CHILDREN} 个，树深最多 ${MAX_DEPTH} 层。`,
+          "你负责把书籍结构化摘要压缩成 Mermaid mindmap 代码。",
+          "输出只包含 Mermaid 代码本身，不要代码块标记（不要```），不要任何解释。",
+          "格式范例：",
+          "mindmap",
+          "  root((书名))",
+          "    核心主旨",
+          "      具体观点",
+          "    章节结构",
+          "      第一章",
+          "      第二章",
+          "约束：缩进用两个空格，节点文字简短，最多 4 层深度，children 最多 8 个。",
         ].join("\n"),
       },
       {
         role: "user",
-        content: `请把下面这份书籍结构化摘要转成导图 JSON 树：\n\n${summaryMarkdown}`,
+        content: `请把下面这份书籍结构化摘要转成 Mermaid mindmap 代码：\n\n${summaryMarkdown}`,
       },
     ],
     fetchImpl,
   );
 
-  return normalizeBookMindmapPayload(parseJsonObject<Partial<BookMindmapPayload>>(responseText));
+  return parseMermaidMindmapPayload(responseText);
 }
 
-export function normalizeBookMindmapPayload(value: Partial<BookMindmapPayload>): BookMindmapPayload {
-  const title = sanitizeText(value.title, MAX_LABEL_LENGTH) ?? sanitizeText(value.root?.label, MAX_LABEL_LENGTH) ?? "未命名书籍";
-  const root = normalizeNode(value.root, 1);
-
-  if (!root) {
-    throw new Error("书籍导图 JSON 缺少有效根节点");
+export function parseMermaidMindmapPayload(rawCode: string): MermaidMindmapPayload {
+  const extracted = extractMermaidCode(rawCode);
+  const trimmed = extracted.trim();
+  if (!trimmed.startsWith("mindmap")) {
+    throw new Error(`Mermaid mindmap code must start with 'mindmap', got: ${trimmed.slice(0, 50)}`);
   }
-
-  return {
-    kind: "book_mindmap",
-    version: 1,
-    title,
-    root,
-  };
+  return { kind: "mermaid_mindmap", version: 1, code: trimmed };
 }
 
-function normalizeNode(value: unknown, depth: number): BookMindmapNode | null {
-  if (!value || typeof value !== "object") {
-    return null;
+function extractMermaidCode(value: string): string {
+  const fenced = value.match(/```(?:mermaid)?\n?([\s\S]*?)```/);
+  if (fenced && fenced[1]) {
+    return fenced[1];
   }
-
-  const record = value as Record<string, unknown>;
-  const label = sanitizeText(record.label, MAX_LABEL_LENGTH);
-  if (!label) {
-    return null;
-  }
-
-  const note = sanitizeText(record.note, MAX_NOTE_LENGTH);
-  if (depth >= MAX_DEPTH) {
-    return note ? { label, note, children: [] } : { label, children: [] };
-  }
-
-  const rawChildren = Array.isArray(record.children) ? record.children : [];
-  const children = rawChildren
-    .slice(0, MAX_CHILDREN)
-    .map((child) => normalizeNode(child, depth + 1))
-    .filter((child): child is BookMindmapNode => Boolean(child));
-
-  return note ? { label, note, children } : { label, children };
-}
-
-function sanitizeText(value: unknown, limit: number): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  if (!normalized) {
-    return undefined;
-  }
-
-  return normalized.length > limit ? normalized.slice(0, limit).trimEnd() : normalized;
+  return value;
 }
 
 function readOpenAIConfig(env: NodeJS.ProcessEnv): OpenAICompatibleConfig {
@@ -231,61 +187,4 @@ async function requestModelJson(
   }
 
   throw new Error("OpenAI compatible response missing message content");
-}
-
-function parseJsonObject<T>(value: string): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    const extracted = extractFirstJsonObject(value);
-    return JSON.parse(extracted) as T;
-  }
-}
-
-function extractFirstJsonObject(value: string): string {
-  const start = value.indexOf("{");
-  if (start < 0) {
-    throw new Error("Model response did not contain JSON");
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < value.length; index += 1) {
-    const char = value[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return value.slice(start, index + 1);
-      }
-    }
-  }
-
-  throw new Error("Model response JSON was incomplete");
 }
