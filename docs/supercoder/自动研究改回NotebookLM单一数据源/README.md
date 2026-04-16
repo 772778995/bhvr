@@ -1,0 +1,322 @@
+# 自动研究改回 NotebookLM 单一数据源设计
+
+**当前状态：** 已完成
+
+## 设计结论
+
+撤销当前“固定 20 轮批处理 + 后端内存消息覆盖 + 前端整包替换”的临时实现，恢复并强化 `NotebookLM` 作为问答唯一真相源。自动研究改为持续追加式研究：后端只负责编排与状态广播，不再伪造消息列表，不再在服务端维护研究消息副本；前端只展示来自 NotebookLM 原始会话的数据，并以追加合并的方式渲染。
+
+## 背景
+
+仓库原有设计已经明确：
+
+- NotebookLM 是笔记、来源、问答的唯一真相源
+- 我们只保留自动研究编排与最终报告
+- 自动研究完成后不自动生成报告
+
+但最近的多次修补已经偏离这个边界，具体表现为：
+
+- 自动研究被固定成 20 轮批处理
+- 问题生成失败时改为内置模板问题
+- `/messages` 在研究期间优先返回后端内存中的伪消息
+- 前端刷新消息时会整包替换，导致原有历史看起来被“冲掉”
+
+这些改动虽然试图缓解“看起来没有更新”的问题，但实际造成了更严重的信任问题：用户看到的聊天区不再严格对应 NotebookLM 原始数据。
+
+## 目标
+
+- 自动研究持续提问，直到用户主动停止或后端出错
+- 问答只来源于 NotebookLM 原始会话数据，不使用后端内存消息副本
+- 自动研究期间的消息展示是“追加式可见”，不能覆盖原有会话内容
+- 研究完成前后都不自动请求或生成报告，只有用户主动点击时才处理报告
+- SSE 只负责广播研究运行状态，不承担消息正文传输职责
+
+## 非目标
+
+- 不在这次实现中引入新的本地持久化表来保存问答正文
+- 不在这次实现中承诺真正的 token-by-token 流式渲染
+- 不在这次实现中重做整个工作台 UI
+
+## 现状问题
+
+### 1. 固定 20 轮与写死问题生成
+
+`server/src/research-runtime/orchestrator.ts` 当前以 `DEFAULT_TARGET_COUNT = 20` 为核心，先生成一批问题，再逐题提问。这个模型与“持续研究直到关闭”目标冲突。
+
+### 2. 消息真相源被污染
+
+`server/src/routes/notebooks/index.ts` 在 `/messages` 路由里优先返回 `live-messages.ts` 中的内存消息，这让页面看到的并不是 NotebookLM 原始历史。
+
+### 3. 前端消息是替换式而非追加式
+
+工作台在刷新消息时直接整体替换 `messages.value`。一旦后端返回的集合来源变化，就会出现“旧数据被干没了”的观感。
+
+### 4. 报告读取时机过于主动
+
+虽然最近已经移除了研究完成后自动读取报告，但页面初始化仍会预取 `/report`。本次需要收紧到“只在用户主动请求报告时读取/生成”。
+
+## 新方案
+
+### 1. 自动研究改为持续循环而不是固定批次
+
+后端 orchestrator 不再维护 `targetCount = 20` 的批处理模型。
+
+改为：
+
+- 启动研究后进入持续循环
+- 每一轮基于当前 NotebookLM 会话上下文生成“下一问”
+- 然后立即把该问题发送给 NotebookLM，等待回答
+- 回答完成后仅更新运行状态，前端再从 NotebookLM 原始消息接口刷新
+- 重复直到用户调用停止接口，或后端出现不可恢复错误
+
+因此：
+
+- `targetCount` 从强业务语义降级为可选内部字段，最终应从前端主要展示中移除
+- `completedCount` 仍可保留，表示已成功完成的轮次
+- 必须新增显式 `stop` 接口与运行控制能力
+
+### 2. 问题来源改为“基于当前会话的下一问”
+
+不能再采用“先生成整套 20 个问题”的模式，也不能退回到写死模板问题。
+
+新的研究提问策略应当是：
+
+- 始终基于当前 NotebookLM 会话上下文生成下一问
+- 下一问本身也通过 NotebookLM 生成
+- 生成失败时，整个研究任务报错并停止，而不是偷偷回退到写死问题模板
+
+这样才能满足“持续提问”“真实对接 NotebookLM 原始数据”的要求。
+
+### 3. `/messages` 恢复为只读 NotebookLM 原始数据
+
+必须删除 `/messages` 中对 `live-messages` 的优先返回逻辑。
+
+`GET /api/notebooks/:id/messages` 应只做一件事：
+
+- 从 NotebookLM 原始会话或原始消息 RPC 读取当前消息列表
+
+如果当前读取方式只能拿到“最新 thread”或拿不到连续追加数据，那就要修正读取策略本身，而不是在后端塞一层内存假消息。
+
+### 4. 自动研究必须与原始会话绑定
+
+当前自动研究虽然开始复用 `sendNotebookChatMessage`，但消息读取仍依赖另一路历史 RPC，导致写入路径与读取路径不一致。
+
+新的实现必须统一：
+
+- 自动研究始终在一个可追踪的 NotebookLM conversation/thread 中追加消息
+- 后端保存的仅是“当前研究运行绑定到哪个 NotebookLM 会话标识”这类最小运行态，而不是消息正文副本
+- `/messages` 读取时应优先读取这个活动会话对应的原始消息，而不是凭空构造一份展示数据
+
+这里的关键边界是：
+
+- 允许后端内存保存“当前研究会话 ID”这种运行元数据
+- 不允许后端内存保存“聊天消息正文列表”作为展示来源
+
+### 5. 前端消息改为追加式合并
+
+前端不能继续把 `messages.value = fetchedMessages` 当成默认刷新策略。
+
+刷新 NotebookLM 原始消息时应采用：
+
+- 保留已有消息
+- 按 `id` 做去重
+- 只把新消息追加到尾部
+- 当服务端返回更完整的同一条消息时，允许按 `id` 做定点更新，但不能把整段历史清空重来
+
+这样即使后端轮询的是原始历史，也不会出现“旧数据突然消失”的视觉效果。
+
+### 6. 报告严格按用户动作触发
+
+页面初始化不再自动请求 `/report`。
+
+报告相关请求只允许在以下场景触发：
+
+- 用户主动点击“生成研究报告”
+- 用户主动点击“查看报告”或等价入口
+
+自动研究开始、进行中、完成时都不应自动请求报告接口。
+
+## 后端边界
+
+### Research Orchestrator
+
+负责：
+
+- 启动/停止持续研究循环
+- 维护最小运行状态（status、step、completedCount、lastError、activeConversationId）
+- 通过 SSE 广播运行状态
+
+不负责：
+
+- 保存消息正文副本
+- 构造前端展示用聊天列表
+
+### Notebook Gateway
+
+负责：
+
+- 发送消息到 NotebookLM
+- 读取指定 NotebookLM 会话的原始消息
+- 在需要时从 NotebookLM 推导最新活动会话
+
+### /messages 路由
+
+负责：
+
+- 只返回 NotebookLM 原始消息
+
+不负责：
+
+- 混入运行态内存消息
+- 伪造 optimistic/临时消息
+
+## 前端边界
+
+### SSE
+
+只用于：
+
+- 显示运行状态
+- 触发“现在可以刷新消息了”的信号
+
+不用于：
+
+- 承载聊天正文
+- 伪造消息列表
+
+### 消息列表
+
+消息列表必须来源于 `/messages`，而 `/messages` 又必须来源于 NotebookLM 原始数据。
+
+前端允许保留用户手动发消息时的短暂 optimistic UI，但自动研究路径不允许使用本地伪消息冒充真实会话数据。
+
+## 接口调整
+
+- 保留 `POST /api/notebooks/:id/research/start`
+- 新增 `POST /api/notebooks/:id/research/stop`
+- 保留 `GET /api/notebooks/:id/research/stream`
+- 保留 `GET /api/notebooks/:id/messages`，但实现改回只读 NotebookLM 原始会话
+
+## 验收标准
+
+- 自动研究不再固定 20 轮，而是持续运行直到手动停止或错误
+- 自动研究不再使用写死模板问题
+- `/messages` 不再读取后端内存消息副本
+- 自动研究期间，前端看到的是 NotebookLM 原始会话的持续追加结果
+- 消息刷新不会覆盖掉已有历史内容
+- 页面不会在未点击报告相关按钮时自动请求 `/report`
+
+
+---
+
+# 自动研究改回 NotebookLM 单一数据源实施计划
+
+> **面向智能体工作者：** 必需子技能：使用 superpowers:subagent-driven-development 逐任务实施此计划。步骤使用复选框（`- [ ]`）语法进行跟踪。
+
+**当前状态：** 已完成
+
+**目标：** 去掉固定 20 轮和后端内存假消息，让自动研究持续运行并只展示 NotebookLM 原始会话的追加数据。
+
+**架构：** 后端 orchestrator 改为持续研究循环，只保留最小运行元数据；NotebookLM gateway 统一负责发送消息与读取活动会话原始消息；前端只通过 `/messages` 展示原始消息并做追加合并，SSE 仅承载运行状态。
+
+**技术栈：** Hono、TypeScript、Vue 3、NotebookLM SDK、SSE
+
+---
+
+### 任务 1：移除后端内存假消息来源
+
+**当前状态：** 已完成
+
+**文件：**
+- 删除：`server/src/research-runtime/live-messages.ts`
+- 删除：`server/src/research-runtime/live-messages.test.ts`
+- 修改：`server/src/research-runtime/chat-asker.ts`
+- 修改：`server/src/routes/notebooks/index.ts`
+
+**意图：** `/messages` 必须恢复为只读 NotebookLM 原始数据，不能再优先返回后端内存中的消息正文副本。
+
+- [x] **步骤 1：删除 `/messages` 中 live-messages 优先返回逻辑**
+- [x] **步骤 2：删除自动研究 chat-asker 中的内存消息追加逻辑**
+- [x] **步骤 3：删除 live-messages 相关文件与测试**
+- [x] **步骤 4：运行相关测试与类型检查，确认消息来源回到 NotebookLM 原始读取链路**
+
+### 任务 2：把自动研究从固定 20 轮批处理改为持续循环
+
+**当前状态：** 已完成
+
+**文件：**
+- 修改：`server/src/research-runtime/orchestrator.ts`
+- 修改：`server/src/research-runtime/types.ts`
+- 修改：`server/src/research-runtime/registry.ts`
+- 修改：`server/src/research-runtime/orchestrator.test.ts`
+
+**意图：** 自动研究不能再依赖 `DEFAULT_TARGET_COUNT = 20`。它应持续运行，直到用户停止或后端报错。
+
+- [x] **步骤 1：编写失败测试，覆盖“持续运行直到 stop/错误”而非固定完成的行为**
+- [x] **步骤 2：移除固定 20 轮常量与整批问题生成流程**
+- [x] **步骤 3：引入停止信号与持续循环控制**
+- [x] **步骤 4：保留 `completedCount`，移除前端必须依赖的 `targetCount` 业务意义**
+- [x] **步骤 5：运行 orchestrator 相关测试并验证通过**
+
+### 任务 3：统一 NotebookLM 活动会话写入与读取路径
+
+**当前状态：** 已完成
+
+**文件：**
+- 修改：`server/src/notebooklm/client.ts`
+- 修改：`server/src/research-runtime/chat-asker.ts`
+- 修改：`server/src/routes/notebooks/index.ts`
+- 可能新增：`server/src/notebooklm/*.test.ts`
+
+**意图：** 自动研究写入的是哪个 NotebookLM conversation/thread，`/messages` 就必须读取那个 conversation/thread 的原始消息，不能再出现“写一条链路、读另一条链路”的错位。
+
+- [x] **步骤 1：梳理并测试当前 send-message 返回的 `conversationId/messageIds` 能否稳定标识活动会话**
+- [x] **步骤 2：让研究运行态只保存最小活动会话标识，不保存消息正文**
+- [x] **步骤 3：调整 `/messages` 的读取逻辑，优先读取当前活动会话的原始消息**
+- [x] **步骤 4：当无活动会话时，再回退到 NotebookLM 历史读取策略**
+- [x] **步骤 5：运行相关测试并验证消息读取与写入一致**
+
+### 任务 4：前端消息刷新改为追加合并，不再整包覆盖
+
+**当前状态：** 已完成
+
+**文件：**
+- 修改：`client/src/views/NotebookWorkbenchView.vue`
+- 可能修改：`client/src/api/notebooks.ts`
+
+**意图：** 消息刷新必须是“基于 id 的追加/更新合并”，不能把原有历史整包替换掉。
+
+- [x] **步骤 1：实现消息合并函数，按 `id` 去重并保持顺序稳定**
+- [x] **步骤 2：把初始加载和研究中的 `refreshMessages()` 改为使用合并函数**
+- [x] **步骤 3：确保自动研究期间新增消息只会追加，不会清空旧消息**
+- [x] **步骤 4：保留手动发送消息的最小 optimistic 体验，但不影响自动研究路径**
+
+### 任务 5：收紧报告请求时机与研究控制 UI
+
+**当前状态：** 已完成
+
+**文件：**
+- 修改：`client/src/views/NotebookWorkbenchView.vue`
+- 修改：`client/src/components/notebook-workbench/StudioPanel.vue`
+
+**意图：** `/report` 不应在页面初始化或研究完成后自动请求；自动研究 UI 也不应继续暗示固定轮次。
+
+- [x] **步骤 1：移除页面初始化时对 `/report` 的自动读取**
+- [x] **步骤 2：确保只有点击生成/查看报告时才请求报告接口**
+- [x] **步骤 3：移除 Studio 中基于固定总轮次的展示语义**
+- [x] **步骤 4：为持续研究增加停止入口或明确关闭动作**
+
+### 任务 6：整体验证并提交
+
+**当前状态：** 已完成
+
+**文件：**
+- 修改：本次涉及的全部文件
+
+**意图：** 在合并前确认单一数据源边界重新成立。
+
+- [x] **步骤 1：运行相关 server 测试**
+- [x] **步骤 2：运行 `npx tsc --noEmit`**
+- [x] **步骤 3：运行 `npx vue-tsc --noEmit`**
+- [x] **步骤 4：运行 `npm run build`**
+- [x] **步骤 5：提交并推送到 `main`**
