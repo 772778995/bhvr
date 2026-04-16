@@ -18,6 +18,49 @@ const detailTransition = getBookDetailTransition();
 const hasEntries = computed(() => props.entries.length > 0);
 const fullscreenOpen = ref(false);
 
+const canDownload = computed(() => {
+  if (!props.entry) return false;
+  const code = props.entry.contentJson?.["code"];
+  return (typeof code === "string" && code.trim().length > 0) || Boolean(props.entry.fileUrl);
+});
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").trim() || "download";
+}
+
+function triggerDownload(url: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadEntry(entry: ReportEntry) {
+  const baseName = sanitizeFilename(entry.title ?? "diagram");
+
+  const code = entry.contentJson?.["code"];
+  if (typeof code === "string" && code.trim()) {
+    const blob = new Blob([code], { type: "text/plain" });
+    triggerDownload(URL.createObjectURL(blob), `${baseName}.mmd`);
+    return;
+  }
+
+  if (entry.fileUrl) {
+    try {
+      const res = await fetch(entry.fileUrl);
+      const text = await res.text();
+      const blob = new Blob([text], { type: "text/markdown" });
+      triggerDownload(URL.createObjectURL(blob), `${baseName}.md`);
+    } catch {
+      // silent fail
+    }
+    return;
+  }
+}
+
 function openFullscreen() {
   if (!props.entry) {
     return;
@@ -34,20 +77,34 @@ function closeFullscreen() {
 <template>
   <section :class="layout.shellClass">
     <div :class="layout.detailPaneClass">
-      <button
-        v-if="entry"
-        type="button"
-        aria-label="全屏阅读"
-        class="absolute right-4 top-4 z-10 rounded-md border border-[#d8cfbe] bg-[#fbf6ed]/92 px-2 py-2 text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
-        @click="openFullscreen"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="5,1 1,1 1,5" />
-          <polyline points="11,1 15,1 15,5" />
-          <polyline points="5,15 1,15 1,11" />
-          <polyline points="11,15 15,15 15,11" />
-        </svg>
-      </button>
+      <div v-if="entry" class="absolute right-4 top-4 z-10 flex gap-2">
+        <button
+          v-if="canDownload"
+          type="button"
+          aria-label="下载"
+          class="rounded-md border border-[#d8cfbe] bg-[#fbf6ed]/92 px-2 py-2 text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
+          @click="downloadEntry(entry)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="2" x2="8" y2="11" />
+            <polyline points="4,7 8,11 12,7" />
+            <line x1="2" y1="14" x2="14" y2="14" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label="全屏阅读"
+          class="rounded-md border border-[#d8cfbe] bg-[#fbf6ed]/92 px-2 py-2 text-[#5d4f3d] transition-colors duration-100 hover:bg-[#f1e7d8]"
+          @click="openFullscreen"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="5,1 1,1 1,5" />
+            <polyline points="11,1 15,1 15,5" />
+            <polyline points="5,15 1,15 1,11" />
+            <polyline points="11,15 15,15 15,11" />
+          </svg>
+        </button>
+      </div>
 
       <Transition :name="layout.detailTransitionName" mode="out-in">
         <ReportDetailPanel

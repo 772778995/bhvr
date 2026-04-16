@@ -910,6 +910,19 @@ notebooks.post("/:id/report/generate", async (c) => {
         ? bookReportMetadata.title
         : titleMatch?.[1]?.trim() ?? fallbackTitle;
 
+      // Override title for diagram preset based on actual diagramType
+      const DIAGRAM_TYPE_TITLES: Record<string, string> = {
+        mindmap: "思维导图",
+        flowchart: "流程图",
+        timeline: "时间线",
+        sequenceDiagram: "时序图",
+        classDiagram: "类图",
+        gantt: "甘特图",
+      };
+      const resolvedTitle = rawPresetId === "builtin-book-mindmap"
+        ? (DIAGRAM_TYPE_TITLES[diagramType] ?? "书籍导图")
+        : title;
+
       let contentJson: string | null = null;
       let successMessage = bookReportMetadata?.successMessage ?? "研究报告已生成";
 
@@ -942,7 +955,7 @@ notebooks.post("/:id/report/generate", async (c) => {
       }
       await insertReportEntry({
         notebookId: id,
-        title,
+        title: resolvedTitle,
         content: null,
         filePath: reportFilename,
         contentJson,
