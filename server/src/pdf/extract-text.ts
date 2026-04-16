@@ -1,4 +1,22 @@
-import { extractText, getDocumentProxy } from "unpdf";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { definePDFJSModule, extractText, getDocumentProxy } from "unpdf";
+
+// Use pdfjs-dist/legacy for Node.js: includes NodeBinaryDataFactory which
+// reads CMap files from the filesystem (needed for CJK/Chinese PDFs).
+// The serverless bundle bundled in unpdf does not support file:// CMap loading.
+let pdfJsInitialized: Promise<void> | null = null;
+function ensurePdfJs(): Promise<void> {
+  if (!pdfJsInitialized) {
+    pdfJsInitialized = definePDFJSModule(
+      () => import("pdfjs-dist/legacy/build/pdf.mjs"),
+    ).catch(() => {
+      // Fall back to the bundled serverless build if pdfjs-dist is not installed
+      pdfJsInitialized = null;
+    });
+  }
+  return pdfJsInitialized!;
+}
 
 export function normalizeExtractedPdfText(text: string): string {
   const normalized = text
@@ -16,8 +34,27 @@ export function normalizeExtractedPdfText(text: string): string {
   return normalized;
 }
 
+function getCMapPath(): string | undefined {
+  try {
+    // Must be a plain filesystem path (with trailing slash), NOT a file:// URL.
+    // pdfjs-dist NodeBinaryDataFactory calls fs.readFile(url) where url is a
+    // string — Node.js fs.readFile does NOT accept "file:///..." strings,
+    // only real paths or URL objects.
+    const pkgJson = fileURLToPath(
+      import.meta.resolve("pdfjs-dist/package.json"),
+    );
+    return join(pkgJson, "../cmaps") + "/";
+  } catch {
+    return undefined;
+  }
+}
+
 export async function extractPdfText(buffer: Buffer): Promise<string> {
-  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  await ensurePdfJs();
+  const cMapUrl = getCMapPath();
+  const pdf = await getDocumentProxy(new Uint8Array(buffer), {
+    ...(cMapUrl ? { cMapUrl, cMapPacked: true } : {}),
+  });
   const { text, totalPages } = await extractText(pdf, { mergePages: true });
 
   try {
