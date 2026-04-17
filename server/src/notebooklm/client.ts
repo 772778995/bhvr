@@ -3,6 +3,7 @@
  */
 
 import { existsSync, readFileSync, mkdirSync, copyFileSync, statSync } from "node:fs";
+import { Mutex, E_TIMEOUT } from "async-mutex";
 import type { BrowserContext, Page } from "playwright";
 import {
   NotebookLMClient,
@@ -24,7 +25,6 @@ import type {
   WebSearchResult,
   CreateArtifactOptions,
 } from "notebooklm-kit";
-import { Mutex } from "async-mutex";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
 import {
@@ -45,7 +45,132 @@ import {
   type AuthState,
 } from "./auth-profile.js";
 
-const notebooklmRequestMutex = new Mutex();
+// ---------------------------------------------------------------------------
+// Per-operation-key concurrency gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Bottom-layer interface family keys. Group by SDK sub-service, not by business function.
+ * All callers must pass one of these constants — no magic strings.
+ */
+export type OperationKey =
+  | "generation.chat"
+  | "notebooks.read"
+  | "notebooks.write"
+  | "history.rpc"
+  | "sources.read"
+  | "sources.write"
+  | "sources.search"
+  | "artifacts.read"
+  | "artifacts.write";
+
+/** How long a request may wait in queue before timing out (ms). */
+const QUEUE_TIMEOUT_MS = 120_000;
+
+export interface KeyedRequestGate {
+  run<T>(key: OperationKey, operation: () => Promise<T>): Promise<T>;
+  /** Test-only: number of keys currently tracked in the internal map. */
+  activeKeyCount(): number;
+}
+
+/**
+ * Creates a keyed request gate.
+ *
+ * Each key gets its own serial queue implemented as a Promise chain.
+ * Timeout is handled before the operation enters the chain, so a timed-out
+ * caller never ghost-acquires the lock and cleanup is always exact.
+ *
+ * @param timeoutMs Max ms a caller may wait to acquire the key slot (default 120 s).
+ */
+export function createKeyedRequestGate(timeoutMs = QUEUE_TIMEOUT_MS): KeyedRequestGate {
+  // Each entry is the tail of the current serial chain for that key.
+  // `pending` counts callers that are waiting or executing; when it reaches 0
+  // after a chain step completes we remove the key.
+  interface ChainEntry {
+    tail: Promise<void>;
+    pending: number;
+  }
+
+  const map = new Map<string, ChainEntry>();
+
+  async function run<T>(key: OperationKey, operation: () => Promise<T>): Promise<T> {
+    // Grab or create the chain for this key.
+    const entry: ChainEntry = map.get(key) ?? { tail: Promise.resolve(), pending: 0 };
+    entry.pending += 1;
+    map.set(key, entry);
+
+    // Race: either we get a slot (previous tail resolves) within timeoutMs,
+    // or we time out. In the timeout case we still need to let the chain
+    // advance — we insert a no-op slot so the next waiter is not blocked.
+    let slotResolve!: () => void;
+    const slot = new Promise<void>((r) => { slotResolve = r; });
+
+    // Attach ourselves to the tail. When it resolves, our turn begins.
+    // We capture the old tail to chain from.
+    const prevTail = entry.tail;
+    // Our contribution to the chain: resolve `slot` when previous tail finishes.
+    // This promise itself never rejects (errors inside operation don't propagate here).
+    const ourChainLink: Promise<void> = prevTail.then(() => slot);
+    entry.tail = ourChainLink;
+
+    // Wait for our turn, with a timeout.
+    let timedOut = false;
+    const turnPromise = prevTail.then(() => {
+      if (timedOut) {
+        // We were already timed out — release our slot immediately so the
+        // chain can continue.
+        slotResolve();
+        throw E_TIMEOUT;
+      }
+    });
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        reject(E_TIMEOUT);
+      }, timeoutMs)
+    );
+
+    try {
+      await Promise.race([turnPromise, timeoutPromise]);
+    } catch (err) {
+      if (err === E_TIMEOUT) {
+        // Make sure slot is resolved so downstream waiters are not blocked.
+        // (timedOut flag causes turnPromise to resolve the slot when it fires.)
+        entry.pending -= 1;
+        if (entry.pending === 0) map.delete(key);
+        throw E_TIMEOUT;
+      }
+      throw err;
+    }
+
+    // Our turn — execute the operation.
+    try {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      return await operation();
+    } finally {
+      slotResolve(); // release our slot → next waiter's turn begins
+      entry.pending -= 1;
+      if (entry.pending === 0) map.delete(key);
+    }
+  }
+
+  return {
+    run,
+    activeKeyCount: () => map.size,
+  };
+}
+
+/** Module-level gate shared by all NotebookLM operations. */
+const requestGate = createKeyedRequestGate();
+
+/** Serializes auth state mutations (getClient / invalidate / refresh). */
+const authFlowMutex = new Mutex();
+
+// ---------------------------------------------------------------------------
 
 const ALLOWED_DOMAINS = [
   ".google.com",
@@ -64,6 +189,7 @@ function extractAuthTokenFromHtml(html: string): string | null {
 
 const testHooks = {
   importPlaywright: defaultImportPlaywright,
+  canAttemptSilentRefresh: null as ((accountId: string) => boolean) | null,
 };
 
 export type AuthStatus = AuthMeta;
@@ -239,6 +365,9 @@ function loadCookiesFromProfile(accountId: string): { cookieHeader: string; cook
 }
 
 function canAttemptSilentRefresh(accountId: string): boolean {
+  if (testHooks.canAttemptSilentRefresh !== null) {
+    return testHooks.canAttemptSilentRefresh(accountId);
+  }
   const cookieData = loadCookiesFromProfile(accountId);
   if (!cookieData) return false;
   return cookieData.cookieHeader.includes("SAPISID=");
@@ -479,7 +608,7 @@ configureAuthManager({
 });
 
 export async function disposeClient(): Promise<void> {
-  await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
+  await authFlowMutex.runExclusive(() => authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID));
 }
 
 function extractChatResponseText(result: {
@@ -593,6 +722,12 @@ export const __testOnly = {
   set importPlaywright(value: typeof defaultImportPlaywright) {
     testHooks.importPlaywright = value;
   },
+  get canAttemptSilentRefreshOverride() {
+    return testHooks.canAttemptSilentRefresh;
+  },
+  set canAttemptSilentRefreshOverride(value: ((accountId: string) => boolean) | null) {
+    testHooks.canAttemptSilentRefresh = value;
+  },
   createRuntimeClientForTests: createRuntimeClient,
   extractAuthTokenFromHtml,
   silentRefreshForTests: silentRefresh,
@@ -601,6 +736,7 @@ export const __testOnly = {
   formatEmptyChatResponseError,
   extractNotebookChatError,
   mergeHistoryMessages,
+  createKeyedRequestGate,
 };
 
 export async function getAuthStatus(): Promise<AuthStatus> {
@@ -613,41 +749,40 @@ async function getClient(): Promise<NotebookLMClient> {
   return client as NotebookLMClient;
 }
 
-async function runNotebookRequest<T>(operation: (client: NotebookLMClient) => Promise<T>): Promise<T> {
-  return notebooklmRequestMutex.runExclusive(async () => {
-    const client = await getClient();
+async function runNotebookRequest<T>(operationKey: OperationKey, operation: (client: NotebookLMClient) => Promise<T>): Promise<T> {
+  return requestGate.run(operationKey, async () => {
+    // Acquire client under auth-flow lock so concurrent callers don't race on shared auth state.
+    const client = await authFlowMutex.runExclusive(() => getClient());
 
     try {
-      const result = await operation(client);
-      // 释放后加 100ms 缓冲，降低服务端状态残留概率
-      await new Promise(resolve => setTimeout(resolve, 100));
-      return result;
+      return await operation(client);
     } catch (error) {
       if (!isRecognizedAuthFailure(error)) {
         throw error;
       }
 
-      await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
+      // Auth failure: invalidate and refresh under auth-flow lock, then retry once.
+      const retryClient = await authFlowMutex.runExclusive(async () => {
+        await authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID);
 
-      if (!canAttemptSilentRefresh(DEFAULT_ACCOUNT_ID)) {
-        throw new NotebookRequestAuthError(error instanceof Error ? error.message : String(error));
-      }
+        if (!canAttemptSilentRefresh(DEFAULT_ACCOUNT_ID)) {
+          throw new NotebookRequestAuthError(error instanceof Error ? error.message : String(error));
+        }
 
-      const status = await authManager.refreshAuthProfile(DEFAULT_ACCOUNT_ID, "request-retry");
-      if (status.status !== "ready") {
-        throw new NotebookRequestAuthError(status.error ?? "Notebook authentication is unavailable");
-      }
+        const status = await authManager.refreshAuthProfile(DEFAULT_ACCOUNT_ID, "request-retry");
+        if (status.status !== "ready") {
+          throw new NotebookRequestAuthError(status.error ?? "Notebook authentication is unavailable");
+        }
 
-      const retryClient = await getClient();
+        return getClient();
+      });
+
       try {
-        const retryResult = await operation(retryClient);
-        await new Promise(resolve => setTimeout(resolve, 100));
-        return retryResult;
+        return await operation(retryClient);
       } catch (retryError) {
         if (isRecognizedAuthFailure(retryError)) {
           throw new NotebookRequestAuthError(retryError instanceof Error ? retryError.message : String(retryError));
         }
-
         throw retryError;
       }
     }
@@ -656,7 +791,7 @@ async function runNotebookRequest<T>(operation: (client: NotebookLMClient) => Pr
 
 export async function listNotebooks(): Promise<NotebookDetail[]> {
   try {
-    const notebooks = await runNotebookRequest(async (client) => await client.notebooks.list());
+    const notebooks = await runNotebookRequest("notebooks.read", async (client) => await client.notebooks.list());
     return notebooks.map(mapNotebook);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -679,13 +814,18 @@ export function extractNotebookId(url: string): string {
 
 export async function askNotebook(notebookId: string, question: string): Promise<AskResult> {
   try {
-    const quota = getQuotaStatus();
-    if (quota.remaining !== null && quota.remaining <= 0) {
-      return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
-    }
-
-    consumeQuota();
-    const result = await runNotebookRequest(async (client) => await client.generation.chat(notebookId, question));
+    let quotaConsumed = false;
+    const result = await runNotebookRequest("generation.chat", async (client) => {
+      if (!quotaConsumed) {
+        const quota = getQuotaStatus();
+        if (quota.remaining !== null && quota.remaining <= 0) {
+          throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
+        }
+        consumeQuota();
+        quotaConsumed = true;
+      }
+      return await client.generation.chat(notebookId, question);
+    });
 
     if (!result?.text) {
       return { success: false, error: "Empty response from NotebookLM" };
@@ -695,7 +835,7 @@ export async function askNotebook(notebookId: string, question: string): Promise
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("expired") || message.includes("401")) {
-      disposeClient();
+      await disposeClient();
     }
     return { success: false, error: message };
   }
@@ -926,7 +1066,7 @@ async function listNotebookHistoryMessages(
 
 export async function getNotebookDetail(notebookId: string): Promise<NotebookDetail> {
   try {
-    const notebook = await runNotebookRequest(async (client) => await client.notebooks.get(notebookId));
+    const notebook = await runNotebookRequest("notebooks.read", async (client) => await client.notebooks.get(notebookId));
     return mapNotebook(notebook);
   } catch (err) {
     if (isNotebookAuthError(err)) {
@@ -943,7 +1083,7 @@ export async function getNotebookDetail(notebookId: string): Promise<NotebookDet
 
 export async function getNotebookSources(notebookId: string): Promise<NotebookSource[]> {
   const attempt = async () =>
-    runNotebookRequest(async (client) => await client.sources.list(notebookId));
+    runNotebookRequest("sources.read", async (client) => await client.sources.list(notebookId));
 
   try {
     try {
@@ -973,7 +1113,7 @@ export async function getNotebookMessages(
   notebookId: string,
   options: { hiddenThreadIds?: string[]; activeThreadId?: string } = {}
 ): Promise<NotebookMessage[]> {
-  const messages = await runNotebookRequest(async (client) => {
+  const messages = await runNotebookRequest("history.rpc", async (client) => {
     const threadIds = await listNotebookHistoryThreadIds(client, notebookId);
     logger.info(
       {
@@ -996,9 +1136,10 @@ export async function getNotebookMessages(
       return [];
     }
 
-    const threadMessages = await Promise.all(
-      orderedThreadIds.map(async (threadId) => await listNotebookHistoryMessages(client, notebookId, threadId))
-    );
+    const threadMessages: NotebookMessage[][] = [];
+    for (const threadId of orderedThreadIds) {
+      threadMessages.push(await listNotebookHistoryMessages(client, notebookId, threadId));
+    }
 
     const merged = mergeHistoryMessages(threadMessages, options.hiddenThreadIds ?? [], orderedThreadIds);
     logger.info({ notebookId, messageCount: merged.length }, "getNotebookMessages: merged");
@@ -1014,14 +1155,19 @@ export async function askNotebookForResearch(
   sourceIds?: string[]
 ): Promise<ResearchAskResult> {
   try {
-    const quota = getQuotaStatus();
-    if (quota.remaining !== null && quota.remaining <= 0) {
-      return { success: false, error: `Daily quota exceeded (${quota.limit}/day). Try again tomorrow.` };
-    }
-
-    consumeQuota();
-    const result = await runNotebookRequest(
-      async (client) => await client.generation.chat(notebookId, prompt, sourceIds?.length ? { sourceIds } : undefined)
+    let quotaConsumed = false;
+    const result = await runNotebookRequest("generation.chat",
+      async (client) => {
+        if (!quotaConsumed) {
+          const quota = getQuotaStatus();
+          if (quota.remaining !== null && quota.remaining <= 0) {
+            throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
+          }
+          consumeQuota();
+          quotaConsumed = true;
+        }
+        return await client.generation.chat(notebookId, prompt, sourceIds?.length ? { sourceIds } : undefined);
+      }
     );
     const text = extractChatResponseText(result);
 
@@ -1032,7 +1178,7 @@ export async function askNotebookForResearch(
     return { success: true, answer: text, citations: result.citations || [] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("expired") || message.includes("401")) disposeClient();
+    if (message.includes("expired") || message.includes("401")) await disposeClient();
     return { success: false, error: message };
   }
 }
@@ -1042,29 +1188,34 @@ export async function sendNotebookChatMessage(
   request: NotebookChatRequest
 ): Promise<NotebookChatResponse> {
   try {
-    const quota = getQuotaStatus();
-    if (quota.remaining !== null && quota.remaining <= 0) {
-      throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
-    }
-
-    consumeQuota();
-    const quotaAfter = getQuotaStatus();
-    logger.info(
-      {
-        notebookId,
-        promptChars: request.prompt.length,
-        hasConversationId: !!request.conversationId,
-        quotaUsed: quotaAfter.used,
-        quotaLimit: quotaAfter.limit ?? "unlimited",
-      },
-      "notebooklm: sending chat message"
-    );
     const reqStart = Date.now();
-    const result = await runNotebookRequest(async (client) => await client.generation.chat(notebookId, request.prompt, {
-      sourceIds: request.sourceIds,
-      conversationId: request.conversationId,
-      conversationHistory: request.conversationHistory,
-    }));
+    let quotaConsumed = false;
+    const result = await runNotebookRequest("generation.chat", async (client) => {
+      if (!quotaConsumed) {
+        const quota = getQuotaStatus();
+        if (quota.remaining !== null && quota.remaining <= 0) {
+          throw new Error(`Daily quota exceeded (${quota.limit}/day). Try again tomorrow.`);
+        }
+        consumeQuota();
+        quotaConsumed = true;
+        const quotaAfter = getQuotaStatus();
+        logger.info(
+          {
+            notebookId,
+            promptChars: request.prompt.length,
+            hasConversationId: !!request.conversationId,
+            quotaUsed: quotaAfter.used,
+            quotaLimit: quotaAfter.limit ?? "unlimited",
+          },
+          "notebooklm: sending chat message"
+        );
+      }
+      return await client.generation.chat(notebookId, request.prompt, {
+        sourceIds: request.sourceIds,
+        conversationId: request.conversationId,
+        conversationHistory: request.conversationHistory,
+      });
+    });
     const text = extractChatResponseText(result);
 
     if (!text) {
@@ -1093,7 +1244,7 @@ export async function sendNotebookChatMessage(
 
 export async function ensureNotebookAccessible(notebookId: string): Promise<AccessCheckResult> {
   try {
-    await runNotebookRequest(async (client) => {
+    await runNotebookRequest("notebooks.read", async (client) => {
       await client.notebooks.get(notebookId);
       return null;
     });
@@ -1120,7 +1271,7 @@ export async function addSourceFromUrl(
   notebookId: string,
   input: { url: string; title?: string }
 ): Promise<SourceAddResponse> {
-  const sourceId = await runNotebookRequest(async (client) => await client.sources.addFromURL(notebookId, input));
+  const sourceId = await runNotebookRequest("sources.write", async (client) => await client.sources.addFromURL(notebookId, input));
   return { sourceIds: [sourceId], wasChunked: false };
 }
 
@@ -1128,7 +1279,7 @@ export async function addSourceFromText(
   notebookId: string,
   input: { title: string; content: string }
 ): Promise<SourceAddResponse> {
-  const result = await runNotebookRequest(async (client) => await client.sources.addFromText(notebookId, input));
+  const result = await runNotebookRequest("sources.write", async (client) => await client.sources.addFromText(notebookId, input));
   return normalizeAddSourceResult(result);
 }
 
@@ -1136,7 +1287,7 @@ export async function addSourceFromFile(
   notebookId: string,
   input: { fileName: string; content: Buffer; mimeType?: string }
 ): Promise<SourceAddResponse> {
-  const result = await runNotebookRequest(async (client) => await client.sources.addFromFile(notebookId, input));
+  const result = await runNotebookRequest("sources.write", async (client) => await client.sources.addFromFile(notebookId, input));
   return normalizeAddSourceResult(result);
 }
 
@@ -1144,7 +1295,7 @@ export async function searchWebSources(
   notebookId: string,
   input: SourceSearchInput
 ): Promise<WebSearchResult> {
-  return await runNotebookRequest(async (client) => await client.sources.searchWebAndWait(notebookId, {
+  return await runNotebookRequest("sources.search", async (client) => await client.sources.searchWebAndWait(notebookId, {
     query: input.query,
     mode: input.mode === "deep" ? ResearchMode.DEEP : ResearchMode.FAST,
     sourceType: input.sourceType === "drive" ? SearchSourceType.GOOGLE_DRIVE : SearchSourceType.WEB,
@@ -1155,16 +1306,16 @@ export async function addDiscoveredSources(
   notebookId: string,
   input: AddDiscoveredSourcesOptions
 ): Promise<{ sourceIds: string[] }> {
-  const sourceIds = await runNotebookRequest(async (client) => await client.sources.addDiscovered(notebookId, input));
+  const sourceIds = await runNotebookRequest("sources.write", async (client) => await client.sources.addDiscovered(notebookId, input));
   return { sourceIds };
 }
 
 export async function getSourceProcessingStatus(notebookId: string): Promise<SourceProcessingStatus> {
-  return await runNotebookRequest(async (client) => await client.sources.status(notebookId));
+  return await runNotebookRequest("sources.read", async (client) => await client.sources.status(notebookId));
 }
 
 export async function deleteSource(notebookId: string, sourceId: string): Promise<void> {
-  await runNotebookRequest(async (client) => await client.sources.delete(notebookId, sourceId));
+  await runNotebookRequest("sources.write", async (client) => await client.sources.delete(notebookId, sourceId));
 }
 
 export interface CreateNotebookInput {
@@ -1173,7 +1324,7 @@ export interface CreateNotebookInput {
 
 export async function createNotebook(input: CreateNotebookInput): Promise<NotebookDetail> {
   try {
-    const notebook = await runNotebookRequest(async (client) =>
+    const notebook = await runNotebookRequest("notebooks.write", async (client) =>
       await client.notebooks.create({ title: input.title })
     );
     return mapNotebook(notebook);
@@ -1186,7 +1337,7 @@ export async function createNotebook(input: CreateNotebookInput): Promise<Notebo
 
 export async function deleteNotebook(notebookId: string): Promise<void> {
   try {
-    await runNotebookRequest(async (client) => {
+    await runNotebookRequest("notebooks.write", async (client) => {
       await client.notebooks.delete(notebookId);
     });
   } catch (err) {
@@ -1251,8 +1402,7 @@ export async function createArtifact(
 ): Promise<CreateArtifactResult> {
   const artifactType = resolveArtifactType(type);
 
-  const result = await runNotebookRequest(async (client) => {
-    // Audio and Video sub-services return AudioOverview/VideoOverview with
+  const result = await runNotebookRequest("artifacts.write", async (client) => {
     // different id fields, so we route them separately. All other types go
     // through the generic `artifacts.create` which accepts CreateArtifactOptions.
     switch (artifactType) {
@@ -1289,7 +1439,7 @@ export async function createArtifact(
  * Get a single artifact by ID.
  */
 export async function getArtifact(notebookId: string, artifactId: string): Promise<Artifact> {
-  return await runNotebookRequest(async (client) =>
+  return await runNotebookRequest("artifacts.read", async (client) =>
     await client.artifacts.get(artifactId, notebookId) as Artifact
   );
 }
@@ -1298,7 +1448,7 @@ export async function getArtifact(notebookId: string, artifactId: string): Promi
  * List all artifacts in a notebook.
  */
 export async function listArtifacts(notebookId: string): Promise<Artifact[]> {
-  return await runNotebookRequest(async (client) =>
+  return await runNotebookRequest("artifacts.read", async (client) =>
     await client.artifacts.list(notebookId)
   );
 }

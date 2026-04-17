@@ -101,9 +101,11 @@ export function createAuthManager(deps: AuthManagerDependencies): AuthManager {
     const runtime = getRuntimeState(accountId);
     if (!runtime.client) return;
 
-    const current = runtime.client;
+    // Clear the cached client reference so new callers get a fresh one.
+    // Do NOT dispose the old client here: parallel requests may still be using
+    // it, and dispose() mutates shared SDK state (initialized flag, refresh
+    // manager). The old client will be GC-ed once all in-flight callers finish.
     runtime.client = undefined;
-    await deps.disposeRuntimeClient(current);
   }
 
   async function refreshInternal(accountId: string, reason: string): Promise<AuthMeta> {

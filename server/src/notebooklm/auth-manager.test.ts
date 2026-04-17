@@ -213,3 +213,55 @@ test("getAuthenticatedSdkClient silently refreshes once when initial runtime cre
     assert.equal(refreshCalls, 1);
   });
 });
+
+test("invalidateAuthClient: returns new client after invalidation, does NOT call disposeRuntimeClient", async () => {
+  await withTempHome(async () => {
+    let disposeCalls = 0;
+
+    const manager = createAuthManager(
+      createDependencies({
+        disposeRuntimeClient: async (client) => {
+          client.dispose();
+          disposeCalls += 1;
+        },
+      })
+    );
+
+    const first = await manager.getAuthenticatedSdkClient("default");
+    await manager.invalidateAuthClient("default");
+    const second = await manager.getAuthenticatedSdkClient("default");
+
+    // New request gets a fresh client instance.
+    assert.notEqual(first, second, "Should return a new client after invalidation");
+
+    // Old client must NOT have been disposed — parallel in-flight callers may
+    // still be using it.
+    assert.equal(disposeCalls, 0, "disposeRuntimeClient must not be called on invalidation");
+  });
+});
+
+test("invalidateAuthClient: refresh success also does not dispose old client", async () => {
+  await withTempHome(async () => {
+    let disposeCalls = 0;
+
+    const manager = createAuthManager(
+      createDependencies({
+        disposeRuntimeClient: async (client) => {
+          client.dispose();
+          disposeCalls += 1;
+        },
+      })
+    );
+
+    // Warm up a client.
+    const first = await manager.getAuthenticatedSdkClient("default");
+
+    // Trigger a full refresh cycle (which internally calls invalidateAuthClient).
+    await manager.refreshAuthProfile("default", "test");
+
+    const second = await manager.getAuthenticatedSdkClient("default");
+
+    assert.notEqual(first, second, "Should get a new client after refresh");
+    assert.equal(disposeCalls, 0, "disposeRuntimeClient must not be called during refresh-triggered invalidation");
+  });
+});
