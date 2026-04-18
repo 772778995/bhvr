@@ -1,60 +1,42 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import logger from "./lib/logger.js";
-import auth from "./routes/auth/index.js";
-import research from "./routes/research/index.js";
-import health from "./routes/health/index.js";
-import notebooks from "./routes/notebooks/index.js";
-import presetsRouter from "./routes/presets/index.js";
-import filesRouter from "./routes/files/index.js";
+import { createApp } from "./app.js";
 import { recoverInterruptedTasks } from "./worker/recovery.js";
-import { authManager, DEFAULT_ACCOUNT_ID } from "./notebooklm/index.js";
+import { authManager, DEFAULT_ACCOUNT_ID, readAuthMeta } from "./notebooklm/index.js";
+import { setQueueAuthGate } from "./worker/queue.js";
 
 // Ensure DB is initialized on import
 import "./db/index.js";
 
-const app = new Hono();
-
-app.use(cors());
-
-app.onError((err, c) => {
-  logger.error({ err, path: c.req.path, method: c.req.method }, "Unhandled request error");
-
-  return c.json(
-    {
-      success: false,
-      message: err instanceof Error ? err.message : "Internal Server Error",
-      errorCode: "INTERNAL_SERVER_ERROR",
-    },
-    500
-  );
+// Wire auth gate into the task queue so it pauses when reauth is needed
+setQueueAuthGate({
+  isReauthRequired: () => {
+    const result = readAuthMeta(DEFAULT_ACCOUNT_ID);
+    return result.ok ? result.value.status === "reauth_required" : false;
+  },
 });
 
-// Mount routes
-app.route("/api/auth", auth);
-app.route("/api/research", research);
-app.route("/api/health", health);
-app.route("/api/notebooks", notebooks);
-app.route("/api/presets", presetsRouter);
-app.route("/api/files", filesRouter);
+// Resolve client/dist relative to this file at runtime.
+// In production (Docker): server/dist/index.js → /app/server/dist/index.js
+// client/dist is copied to  /app/client/dist
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const staticDir = join(__dirname, "../../client/dist");
+const staticEnabled = existsSync(staticDir);
 
-// Root
-app.get("/", (c) => {
-  return c.json({
-    name: "notebooklm-research-engine",
-    version: "0.1.0",
-    endpoints: {
-      auth: "/api/auth/status",
-      research: "/api/research (POST/GET), /api/research/:id",
-      health: "/api/health",
-      notebooks:
-        "/api/notebooks, /api/notebooks/:id, /api/notebooks/:id/sources, /api/notebooks/:id/chat/messages, /api/notebooks/:id/studio/tools, /api/notebooks/:id/research",
-    },
-  });
-});
+if (staticEnabled) {
+  logger.info({ staticDir }, "Frontend static serving enabled");
+} else {
+  logger.warn({ staticDir }, "Frontend static dir not found – static serving disabled, API-only mode");
+}
 
-const port = parseInt(process.env.PORT || "3000", 10);
+const app = createApp({ staticDir });
+
+// Default port is 3450 (not 3000) because Windows excludes TCP ports 3000–3001
+// via the reserved port range. Override with PORT env var if needed.
+const port = parseInt(process.env.PORT || "3450", 10);
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Server running");

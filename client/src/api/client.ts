@@ -168,8 +168,20 @@ export const api = {
       method: "DELETE",
     });
   },
+
+  uploadStorageState(accountId: string, storageState: string) {
+    return request<UploadStateResponse>(`/api/auth/accounts/${accountId}/upload-state`, {
+      method: "POST",
+      body: JSON.stringify({ storageState }),
+    });
+  },
 };
 
 export interface AccountsListResponse {
   accounts: AuthStatus[];
+}
+
+export interface UploadStateResponse {
+  message: string;
+  expiresAt?: string;
 }

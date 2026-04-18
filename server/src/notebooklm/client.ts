@@ -27,6 +27,7 @@ import type {
 } from "notebooklm-kit";
 import { getQuotaStatus, consumeQuota } from "../lib/quota.js";
 import logger from "../lib/logger.js";
+import { buildAlertSink } from "./alert-sink.js";
 import {
   authManager,
   configureAuthManager,
@@ -36,7 +37,9 @@ import {
 import {
   ensureProfileDirectories,
   getLegacyStorageStatePath,
+  getDefaultStorageStatePath,
   getProfilePaths,
+  prepareStorageStateFromEnv,
   readAuthMeta,
   readStorageState,
   writeAuthMeta,
@@ -459,6 +462,9 @@ function isRecognizedAuthFailure(error: unknown): boolean {
 }
 
 async function ensureDefaultProfileInitialized(): Promise<void> {
+  // Apply env-var secret injection first (Docker / headless server scenario).
+  prepareStorageStateFromEnv(getDefaultStorageStatePath());
+
   ensureProfileDirectories(DEFAULT_ACCOUNT_ID);
   const profile = getProfilePaths(DEFAULT_ACCOUNT_ID);
   const legacyStorageStatePath = getLegacyStorageStatePath();
@@ -605,7 +611,7 @@ configureAuthManager({
   disposeRuntimeClient: async (client) => {
     client.dispose();
   },
-});
+}, buildAlertSink({ logger, fetch }));
 
 export async function disposeClient(): Promise<void> {
   await authFlowMutex.runExclusive(() => authManager.invalidateAuthClient(DEFAULT_ACCOUNT_ID));

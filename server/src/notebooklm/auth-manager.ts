@@ -29,6 +29,13 @@ export interface AuthManagerDependencies {
   disposeRuntimeClient(client: RuntimeClientLike): Promise<void>;
 }
 
+/**
+ * Alert sink for auth state transitions. Called when reauth is needed.
+ */
+export interface AlertSink {
+  onReauthRequired(accountId: string): Promise<void>;
+}
+
 export interface AuthManager {
   getAuthProfileStatus(accountId: string): Promise<AuthMeta>;
   initAuthProfile(accountId: string): Promise<AuthMeta>;
@@ -74,8 +81,10 @@ function isRecoverableAuthFailure(error: unknown): boolean {
     || message.includes("unsupported");
 }
 
-export function createAuthManager(deps: AuthManagerDependencies): AuthManager {
+export function createAuthManager(deps: AuthManagerDependencies, alertSink?: AlertSink): AuthManager {
   const stateByAccount = new Map<string, RuntimeState>();
+  // Track which accounts have already had a reauth_required alert fired
+  const reauthAlertFired = new Set<string>();
 
   function getRuntimeState(accountId: string): RuntimeState {
     const existing = stateByAccount.get(accountId);
@@ -88,13 +97,28 @@ export function createAuthManager(deps: AuthManagerDependencies): AuthManager {
 
   async function writeStatus(accountId: string, status: AuthState, error?: string, includeRefresh = false): Promise<AuthMeta> {
     const now = toIso(deps.now());
-    return persistMeta(accountId, {
+    const meta = persistMeta(accountId, {
       accountId,
       status,
       lastCheckedAt: now,
       ...(includeRefresh ? { lastRefreshedAt: now } : {}),
       ...(error ? { error } : {}),
     });
+
+    // Fire alert exactly once when transitioning into reauth_required
+    if (status === "reauth_required" && !reauthAlertFired.has(accountId)) {
+      reauthAlertFired.add(accountId);
+      if (alertSink) {
+        alertSink.onReauthRequired(accountId).catch(() => {
+          // swallow alert errors – never let alert failure break the main flow
+        });
+      }
+    } else if (status !== "reauth_required") {
+      // Clear the flag so future reauth_required transitions alert again
+      reauthAlertFired.delete(accountId);
+    }
+
+    return meta;
   }
 
   async function invalidateAuthClient(accountId: string): Promise<void> {
@@ -241,8 +265,8 @@ const defaultDependencies: AuthManagerDependencies = {
 
 export let authManager = createAuthManager(defaultDependencies);
 
-export function configureAuthManager(dependencies: AuthManagerDependencies): AuthManager {
-  authManager = createAuthManager(dependencies);
+export function configureAuthManager(dependencies: AuthManagerDependencies, alertSink?: AlertSink): AuthManager {
+  authManager = createAuthManager(dependencies, alertSink);
   return authManager;
 }
 

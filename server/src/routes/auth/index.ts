@@ -1,8 +1,10 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { Hono } from "hono";
 import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
-import { getLegacyStorageStatePath, getProfilePaths, writeAuthMeta } from "../../notebooklm/auth-profile.js";
+import { getLegacyStorageStatePath, getProfilePaths, writeAuthMeta, writeStorageState } from "../../notebooklm/auth-profile.js";
 import { getAuthStatus, loginAccount } from "../../notebooklm/index.js";
+import { taskQueue } from "../../worker/queue.js";
+import logger from "../../lib/logger.js";
 
 const auth = new Hono();
 const loginInProgress = new Set<string>();
@@ -94,6 +96,161 @@ auth.delete("/accounts/:accountId", async (c) => {
   await authManager.invalidateAuthClient(accountId).catch(() => undefined);
 
   return c.json({ message: "账号凭证已清除" });
+});
+
+// POST /api/auth/accounts/:accountId/upload-state — upload raw storage-state JSON string to restore auth
+auth.post("/accounts/:accountId/upload-state", async (c) => {
+  const { accountId } = c.req.param();
+  if (!isSupportedAccount(accountId)) {
+    return c.json({ error: "账号不存在" }, 404);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "无效的请求体" }, 400);
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("storageState" in body) ||
+    typeof (body as Record<string, unknown>).storageState !== "string"
+  ) {
+    return c.json({ error: "storageState 字段必填" }, 400);
+  }
+
+  const storageStateStr = (body as { storageState: string }).storageState;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(storageStateStr);
+  } catch {
+    return c.json({ error: "不是有效的 JSON" }, 400);
+  }
+
+  // Validate SAPISID cookie presence
+  const hasCookiesArray =
+    parsed !== null &&
+    typeof parsed === "object" &&
+    "cookies" in parsed &&
+    Array.isArray((parsed as Record<string, unknown>).cookies);
+
+  if (!hasCookiesArray) {
+    return c.json({ error: "缺少必要的 SAPISID cookie，请重新运行 npx notebooklm login" }, 400);
+  }
+
+  type CookieEntry = { name: string; value: string; expires?: number };
+  const cookies = (parsed as { cookies: unknown[] }).cookies;
+  const sapisidCookie = cookies.find(
+    (c): c is CookieEntry =>
+      typeof c === "object" && c !== null && (c as Record<string, unknown>).name === "SAPISID",
+  ) as CookieEntry | undefined;
+
+  if (!sapisidCookie) {
+    return c.json({ error: "缺少必要的 SAPISID cookie，请重新运行 npx notebooklm login" }, 400);
+  }
+
+  if (loginInProgress.has(accountId)) {
+    return c.json({ error: "已有登录流程进行中，请等待完成" }, 409);
+  }
+
+  writeStorageState(accountId, parsed);
+  await authManager.invalidateAuthClient(accountId).catch(() => undefined);
+  writeAuthMeta(accountId, {
+    accountId,
+    status: "ready",
+    lastCheckedAt: new Date().toISOString(),
+  });
+  taskQueue.resume();
+
+  const expiresRaw = sapisidCookie.expires;
+  const expiresAt =
+    typeof expiresRaw === "number" && expiresRaw > 0
+      ? new Date(expiresRaw * 1000).toISOString()
+      : undefined;
+
+  logger.info({ accountId }, "upload-state: credentials written, queue resumed");
+
+  return c.json({ message: "凭据已激活", ...(expiresAt !== undefined ? { expiresAt } : {}) });
+});
+
+// POST /api/auth/reauth — upload new storage-state.json (base64) to restore auth
+// Protected by Authorization: Bearer <ADMIN_SECRET>
+auth.post("/reauth", async (c) => {
+  const adminSecret = process.env.ADMIN_SECRET;
+  if (!adminSecret) {
+    return c.json({ error: "再授权接口未启用：未配置 ADMIN_SECRET" }, 503);
+  }
+
+  const authHeader = c.req.header("Authorization");
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+  if (!token || token !== adminSecret) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body || typeof body !== "object" || !("storageState" in body) || typeof (body as Record<string, unknown>).storageState !== "string") {
+    return c.json({ error: "storageState (base64 string) is required" }, 400);
+  }
+
+  const b64 = (body as { storageState: string }).storageState;
+
+  // Strict base64 validation: only allow [A-Za-z0-9+/] with optional '=' padding
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64) || b64.length % 4 !== 0) {
+    return c.json({ error: "storageState is not valid base64" }, 400);
+  }
+
+  let decoded: string;
+  try {
+    decoded = Buffer.from(b64, "base64").toString("utf-8");
+  } catch {
+    return c.json({ error: "storageState is not valid base64" }, 400);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded);
+  } catch {
+    return c.json({ error: "storageState decoded content is not valid JSON" }, 400);
+  }
+
+  // Write the new storage state and invalidate the cached client
+  const accountId = DEFAULT_ACCOUNT_ID;
+  writeStorageState(accountId, parsed);
+  await authManager.invalidateAuthClient(accountId).catch(() => undefined);
+
+  // Refresh the auth profile to pick up the new storage state.
+  // Only resume the queue if auth is confirmed ready.
+  let refreshResult;
+  try {
+    refreshResult = await authManager.refreshAuthProfile(accountId, "manual-reauth");
+  } catch (err) {
+    logger.error({ err }, "reauth: refreshAuthProfile threw after writing new storage state");
+    return c.json({ error: "再授权验证失败：上游服务不可用" }, 502);
+  }
+
+  if (refreshResult.status !== "ready") {
+    logger.warn({ accountId, authStatus: refreshResult.status }, "reauth: storage state written but auth still not ready");
+    return c.json({
+      error: "再授权失败：新凭证写入成功但认证状态未恢复为 ready",
+      authStatus: refreshResult.status,
+    }, 422);
+  }
+
+  // Auth is confirmed ready — wake up the queue
+  taskQueue.resume();
+
+  logger.info({ accountId }, "reauth: storage state updated, auth ready, queue resumed");
+
+  return c.json({ message: "再授权成功，队列已恢复" });
 });
 
 export default auth;

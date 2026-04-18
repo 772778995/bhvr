@@ -3,7 +3,11 @@
 	"version": "0.1.0",
 	"description": "NotebookLM Research Engine — automated deep research via Google NotebookLM",
 	"private": true,
-	"packageManager": "npm@10.0.0",
+	"packageManager": "npm@10.9.2",
+	"engines": {
+		"node": ">=20.0.0",
+		"npm": ">=10.9.2"
+	},
 	"workspaces": [
 		"server",
 		"client",
@@ -20,6 +24,9 @@
 		"lint": "turbo lint",
 		"type-check": "turbo type-check",
 		"test": "turbo test"
+	},
+	"overrides": {
+		"tsx": "~4.20.0"
 	},
 	"devDependencies": {
 		"turbo": "^2.6.3",

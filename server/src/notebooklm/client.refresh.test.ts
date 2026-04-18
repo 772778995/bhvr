@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -151,6 +151,96 @@ test("fresh legacy login replaces stale profile storage state on startup", async
       });
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("getAuthStatus prepares storage state from NOTEBOOKLM_STORAGE_STATE_JSON_B64 env var before checking auth", async () => {
+  await withTempHome(async (homeDir) => {
+    const storageState = {
+      cookies: [{ name: "SAPISID", value: "env-secret-cookie", domain: ".google.com" }],
+    };
+    const b64 = Buffer.from(JSON.stringify(storageState)).toString("base64");
+
+    const paths = getProfilePaths("default");
+    const originalB64 = process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
+    process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64 = b64;
+
+    const clientModule = await import("./client.js");
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () =>
+      new Response('<html><script>var data = {"SNlM0e":"token:123"}</script></html>', {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+
+    try {
+      await clientModule.getAuthStatus();
+
+      // The env secret should have been written to the default profile path
+      assert.ok(existsSync(paths.storageStatePath), "storage-state.json should be written from env var");
+      const written = JSON.parse(readFileSync(paths.storageStatePath, "utf-8"));
+      assert.deepEqual(written, storageState);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalB64 === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64 = originalB64;
+      }
+    }
+  });
+});
+
+test("getAuthStatus with both PATH and B64 set writes to custom path and reads from same custom path", async () => {
+  await withTempHome(async (homeDir) => {
+    const storageState = {
+      cookies: [{ name: "SAPISID", value: "custom-path-secret", domain: ".google.com" }],
+    };
+    const b64 = Buffer.from(JSON.stringify(storageState)).toString("base64");
+    const customPath = join(homeDir, "secrets", "storage-state.json");
+
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    const originalB64 = process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+    process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64 = b64;
+
+    const clientModule = await import("./client.js");
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async () =>
+      new Response('<html><script>var data = {"SNlM0e":"token:456"}</script></html>', {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+
+    try {
+      await clientModule.getAuthStatus();
+
+      // File must be at custom path, NOT at default profile path
+      assert.ok(existsSync(customPath), "file should be written to custom PATH");
+      const written = JSON.parse(readFileSync(customPath, "utf-8"));
+      assert.deepEqual(written, storageState);
+
+      // Default profile path must NOT exist (read/write unified to custom path)
+      const defaultProfileStoragePath = join(
+        homeDir, ".notebooklm", "profiles", "default", "storage-state.json"
+      );
+      assert.equal(existsSync(defaultProfileStoragePath), false,
+        "storage-state.json must NOT be written to default profile path when custom PATH is set");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+      if (originalB64 === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64 = originalB64;
+      }
     }
   });
 });

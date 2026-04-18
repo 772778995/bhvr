@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -76,10 +76,18 @@ function parseAuthMeta(accountId: string, input: unknown): ReadAuthMetaResult {
 export function getProfilePaths(accountId: string): ProfilePaths {
   const baseDir = join(homedir(), ".notebooklm", "profiles", accountId);
 
+  // For the default account only: honour NOTEBOOKLM_STORAGE_STATE_PATH so that
+  // ALL read/write paths (readStorageState, writeStorageState, legacy migration,
+  // etc.) consistently use the same custom location in Docker/headless scenarios.
+  const storageStatePath =
+    accountId === DEFAULT_ACCOUNT_ID && process.env.NOTEBOOKLM_STORAGE_STATE_PATH
+      ? process.env.NOTEBOOKLM_STORAGE_STATE_PATH
+      : join(baseDir, "storage-state.json");
+
   return {
     baseDir,
     browserUserDataDir: join(baseDir, "browser-user-data"),
-    storageStatePath: join(baseDir, "storage-state.json"),
+    storageStatePath,
     authMetaPath: join(baseDir, "auth-meta.json"),
   };
 }
@@ -127,6 +135,68 @@ export function readStorageState(accountId: string): { ok: true; value: unknown 
 
 export function writeStorageState(accountId: string, storageState: unknown): { ok: true } {
   const { storageStatePath } = ensureProfileDirectories(accountId);
+  // Custom storageStatePath may live outside the profile base dir — ensure its parent exists.
+  mkdirSync(dirname(storageStatePath), { recursive: true });
   writeFileSync(storageStatePath, JSON.stringify(storageState, null, 2));
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Docker / env-var storage state injection helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the effective storage state path for the default account.
+ * Delegates to getProfilePaths so the env-var override is centralised there.
+ */
+export function getDefaultStorageStatePath(): string {
+  return getProfilePaths(DEFAULT_ACCOUNT_ID).storageStatePath;
+}
+
+/**
+ * Reads NOTEBOOKLM_STORAGE_STATE_JSON_B64 from the environment and, if set,
+ * writes the decoded JSON to `targetPath` — but only when the target file does
+ * not already exist (to avoid clobbering a refreshed session on restart).
+ *
+ * Throws a descriptive error if the env value is not valid base64 or not valid
+ * JSON.
+ */
+export function prepareStorageStateFromEnv(targetPath: string): void {
+  const b64 = process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
+  if (!b64) {
+    return;
+  }
+
+  if (existsSync(targetPath)) {
+    // Do not overwrite an already-present file (e.g. after a session refresh).
+    return;
+  }
+
+  // Validate base64: Buffer.from with base64 is lenient — re-encode and compare.
+  let decoded: string;
+  try {
+    const buf = Buffer.from(b64, "base64");
+    // Re-encode and compare to detect non-base64 characters (strict check).
+    if (buf.toString("base64") !== b64.replace(/\s/g, "")) {
+      throw new Error("re-encode mismatch");
+    }
+    decoded = buf.toString("utf-8");
+  } catch {
+    throw new Error(
+      "Invalid base64 in NOTEBOOKLM_STORAGE_STATE_JSON_B64: content is not valid base64"
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded);
+  } catch {
+    throw new Error(
+      "Invalid JSON in NOTEBOOKLM_STORAGE_STATE_JSON_B64: decoded content is not valid JSON"
+    );
+  }
+
+  // Ensure the parent directory exists before writing.
+  mkdirSync(dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, JSON.stringify(parsed, null, 2));
 }

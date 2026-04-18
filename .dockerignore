@@ -1,0 +1,27 @@
+# Git metadata
+.git
+.gitignore
+
+# Node modules (rebuilt in Docker)
+node_modules
+**/node_modules
+
+# Dev and local data
+.env
+data/
+*.db
+*.sqlite
+
+# Build artifacts (rebuilt in Docker)
+**/dist
+
+# Turbo cache
+.turbo
+
+# Test files
+**/*.test.ts
+
+# Editor / OS artifacts
+.DS_Store
+*.log
+.opencode*

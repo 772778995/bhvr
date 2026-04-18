@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
+import { api, type AuthStatus } from "@/api/client";
 import { formatTime } from "@/utils/format";
 import { notebooksApi } from "@/api/notebooks";
 import { createNotebookListViewModel, createNotebookWorkbenchPath } from "./notebook-list-view";
@@ -31,7 +32,78 @@ const showCreateModal = ref(false);
 const createTitle = ref("");
 const creating = ref(false);
 const createError = ref("");
+const authStatus = ref<AuthStatus | null>(null);
+const authLoading = ref(true);
+const authError = ref("");
+const loginPending = ref(false);
+const authNotice = ref("");
 const pageMaxWidth = `${getNotebookListMaxWidth()}px`;
+
+let authRefreshTimer: number | undefined;
+
+const authTone = computed(() => {
+  if (!authStatus.value) return null;
+  if (authStatus.value.status === "ready") return "ready";
+  if (authStatus.value.status === "refreshing") return "info";
+  if (["missing", "expired"].includes(authStatus.value.status)) return "warn";
+  return "error";
+});
+
+const authMessage = computed(() => {
+  if (!authStatus.value) return "";
+
+  switch (authStatus.value.status) {
+    case "ready":
+      return "NotebookLM 已登录，可以直接打开或创建读书笔记。";
+    case "refreshing":
+      return "NotebookLM 认证正在刷新，请稍候片刻。";
+    case "missing":
+      return "当前还没有 NotebookLM 登录凭证，可以直接在这里触发交互登录。";
+    case "expired":
+      return "现有 NotebookLM 会话已过期，可以重新触发交互登录恢复。";
+    case "reauth_required":
+      return authStatus.value.error ?? "NotebookLM 需要重新登录才能继续使用。";
+    case "error":
+      return authStatus.value.error ?? "NotebookLM 认证状态异常，可尝试重新登录。";
+    default:
+      return "";
+  }
+});
+
+const canTriggerLogin = computed(() => {
+  if (!authStatus.value) return false;
+  return ["missing", "expired", "reauth_required", "error"].includes(authStatus.value.status);
+});
+
+async function loadAuthStatus() {
+  try {
+    authStatus.value = await api.getAuthStatus();
+    authError.value = "";
+  } catch (cause) {
+    authError.value = cause instanceof Error ? cause.message : "认证状态加载失败";
+  } finally {
+    authLoading.value = false;
+  }
+}
+
+async function handleTriggerLogin() {
+  if (!authStatus.value || loginPending.value || !canTriggerLogin.value) return;
+
+  loginPending.value = true;
+  authNotice.value = "";
+
+  try {
+    const result = await api.triggerLogin(authStatus.value.accountId);
+    authNotice.value = result.message;
+    authError.value = "";
+    await loadAuthStatus();
+  } catch (cause) {
+    authNotice.value = "";
+    authError.value = cause instanceof Error ? cause.message : "无法触发登录";
+  } finally {
+    loginPending.value = false;
+  }
+}
 
 function openCreateModal() {
   createTitle.value = "";
@@ -67,6 +139,19 @@ async function handleCreate() {
 function handleModalKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") closeCreateModal();
 }
+
+onMounted(() => {
+  void loadAuthStatus();
+  authRefreshTimer = window.setInterval(() => {
+    void loadAuthStatus();
+  }, 5000);
+});
+
+onBeforeUnmount(() => {
+  if (authRefreshTimer) {
+    window.clearInterval(authRefreshTimer);
+  }
+});
 </script>
 
 <template>
@@ -77,16 +162,58 @@ function handleModalKeydown(e: KeyboardEvent) {
       <div class="page-header">
         <div class="header-rule-top" />
         <div class="header-content">
-          <h1 class="page-title">锐捷读书</h1>
-          <button class="btn-create" type="button" @click="openCreateModal">
-            新建读书笔记
-          </button>
+          <div>
+            <h1 class="page-title">锐捷读书</h1>
+            <p class="page-subtitle">在首页直接完成 NotebookLM 登录，然后进入读书工作台。</p>
+          </div>
+          <div class="header-actions">
+            <router-link class="btn-link" to="/settings/accounts">
+              账号管理
+            </router-link>
+            <button class="btn-create" type="button" @click="openCreateModal">
+              新建读书笔记
+            </button>
+          </div>
         </div>
         <div class="header-rule-bottom" />
       </div>
 
       <!-- 内容区 -->
       <div class="page-body">
+        <section
+          class="auth-panel"
+          :class="[
+            authTone === 'ready' && 'auth-panel-ready',
+            authTone === 'info' && 'auth-panel-info',
+            authTone === 'warn' && 'auth-panel-warn',
+            authTone === 'error' && 'auth-panel-error',
+          ]"
+        >
+          <div class="auth-copy">
+            <p class="auth-kicker">NotebookLM 认证</p>
+            <p v-if="authLoading" class="auth-text">正在检查登录状态...</p>
+            <p v-else-if="authMessage" class="auth-text">{{ authMessage }}</p>
+            <p v-else class="auth-text">暂时无法获取认证状态，请稍后重试。</p>
+            <p v-if="authNotice" class="auth-notice">{{ authNotice }}</p>
+            <p v-if="authError" class="auth-error">{{ authError }}</p>
+          </div>
+
+          <div class="auth-actions">
+            <button
+              v-if="canTriggerLogin || loginPending"
+              type="button"
+              class="btn-auth-primary"
+              :disabled="loginPending || authLoading"
+              @click="handleTriggerLogin"
+            >
+              {{ loginPending ? "等待登录..." : "交互登录 NotebookLM" }}
+            </button>
+            <router-link class="btn-auth-secondary" to="/settings/accounts">
+              查看账号状态
+            </router-link>
+          </div>
+        </section>
+
         <div v-if="actionError" class="state-error state-inline-error">
           <span class="error-mark">✕</span>
           <span>{{ actionError }}</span>
@@ -257,6 +384,12 @@ function handleModalKeydown(e: KeyboardEvent) {
   gap: 1rem;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .page-title {
   font-size: 1.5rem;
   font-weight: 600;
@@ -264,6 +397,13 @@ function handleModalKeydown(e: KeyboardEvent) {
   color: #2f271f;
   margin: 0;
   line-height: 1.3;
+}
+
+.page-subtitle {
+  margin: 0.45rem 0 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: rgba(47, 39, 31, 0.62);
 }
 
 .header-rule-bottom {
@@ -286,12 +426,139 @@ function handleModalKeydown(e: KeyboardEvent) {
   letter-spacing: 0.03em;
 }
 
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45em 1.1em;
+  font-size: 0.9rem;
+  color: #2f271f;
+  text-decoration: none;
+  border: 1px solid rgba(47, 39, 31, 0.22);
+  border-radius: 2px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-link:hover {
+  background: rgba(47, 39, 31, 0.04);
+  border-color: rgba(47, 39, 31, 0.42);
+}
+
 .btn-create:hover {
   opacity: 0.85;
 }
 
 .btn-create:active {
   transform: scale(0.97);
+}
+
+.auth-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(47, 39, 31, 0.18);
+  background: rgba(255, 252, 246, 0.82);
+}
+
+.auth-panel-ready {
+  border-color: rgba(66, 107, 61, 0.28);
+  background: rgba(101, 133, 90, 0.08);
+}
+
+.auth-panel-info {
+  border-color: rgba(61, 94, 132, 0.28);
+  background: rgba(97, 125, 153, 0.08);
+}
+
+.auth-panel-warn {
+  border-color: rgba(164, 117, 39, 0.26);
+  background: rgba(182, 144, 72, 0.08);
+}
+
+.auth-panel-error {
+  border-color: rgba(154, 67, 51, 0.28);
+  background: rgba(154, 67, 51, 0.08);
+}
+
+.auth-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.auth-kicker {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(47, 39, 31, 0.46);
+}
+
+.auth-text,
+.auth-notice,
+.auth-error {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.auth-notice {
+  margin-top: 0.35rem;
+  color: #36512f;
+}
+
+.auth-error {
+  margin-top: 0.35rem;
+  color: #8a3020;
+}
+
+.auth-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-auth-primary,
+.btn-auth-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.55em 1.1em;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn-auth-primary {
+  border: 1px solid #2f271f;
+  background: #2f271f;
+  color: #efe5d6;
+}
+
+.btn-auth-secondary {
+  border: 1px solid rgba(47, 39, 31, 0.22);
+  background: transparent;
+  color: #2f271f;
+}
+
+.btn-auth-primary:hover:not(:disabled),
+.btn-auth-secondary:hover {
+  opacity: 0.86;
+}
+
+.btn-auth-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-auth-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ─── 状态占位 ─────────────────────────────────────── */
@@ -706,6 +973,21 @@ function handleModalKeydown(e: KeyboardEvent) {
 
   .card-title {
     font-size: 1.12rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .header-content,
+  .auth-panel,
+  .auth-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 </style>

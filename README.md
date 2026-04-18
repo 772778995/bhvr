@@ -44,12 +44,18 @@
 
 ### 前置条件
 
-确保已安装 [Node.js](https://nodejs.org)（v18+）：
+确保已安装 [Node.js](https://nodejs.org)（v20+）和 npm v10.9.2+：
 
 ```bash
-node --version
-npm --version
+node --version   # 需要 >= 20
+npm --version    # 需要 >= 10.9.2
 ```
+
+> **注意（tsx 版本固定）**：根 `package.json` 中的 `overrides.tsx: "~4.20.0"` 将 tsx 锁定在
+> 4.20.x，低于 `drizzle-kit@0.31.10` 声明的 `^4.21.0`。原因：tsx 4.21 依赖 esbuild 0.27.x，
+> 而 vite 6 依赖 esbuild 0.25.x；两者在 Node 24 + npm 11 环境下共存时会触发 esbuild 安装脚本
+> 的版本校验错误。tsx 4.20.x 在功能上完全兼容 drizzle-kit，`npm ls` 会显示 `invalid` 警告但
+> 不影响运行。待 vite 7 / drizzle-kit 对齐到同一 esbuild 大版本后可移除此 override。
 
 ### 安装依赖
 
@@ -76,9 +82,22 @@ npx tsx server/src/db/migrate.ts
 ### 启动开发服务器
 
 ```bash
-# 启动后端服务（端口 3000）
+# 启动后端服务（默认端口 3450）
 npm run dev:server
 ```
+
+> **注意（默认端口为 3450）**：服务器默认监听 **3450** 而非常见的 3000，原因是 Windows 会通过
+> Hyper-V / WSL 保留 3000–3001 等端口，导致 `listen EACCES` 错误。如需使用其他端口：
+>
+> ```powershell
+> # PowerShell（Windows）
+> $env:PORT=8080; npm run dev:server
+> ```
+>
+> ```bash
+> # POSIX（macOS / Linux）
+> PORT=8080 npm run dev:server
+> ```
 
 ### API 接口
 
@@ -95,7 +114,7 @@ npm run dev:server
 ### 创建研究任务示例
 
 ```bash
-curl -X POST http://localhost:3000/api/research \
+curl -X POST http://localhost:3450/api/research \
   -H "Content-Type: application/json" \
   -d '{
     "notebookUrl": "https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID",

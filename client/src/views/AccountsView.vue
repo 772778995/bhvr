@@ -18,6 +18,11 @@ const notice = ref("");
 const deletingAccountId = ref("");
 const loginWaitingIds = ref<string[]>([]);
 
+// 上传区状态（每个账号独立）
+const uploadInputs = ref<Record<string, string>>({});
+const uploadingIds = ref<string[]>([]);
+const uploadResults = ref<Record<string, { ok: boolean; message: string; expiresAt?: string }>>({});
+
 let refreshTimer: number | undefined;
 let loadingPromise: Promise<void> | null = null;
 let latestGeneration = 0;
@@ -154,6 +159,86 @@ async function handleDelete(account: AuthStatus) {
   }
 }
 
+function isUploading(accountId: string) {
+  return uploadingIds.value.includes(accountId);
+}
+
+function getUploadInput(accountId: string) {
+  return uploadInputs.value[accountId] ?? "";
+}
+
+function setUploadInput(accountId: string, value: string) {
+  uploadInputs.value = { ...uploadInputs.value, [accountId]: value };
+}
+
+function getUploadResult(accountId: string) {
+  return uploadResults.value[accountId] ?? null;
+}
+
+function handleFileChange(accountId: string, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target?.result as string;
+    setUploadInput(accountId, text);
+  };
+  reader.onerror = () => {
+    uploadResults.value = {
+      ...uploadResults.value,
+      [accountId]: { ok: false, message: "文件读取失败，请重试或改用粘贴方式" },
+    };
+  };
+  reader.readAsText(file);
+}
+
+function handleTextareaInput(accountId: string, event: Event) {
+  const textarea = event.target as HTMLTextAreaElement;
+  setUploadInput(accountId, textarea.value);
+  // 清空文件选择
+  const fileInput = document.getElementById(`file-input-${accountId}`) as HTMLInputElement | null;
+  if (fileInput) {
+    fileInput.value = "";
+  }
+}
+
+function formatExpiresAt(expiresAt: string) {
+  try {
+    return new Date(expiresAt).toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return expiresAt;
+  }
+}
+
+async function handleUploadState(accountId: string) {
+  const text = uploadInputs.value[accountId] ?? "";
+  if (!text.trim() || uploadingIds.value.includes(accountId)) return;
+
+  uploadingIds.value = [...uploadingIds.value, accountId];
+  // 清除旧结果
+  const newResults = { ...uploadResults.value };
+  delete newResults[accountId];
+  uploadResults.value = newResults;
+
+  try {
+    const result = await api.uploadStorageState(accountId, text);
+    uploadResults.value = { ...uploadResults.value, [accountId]: { ok: true, message: result.message, expiresAt: result.expiresAt } };
+    uploadInputs.value = { ...uploadInputs.value, [accountId]: "" };
+    await loadAccounts({ silent: true, force: true });
+  } catch (err) {
+    uploadResults.value = { ...uploadResults.value, [accountId]: { ok: false, message: err instanceof Error ? err.message : "上传失败" } };
+  } finally {
+    uploadingIds.value = uploadingIds.value.filter((id) => id !== accountId);
+  }
+}
+
 onMounted(() => {
   refreshTimer = window.setInterval(() => {
     void loadAccounts({ silent: true });
@@ -205,52 +290,127 @@ onBeforeUnmount(() => {
 
       <TransitionGroup v-else class="accounts-list" tag="div" name="accounts-folio">
         <article v-for="account in accounts" :key="account.accountId" class="account-card">
-          <div class="account-main">
-            <div class="account-meta">
-              <p class="account-label">账号 ID</p>
-              <h2 class="account-id">{{ account.accountId }}</h2>
+          <div class="account-upper">
+            <div class="account-main">
+              <div class="account-meta">
+                <p class="account-label">账号 ID</p>
+                <h2 class="account-id">{{ account.accountId }}</h2>
+              </div>
+
+              <div class="status-row">
+                <span
+                  class="status-dot"
+                  :style="{ backgroundColor: getStatusTone(account.status).dotClass }"
+                  aria-hidden="true"
+                />
+                <span
+                  class="status-text"
+                  :style="{ color: getStatusTone(account.status).textClass }"
+                >
+                  {{ getStatusTone(account.status).label }}
+                </span>
+              </div>
+
+              <p class="account-time">
+                最后检查：{{ account.lastCheckedAt ? formatTime(account.lastCheckedAt) : "-" }}
+              </p>
+
+              <p v-if="account.error" class="account-error">{{ account.error }}</p>
             </div>
 
-            <div class="status-row">
-              <span
-                class="status-dot"
-                :style="{ backgroundColor: getStatusTone(account.status).dotClass }"
-                aria-hidden="true"
-              />
-              <span
-                class="status-text"
-                :style="{ color: getStatusTone(account.status).textClass }"
+            <div class="account-actions">
+              <button
+                v-if="canTriggerLogin(account.status) || isWaitingForLogin(account.accountId)"
+                type="button"
+                class="btn-primary"
+                :disabled="isWaitingForLogin(account.accountId) || deletingAccountId === account.accountId || isUploading(account.accountId)"
+                @click="handleLogin(account.accountId)"
               >
-                {{ getStatusTone(account.status).label }}
-              </span>
+                {{ isWaitingForLogin(account.accountId) ? "等待登录..." : "登录" }}
+              </button>
+
+              <button
+                type="button"
+                class="btn-secondary"
+                :disabled="deletingAccountId === account.accountId || isWaitingForLogin(account.accountId) || isUploading(account.accountId)"
+                @click="handleDelete(account)"
+              >
+                {{ deletingAccountId === account.accountId ? "清除中..." : "清除凭证" }}
+              </button>
             </div>
-
-            <p class="account-time">
-              最后检查：{{ account.lastCheckedAt ? formatTime(account.lastCheckedAt) : "-" }}
-            </p>
-
-            <p v-if="account.error" class="account-error">{{ account.error }}</p>
           </div>
 
-          <div class="account-actions">
+          <!-- 上传凭据区：非 ready 且非等待登录时显示 -->
+          <div
+            v-if="account.status !== 'ready' && !isWaitingForLogin(account.accountId)"
+            class="upload-section"
+          >
+            <div class="upload-divider" />
+
+            <details class="upload-guide">
+              <summary class="upload-guide-summary">如何获取凭据文件？</summary>
+              <div class="upload-guide-body">
+                <p class="upload-guide-text">在<strong>本机</strong>（不是服务器）运行以下命令：</p>
+                <div class="upload-code-block">
+                  <code>npx notebooklm login</code>
+                </div>
+                <p class="upload-guide-text">命令执行后，凭据文件保存在：</p>
+                <ul class="upload-guide-paths">
+                  <li><span class="upload-path-os">macOS / Linux：</span><code>~/.notebooklm/storage-state.json</code></li>
+                  <li><span class="upload-path-os">Windows：</span><code>%USERPROFILE%\.notebooklm\storage-state.json</code></li>
+                </ul>
+              </div>
+            </details>
+
+            <div class="upload-inputs">
+              <!-- 方式一：文件上传 -->
+              <label class="upload-file-label">
+                <span class="upload-input-hint">选择文件</span>
+                <input
+                  :id="`file-input-${account.accountId}`"
+                  type="file"
+                  accept=".json"
+                  class="upload-file-input"
+                  @change="handleFileChange(account.accountId, $event)"
+                />
+              </label>
+
+              <!-- 方式二：粘贴 JSON -->
+              <textarea
+                class="upload-textarea"
+                :class="{ 'upload-textarea--error': getUploadInput(account.accountId).length > 50000 }"
+                placeholder="或在此粘贴 storage-state.json 的内容"
+                :value="getUploadInput(account.accountId)"
+                @input="handleTextareaInput(account.accountId, $event)"
+              />
+              <p v-if="getUploadInput(account.accountId).length > 50000" class="upload-limit-warn">
+                内容超过 50,000 字符限制（当前 {{ getUploadInput(account.accountId).length.toLocaleString() }} 字符）
+              </p>
+            </div>
+
+            <!-- 提交按钮 -->
             <button
-              v-if="canTriggerLogin(account.status) || isWaitingForLogin(account.accountId)"
               type="button"
-              class="btn-primary"
-              :disabled="isWaitingForLogin(account.accountId) || deletingAccountId === account.accountId"
-              @click="handleLogin(account.accountId)"
+              class="btn-upload"
+              :disabled="!getUploadInput(account.accountId).trim() || isUploading(account.accountId) || getUploadInput(account.accountId).length > 50000"
+              @click="handleUploadState(account.accountId)"
             >
-              {{ isWaitingForLogin(account.accountId) ? "等待登录..." : "登录" }}
+              {{ isUploading(account.accountId) ? "验证中..." : "验证并激活" }}
             </button>
 
-            <button
-              type="button"
-              class="btn-secondary"
-              :disabled="deletingAccountId === account.accountId || isWaitingForLogin(account.accountId)"
-              @click="handleDelete(account)"
-            >
-              {{ deletingAccountId === account.accountId ? "清除中..." : "清除凭证" }}
-            </button>
+            <!-- 结果显示 -->
+            <div v-if="getUploadResult(account.accountId)" class="upload-result">
+              <template v-if="getUploadResult(account.accountId)!.ok">
+                <p class="upload-result--ok">✓ 凭据已激活</p>
+                <p v-if="getUploadResult(account.accountId)!.expiresAt" class="upload-result-meta">
+                  预计有效至 {{ formatExpiresAt(getUploadResult(account.accountId)!.expiresAt!) }}（约）
+                </p>
+              </template>
+              <template v-else>
+                <p class="upload-result--err">✕ {{ getUploadResult(account.accountId)!.message }}</p>
+                <p class="upload-result-meta upload-result-meta--err">请重新运行 <code>npx notebooklm login</code> 后再上传</p>
+              </template>
+            </div>
           </div>
         </article>
       </TransitionGroup>
@@ -410,14 +570,19 @@ onBeforeUnmount(() => {
 
 .account-card {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1.5rem;
+  flex-direction: column;
   padding: 1.2rem 1.25rem;
   border: 1px solid #d4c9b0;
   background: rgba(255, 252, 246, 0.82);
   box-shadow: 0 1px 3px rgba(44, 44, 44, 0.06);
   transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.account-upper {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
 }
 
 .account-card:hover {
@@ -549,7 +714,7 @@ onBeforeUnmount(() => {
   }
 
   .header-content,
-  .account-card {
+  .account-upper {
     flex-direction: column;
   }
 
@@ -572,5 +737,208 @@ onBeforeUnmount(() => {
   .header-note {
     max-width: 24rem;
   }
+}
+
+/* ── 上传凭据区 ── */
+.upload-divider {
+  border-top: 1px solid rgba(44, 44, 44, 0.12);
+  margin: 1rem 0;
+}
+
+.upload-guide {
+  margin-bottom: 1rem;
+}
+
+.upload-guide-summary {
+  font-size: 0.9rem;
+  color: rgba(44, 44, 44, 0.65);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.6;
+  list-style: none;
+}
+
+.upload-guide-summary::-webkit-details-marker {
+  display: none;
+}
+
+.upload-guide-summary::before {
+  content: "▸ ";
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+details[open] > .upload-guide-summary::before {
+  content: "▾ ";
+}
+
+.upload-guide-body {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #d4c9b0;
+  background: rgba(212, 201, 176, 0.12);
+}
+
+.upload-guide-text {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: rgba(44, 44, 44, 0.8);
+}
+
+.upload-guide-text:last-of-type {
+  margin-top: 0.65rem;
+}
+
+.upload-code-block {
+  display: inline-block;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid #d4c9b0;
+  background: rgba(44, 44, 44, 0.04);
+  margin-bottom: 0.2rem;
+}
+
+.upload-code-block code,
+.upload-guide-paths code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  color: #2c2c2c;
+}
+
+.upload-guide-paths {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.upload-guide-paths li {
+  font-size: 0.9rem;
+  line-height: 1.8;
+  color: rgba(44, 44, 44, 0.75);
+}
+
+.upload-path-os {
+  color: rgba(44, 44, 44, 0.55);
+  font-size: 0.85rem;
+}
+
+.upload-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 0.85rem;
+}
+
+.upload-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.upload-input-hint {
+  font-size: 0.9rem;
+  color: rgba(44, 44, 44, 0.65);
+  text-decoration: underline;
+  text-decoration-color: rgba(44, 44, 44, 0.3);
+  text-underline-offset: 2px;
+}
+
+.upload-file-input {
+  font-size: 0.9rem;
+  color: rgba(44, 44, 44, 0.75);
+  /* 让原生 file input 直接显示，不隐藏 */
+  max-width: 100%;
+}
+
+.upload-textarea {
+  width: 100%;
+  min-height: 7rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #d4c9b0;
+  background: rgba(255, 252, 246, 0.6);
+  color: #2c2c2c;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.upload-textarea:focus {
+  outline: none;
+  border-color: rgba(44, 44, 44, 0.42);
+}
+
+.upload-textarea--error {
+  border-color: #9a4333;
+}
+
+.upload-limit-warn {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #9a4333;
+}
+
+.btn-upload {
+  padding: 0.65rem 1.25rem;
+  font-size: 1rem;
+  line-height: 1.4;
+  cursor: pointer;
+  border: 1px solid #2c2c2c;
+  background: transparent;
+  color: #2c2c2c;
+  transition: opacity 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+  align-self: flex-start;
+}
+
+.btn-upload:hover:not(:disabled) {
+  background: rgba(44, 44, 44, 0.06);
+}
+
+.btn-upload:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-upload:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.upload-result {
+  margin-top: 0.75rem;
+}
+
+.upload-result--ok {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #5b7f52;
+  font-weight: 600;
+}
+
+.upload-result--err {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: #9a4333;
+  font-weight: 600;
+}
+
+.upload-result-meta {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: rgba(44, 44, 44, 0.62);
+}
+
+.upload-result-meta--err {
+  color: rgba(154, 67, 51, 0.75);
+}
+
+.upload-section {
+  display: flex;
+  flex-direction: column;
 }
 </style>

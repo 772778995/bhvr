@@ -12,9 +12,19 @@ interface QueueItem {
   fn: TaskFn;
 }
 
-class TaskQueue {
+export interface AuthGate {
+  isReauthRequired(): boolean;
+}
+
+export class TaskQueue {
   private queue: QueueItem[] = [];
   private running = false;
+  private paused = false;
+  private authGate: AuthGate;
+
+  constructor(authGate?: AuthGate) {
+    this.authGate = authGate ?? { isReauthRequired: () => false };
+  }
 
   enqueue(id: string, fn: TaskFn): void {
     this.queue.push({ id, fn });
@@ -33,6 +43,15 @@ class TaskQueue {
     return true;
   }
 
+  /**
+   * Resume queue processing after auth has been restored.
+   * Call this after a successful reauth to re-trigger the processing loop.
+   */
+  resume(): void {
+    this.paused = false;
+    this.process();
+  }
+
   get length(): number {
     return this.queue.length;
   }
@@ -41,11 +60,23 @@ class TaskQueue {
     return this.running;
   }
 
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
   private async process(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
     while (this.queue.length > 0) {
+      // Auth gate: check before dequeuing
+      if (this.authGate.isReauthRequired()) {
+        this.paused = true;
+        this.running = false;
+        return;
+      }
+
+      this.paused = false;
       const item = this.queue.shift()!;
       try {
         await item.fn();
@@ -58,4 +89,13 @@ class TaskQueue {
   }
 }
 
-export const taskQueue = new TaskQueue();
+// Default auth gate reads from authManager — wired at startup
+let defaultAuthGate: AuthGate = { isReauthRequired: () => false };
+
+export function setQueueAuthGate(gate: AuthGate): void {
+  defaultAuthGate = gate;
+}
+
+export const taskQueue = new TaskQueue({
+  isReauthRequired: () => defaultAuthGate.isReauthRequired(),
+});

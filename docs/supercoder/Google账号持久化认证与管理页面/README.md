@@ -365,3 +365,218 @@ export interface AccountsListResponse {
 - `loginAccount` 是长时间操作（最长 5 分钟），后端用 fire-and-forget 异步处理，前端轮询感知结果，已在任务 2 中说明
 - `exportPersistentContextState` 和 `extractCookieData` 在 `client.ts` 是私有函数，`login.ts` 需要独立实现这两步逻辑（代码量很少，不引入循环依赖）
 - Windows 平台（当前开发环境）的 Playwright headed 模式需要确保 Playwright 已安装 Chromium：运行 `npx playwright install chromium` 如果尚未安装
+
+---
+
+## 远程部署场景下的友好登录方案
+
+> **设计状态：** 已确定设计立场，待实施。本节只做设计讨论，不进入任务清单。
+
+### 背景与动机
+
+上述任务 1–7 中，`loginAccount` 以 Playwright headed 模式弹出浏览器窗口，这在**本机桌面环境**下运行良好。但当服务部署在无桌面的远程服务器（VPS、Docker 容器、云函数）时，"弹浏览器"完全无法工作。
+
+核心问题：`notebooklm-kit` SDK 依赖 Google 网页会话 cookies（`storage-state.json`），没有公开 OAuth 端点，无法走标准的 server-side OAuth 流程。因此，远程场景下必须换一套思路——**不让服务器自己登录，而是让用户在本机登录，再把凭据安全传给服务器**。
+
+### 为什么不能照搬 CLIProxyAPI 的 OAuth callback 流程
+
+CLIProxyAPI 实现的是：远程服务生成 PKCE state → 把用户重定向到官方 OAuth 授权页 → 用户授权后 OAuth callback 带着 `code` 回来 → 服务端换取 `access_token`。
+
+这套流程的前提是：目标服务有**公开的 OAuth 授权服务器**和**官方支持的 callback URI**。
+
+NotebookLM/Google 网页登录两者都没有：
+- `notebooklm-kit` 是逆向 Google 内部 batchexecute RPC，不走 OAuth；
+- 认证载体是浏览器会话 cookies（`SAPISID`、`__Secure-1PSID` 等），不是 `access_token`；
+- Google 不会为第三方应用颁发访问 NotebookLM 私有 RPC 的 OAuth 范围。
+
+结论：CLIProxyAPI 的 OAuth callback 结构与我们的认证模型根本不兼容，不可照搬。
+
+### 为什么不做 VNC / 远程浏览器
+
+让服务器跑 VNC、noVNC、或容器内安装 Chrome + 远程桌面，只是把"弹浏览器"的问题推迟了一层：用户还是要连进去手动操作，但基础设施复杂度大幅增加（安全面暴露、镜像体积、维护成本）。
+
+这不是用户体验问题的正确解，是绕开问题的过重方案。
+
+### 设计立场："本机授权，远程接收"
+
+**核心原则：** 登录动作永远发生在用户本机；远程服务只负责安全接收、验证、并激活凭据。
+
+```
+用户本机                         远程服务
+  │                                  │
+  │  npx notebooklm login            │
+  │  → Google 登录 (浏览器)          │
+  │  → 写入 ~/.notebooklm/           │
+  │    storage-state.json            │
+  │                                  │
+  │  打开认证管理页面                 │
+  │  上传 storage-state.json ────────▶ 接收文件
+  │                                  │ 验证 cookies（含 SAPISID）
+  │  ◀─── 实时显示验证结果 ──────────┤ 写入服务端 profiles/default/
+  │                                  │ 更新 auth-meta → ready
+```
+
+### MVP 方案（管理员上传凭据）
+
+**适用场景：** 管理员自己维护服务，熟悉命令行，愿意手动操作。
+
+**流程：**
+1. 管理员在本机运行 `npx notebooklm login`，完成 Google 登录后，本机生成 `~/.notebooklm/storage-state.json`。
+2. 管理员登录服务后台（已有 admin auth 机制）。
+3. 在 **认证管理页面**（`/settings/accounts`，已实现骨架）新增上传区域：
+   - 支持两种方式：直接上传 `.json` 文件 / 粘贴 base64 或 JSON 文本。
+   - 上传后立即调用后端验证接口。
+4. 后端 `POST /api/auth/accounts/:accountId/upload-state`：
+   - 解析上传的 JSON，验证是否包含 `SAPISID` cookie。
+   - 验证通过：写入 `profiles/default/storage-state.json`，更新 auth-meta 为 `ready`。
+   - 验证失败：返回具体错误（缺少字段、cookie 格式错误等）。
+5. 前端实时显示验证结果（成功/失败/错误详情）。
+
+**页面新增元素：**
+- 当前 auth 状态 `missing` / `expired` 时，在卡片内显示"上传凭据"操作区。
+- 文件拖拽区 + "或粘贴 JSON 文本"的 textarea，两种输入互斥，取最后一次操作。
+- 提交按钮："验证并激活"。
+- 结果区域：成功显示绿色"凭据已激活，状态：已登录"+ 过期时间估算（基于 cookie max-age 计算）；失败显示红色错误提示和排查指引。
+
+**后端新增接口（MVP）：**
+```
+POST /api/auth/accounts/:accountId/upload-state
+  body: { storageState: string }   // JSON 字符串
+  200: { message: string; expiresAt?: string }
+  400: { error: string; detail?: string }
+  409: { error: "login_in_progress" }
+```
+
+### 下一阶段方案（一次性会话 / 短链上传）
+
+**适用场景：** 把登录授权委托给非管理员的普通用户，或希望减少管理员手动操作。
+
+**核心思路：** 管理员在后台生成一个有时效的临时上传会话（token），用户凭 token 访问一个受保护的简单上传页面，完成上传后页面自动失效，后台实时感知。
+
+**流程：**
+1. 管理员在认证管理页面点击"生成授权链接"。
+2. 后端创建一次性 upload session：
+   - 生成 `sessionId`（UUID）+ `expiresAt`（15 分钟）。
+   - 存入内存或 SQLite（`auth_upload_sessions` 表）。
+   - 返回链接：`https://your-server/auth/upload/:sessionId`。
+3. 管理员把链接发给目标用户（或自己用）。
+4. 用户在本机完成 `npx notebooklm login`，打开链接，上传 `storage-state.json`。
+5. 后端验证 session 有效 + 文件合法，激活凭据，session 标记为已使用。
+6. 管理员后台页面通过轮询或 SSE 实时看到状态变为"已登录"。
+
+**数据模型（下一阶段，不进入 MVP）：**
+```typescript
+// auth_upload_sessions
+{
+  id: string;           // UUID，URL 中暴露的 token
+  accountId: string;
+  expiresAt: string;    // ISO 8601
+  usedAt: string | null;
+  createdBy: string;    // admin session id
+}
+```
+
+**此方案的前置条件：**
+- 服务有可对外暴露的 HTTPS 地址（用户可访问）。
+- 后台已有 admin 认证机制（否则任何人都能生成 token，安全漏洞）。
+- 若要"实时更新"，后端需支持 SSE 或 WebSocket；否则用前端轮询降级。
+
+### 远程登录 UX 细节要求
+
+无论 MVP 还是下一阶段，页面需要满足以下 UX 标准：
+
+**用户在本机完成登录时的引导：**
+- 页面提供可复制的命令行指引（`npx notebooklm login`），并说明该命令在本机运行，不在服务器上运行。
+- 说明登录后文件的位置（`~/.notebooklm/storage-state.json` / Windows 对应路径）。
+- 提供"如何找到这个文件"的折叠说明（不要默认展开，避免干扰有经验的用户）。
+
+**上传与验证过程的状态反馈：**
+- 上传中：按钮 loading 状态 + "验证中…"文字，禁止重复提交。
+- 验证成功：绿色提示，显示"已激活，预计有效期至 [日期]"（基于 cookie `expires` 字段计算）。
+- 验证失败：红色提示，具体说明哪个 cookie 缺失或格式错误，附上重新登录的建议步骤。
+- 网络错误：区分网络错误与验证失败，给出不同提示。
+
+**状态过期的主动提示：**
+- 认证管理页面轮询时，若状态从 `ready` 变为 `expired`，主动在页面顶部显示警告横幅，不等用户刷新。
+
+**文字语气：**
+- 所有提示使用第一人称引导语气（"请在本机运行…"而不是"用户应运行…"）。
+- 错误提示不出现技术术语堆砌，给出明确的下一步行动。
+
+### 坑与注意事项
+
+1. **`storage-state.json` 包含敏感 Google 会话 cookie**，上传接口必须在 admin auth 保护下，绝不能公开暴露。下一阶段的临时 token 方案也必须有短有效期（建议 ≤ 15 分钟）且一次性使用。
+2. **cookie 有效期不固定**，`SAPISID` 通常数小时至几天不等，无法精确预测。页面显示"预计有效期"时需加"约"字，避免误导用户。
+3. **`storage-state.json` 上传后需要同时清除本机已填充的 `browser-user-data/`**（如果远程服务此前曾使用 headed 登录），否则 `refreshWithPersistentProfile()` 会用旧的 profile 覆盖新 cookie，导致状态不一致。上传接口应记录此副作用并在操作日志中体现。
+4. **同一账号同时存在"等待 headed 登录"和"上传 storage-state"两条路径**，后端需要协调：若 `loginInProgress` 为真，则拒绝上传（返回 409）；反之亦然。
+5. **base64 输入路径**：部分用户可能更习惯复制粘贴而非上传文件，提供 textarea 时需要限制最大长度（`storage-state.json` 正常不超过 50KB），超出时提示错误。
+6. **Windows 路径**：本机文件位于 `%USERPROFILE%\.notebooklm\storage-state.json`，页面引导文字需同时说明 macOS/Linux 和 Windows 路径，不能只写 `~/`。
+
+### 待办
+
+- [x] 后端新增 `POST /api/auth/accounts/:accountId/upload-state` 接口（MVP）
+- [x] `AccountsView.vue` 新增上传凭据区块（文件上传 + JSON 粘贴两种输入）
+- [x] 上传成功后展示有效期估算（解析 cookie `expires` 字段）
+- [x] 上传接口与 `loginInProgress` 状态互斥协调
+- [ ] （下一阶段）`auth_upload_sessions` 数据表 + 一次性 token 生成接口
+- [ ] （下一阶段）临时上传页面（无需完整 admin auth，只需有效 session token）
+- [ ] （下一阶段）管理员后台 SSE 或轮询实时感知上传完成
+
+### 实施任务
+
+本节细化 MVP 所需的最小实施任务，可直接拆给 implementer 子代理。
+
+**任务 A：后端新增凭据上传接口**
+
+文件：`server/src/routes/auth/index.ts`
+
+意图：新增 `POST /api/auth/accounts/:accountId/upload-state`，接收 `{ storageState: string }` JSON 请求体（`storageState` 为 storage-state.json 的字符串内容），执行以下步骤：
+1. 用 `JSON.parse` 解析，失败时返回 400（"不是有效的 JSON"）。
+2. 从 `cookies` 数组中找 `name === "SAPISID"` 的条目，不存在则返回 400（"缺少必要的 SAPISID cookie，请重新运行 npx notebooklm login"）。
+3. 若 `loginInProgress.has(accountId)`，返回 409（"已有登录流程进行中，请等待完成"）。
+4. 写入 `profiles/:accountId/storage-state.json`（调用 `writeFileSync`）。
+5. 更新 auth-meta 为 `ready`（调用 `writeAuthMeta`）。
+6. 返回 200 `{ message: "凭据已激活", expiresAt: <cookie expires 字段，若有> }`。
+
+响应类型：
+```typescript
+// 200
+{ message: string; expiresAt?: string }
+// 400
+{ error: string }
+// 409
+{ error: string }
+```
+
+**任务 B：前端 API 客户端新增 `uploadStorageState` 方法**
+
+文件：`client/src/api/client.ts`
+
+新增：
+```typescript
+uploadStorageState(accountId: string, storageState: string): Promise<{ message: string; expiresAt?: string }>
+// → POST /api/auth/accounts/:accountId/upload-state
+// body: { storageState }
+```
+
+**任务 C：`AccountsView.vue` 新增上传凭据 UI 区块**
+
+文件：`client/src/views/AccountsView.vue`
+
+在账号卡片内，当 `account.status !== "ready"` 时，卡片底部展开上传区：
+- 折叠说明（`<details>`）：说明本机登录步骤和文件路径（macOS/Linux + Windows 两个路径）。
+- 文件拖拽 / 点击上传区（`<input type="file" accept=".json">`），选择文件后读取为文本。
+- 或：`<textarea>` 粘贴 JSON 文本（最大 50KB，超出提示错误）。
+- 两种输入互斥（最后一次操作优先，另一种清空）。
+- "验证并激活"按钮：调用 `api.uploadStorageState(accountId, text)`，loading 期间禁用。
+- 结果区域：成功 → 绿色文字；失败 → 红色文字 + 具体原因。
+- 视觉风格延续现有"仿书页/档案页"方向，不引入新的颜色系统。
+
+---
+
+## 变更历史
+
+| 日期 | 变更 |
+|------|------|
+| 2026-04-19 | 新增"远程部署场景下的友好登录方案"设计章节：明确"本机授权，远程接收"立场，说明为何不能照搬 CLIProxyAPI OAuth callback、为何不做 VNC；细化 MVP（管理员上传凭据）和下一阶段（一次性 token 短链）两种方案；补充 UX 细节要求、坑与注意事项、待办清单，以及可直接拆给实施代理的任务 A/B/C。 |
+| 2026-04-19 | 实现 MVP 上传凭据流程：后端新增 `POST /api/auth/accounts/:accountId/upload-state`（接受原始 JSON storageState，校验 SAPISID cookie，写入凭证，恢复队列，返回 expiresAt）；前端 API client 新增 `uploadStorageState` 方法；`AccountsView.vue` 新增上传凭据区块（文件上传 + JSON 粘贴两种互斥输入、验证进度反馈、成功/失败结果展示、FileReader 错误处理）。 |

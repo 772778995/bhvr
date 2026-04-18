@@ -1,0 +1,21 @@
+
+> notebooklm@0.1.0 dev:server
+> turbo dev --filter=server
+
+
+   • Packages in scope: server
+   • Running dev in 1 packages
+   • Remote caching disabled
+
+server:dev: cache bypass, force executing b03263c7ad9943ee
+server:dev: 
+server:dev: > server@0.0.1 dev
+server:dev: > tsx watch src/index.ts
+server:dev: 
+server:dev: [17:25:44] [34mDEBUG[39m: [36mBuilt-in summary presets ensured[39m
+server:dev: [17:25:44] [34mDEBUG[39m: [36mreport_entries one-time migration from legacy tables complete[39m
+server:dev: [17:25:44] [34mDEBUG[39m: [36mDatabase ensured successfully[39m
+server:dev:     [35mpath[39m: "C:\Users\77277\Desktop\bhvr\data\notebooklm.db"
+server:dev: [17:25:44] [32mINFO[39m: [36mServer running[39m
+server:dev:     [35mport[39m: 3450
+server:dev: [17:25:44] [32mINFO[39m: [36mNo interrupted tasks to recover[39m
