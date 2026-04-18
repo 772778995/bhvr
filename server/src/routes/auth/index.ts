@@ -17,6 +17,18 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isInteractiveLoginAvailable(): boolean {
+  // Docker containers create /.dockerenv (Linux/macOS Docker)
+  try {
+    if (existsSync("/.dockerenv")) return false;
+  } catch {
+    // ignore stat errors
+  }
+  // Headless Linux without a display server
+  if (process.platform === "linux" && !process.env.DISPLAY) return false;
+  return true;
+}
+
 // GET /api/auth/status — check if Google auth is valid
 auth.get("/status", async (c) => {
   const status = await getAuthStatus();
@@ -33,6 +45,16 @@ auth.post("/accounts/:accountId/login", async (c) => {
   const { accountId } = c.req.param();
   if (!isSupportedAccount(accountId)) {
     return c.json({ error: "账号不存在" }, 404);
+  }
+
+  if (!isInteractiveLoginAvailable()) {
+    return c.json(
+      {
+        error:
+          "当前环境不支持交互式登录（无桌面浏览器 / Docker 容器）。请在账号管理页面使用「上传凭据」功能代替。",
+      },
+      503,
+    );
   }
 
   if (loginInProgress.has(accountId)) {
