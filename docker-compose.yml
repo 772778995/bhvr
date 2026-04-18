@@ -1,0 +1,41 @@
+# bhvr — NotebookLM 自动化研究引擎
+# 单服务部署，前后端同镜像，SQLite 数据库持久化到 ./data
+
+services:
+  app:
+    build: .
+    container_name: bhvr
+    ports:
+      - "3450:3450"
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      # ── OpenAI 兼容 API（可选，用于书籍查找功能）──────────────────────
+      OPENAI_BASE_URL: ""
+      OPENAI_TOKEN: ""
+      OPENAI_MODEL: ""
+
+      # ── 书籍元数据桥接（可选）────────────────────────────────────────
+      BOOK_METADATA_BASE_URL: ""
+      BOOK_METADATA_API_KEY: ""
+      BOOK_METADATA_TIMEOUT_MS: "3000"
+
+      # ── NotebookLM 认证（二选一）─────────────────────────────────────
+      # 方式 A：挂载文件（推荐）
+      #   将 storage-state.json 放到宿主机 ./data/ 目录后自动生效
+      NOTEBOOKLM_STORAGE_STATE_PATH: "/app/data/storage-state.json"
+      # 方式 B：base64 注入（方式 A 未设置时使用）
+      NOTEBOOKLM_STORAGE_STATE_JSON_B64: ""
+
+      # ── 安全 ─────────────────────────────────────────────────────────
+      # !! 生产环境必须设置 ADMIN_SECRET，否则再认证接口无保护 !!
+      ADMIN_SECRET: ""
+      # 认证失效时发送 webhook 通知（可选）
+      REAUTH_WEBHOOK_URL: ""
+
+# 快速启动:
+#   1. 将 storage-state.json 放到 ./data/ 目录（运行 npx notebooklm login 后获取）
+#   2. 按需修改上方 environment 中的环境变量
+#   3. docker compose up -d
+#   4. 访问 http://localhost:3450
