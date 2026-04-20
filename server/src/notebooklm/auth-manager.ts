@@ -51,10 +51,14 @@ interface RuntimeState {
   client?: RuntimeClientLike;
   refreshPromise?: Promise<AuthMeta>;
   failureCount: number;
+  /** Timestamp (ms) of the most recent failure; used for auto-reset cooldown. */
+  lastFailedAt?: number;
 }
 
 const DEFAULT_REFRESH_FAILURE_THRESHOLD = 3;
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+/** After this cooldown, a locked-out account is allowed one more refresh attempt. */
+const REAUTH_REQUIRED_AUTO_RESET_MS = 30 * 60 * 1000;
 
 function toIso(now: Date): string {
   return now.toISOString();
@@ -137,7 +141,14 @@ export function createAuthManager(deps: AuthManagerDependencies, alertSink?: Ale
   async function refreshInternal(accountId: string, reason: string): Promise<AuthMeta> {
     const runtime = getRuntimeState(accountId);
     if (runtime.failureCount >= DEFAULT_REFRESH_FAILURE_THRESHOLD) {
-      return await writeStatus(accountId, "reauth_required", "Authentication refresh failed repeatedly");
+      // Auto-reset if enough time has passed — allows recovery from transient failures
+      // without requiring a manual process restart.
+      const now = Date.now();
+      if (runtime.lastFailedAt !== undefined && (now - runtime.lastFailedAt) >= REAUTH_REQUIRED_AUTO_RESET_MS) {
+        runtime.failureCount = 0;
+      } else {
+        return await writeStatus(accountId, "reauth_required", "Authentication refresh failed repeatedly");
+      }
     }
 
     await writeStatus(accountId, "refreshing");
@@ -149,6 +160,7 @@ export function createAuthManager(deps: AuthManagerDependencies, alertSink?: Ale
       const validation = await deps.validateProfile(accountId);
       if (validation.status !== "ready") {
         runtime.failureCount += 1;
+        runtime.lastFailedAt = Date.now();
         if (runtime.failureCount >= DEFAULT_REFRESH_FAILURE_THRESHOLD) {
           return await writeStatus(accountId, "reauth_required", validation.error ?? "Authentication refresh requires manual login");
         }
@@ -157,13 +169,22 @@ export function createAuthManager(deps: AuthManagerDependencies, alertSink?: Ale
       }
 
       runtime.failureCount = 0;
+      runtime.lastFailedAt = undefined;
       await invalidateAuthClient(accountId);
 
       return await writeStatus(accountId, "ready", undefined, true);
     } catch (error) {
-      runtime.failureCount += 1;
+      // Technical environment failures (e.g. Playwright/Chrome not installed) must
+      // not consume the auth retry budget — they are not auth errors.
+      const isTechnical = typeof error === "object" && error !== null && (error as { isTechnicalRefreshError?: boolean }).isTechnicalRefreshError === true;
+      if (!isTechnical) {
+        runtime.failureCount += 1;
+        runtime.lastFailedAt = Date.now();
+      }
+
       if (requiresReauthentication(error)) {
         runtime.failureCount = DEFAULT_REFRESH_FAILURE_THRESHOLD;
+        runtime.lastFailedAt = Date.now();
         return await writeStatus(accountId, "reauth_required", error instanceof Error ? error.message : String(error));
       }
 

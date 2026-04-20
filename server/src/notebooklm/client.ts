@@ -642,40 +642,67 @@ export async function validateProfile(accountId: string): Promise<{ status: Extr
 async function silentRefresh(accountId: string): Promise<{ authToken: string; storageState: unknown }> {
   await ensureDefaultProfileInitialized();
 
+  // --- Primary path: HTTP-only (no Chrome/Playwright needed) ---
+  const storageState = readStorageState(accountId);
+  if (storageState.ok && storageState.value) {
+    const cookieData = extractCookieData(storageState.value);
+    if (cookieData) {
+      try {
+        const refreshClient = new RefreshClient(cookieData.cookieHeader);
+        // Note: refreshCredentials() sends a keep-alive ping to Google's Signaler API
+        // (POST /punctual/v1/refreshCreds). It returns void and typically does NOT produce
+        // new cookies — the SDK itself documents this. It does NOT update storageState or
+        // the cookieHeader below. The real auth validation happens in fetchAuthToken().
+        await refreshClient.refreshCredentials();
+
+        const authToken = await fetchAuthToken(cookieData.cookieHeader);
+        writeAuthMeta(accountId, {
+          accountId,
+          status: "ready",
+          lastCheckedAt: new Date().toISOString(),
+          lastRefreshedAt: new Date().toISOString(),
+        });
+        return { authToken, storageState: storageState.value };
+      } catch (httpError) {
+        // Definitive auth error: no need to try Chrome
+        if (httpError instanceof AuthRequiredError) {
+          throw httpError;
+        }
+        const httpMessage = httpError instanceof Error ? httpError.message : String(httpError);
+        if (httpMessage.includes("accounts.google.com") || httpMessage.includes("re-authenticate") || httpMessage.includes("re-login")) {
+          throw new AuthRequiredError("Authentication requires manual re-login");
+        }
+        // Transient or environment failure — fall through to Chrome/Playwright path
+        logger.warn({ accountId, err: httpError }, "silentRefresh: HTTP path failed, attempting Playwright browser fallback");
+      }
+    }
+  }
+
+  // --- Fallback: Playwright/Chrome path ---
   try {
     const refreshed = await refreshWithPersistentProfile(accountId);
-
     writeAuthMeta(accountId, {
       accountId,
       status: "ready",
       lastCheckedAt: new Date().toISOString(),
       lastRefreshedAt: new Date().toISOString(),
     });
-
     return refreshed;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     logger.warn({ accountId, err: error }, "Notebook auth refresh failed");
     if (error instanceof AuthRequiredError) {
       throw error;
     }
-
-    const storageState = readStorageState(accountId);
-    if (storageState.ok && storageState.value) {
-      const cookieData = extractCookieData(storageState.value);
-      if (cookieData) {
-        try {
-          const refreshClient = new RefreshClient(cookieData.cookieHeader);
-          await refreshClient.refreshCredentials();
-
-          const authToken = await fetchAuthToken(cookieData.cookieHeader);
-          return { authToken, storageState: storageState.value };
-        } catch (fallbackError) {
-          throw new NotebookRequestAuthError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
-        }
-      }
+    const message = error instanceof Error ? error.message : String(error);
+    // Mark environment/tool failures (Playwright not available) as technical so
+    // the auth manager does not count them toward the reauth threshold.
+    if (
+      message.includes("Executable doesn't exist")
+      || message.includes("browserType.launchPersistentContext")
+      || message.includes("PLAYWRIGHT_")
+    ) {
+      throw Object.assign(new Error(message), { isTechnicalRefreshError: true });
     }
-
     throw new NotebookRequestAuthError(message);
   }
 }
