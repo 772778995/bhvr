@@ -24,7 +24,11 @@ async function renderDiagram(code: string) {
   svgHtml.value = "";
   // Generate a fresh ID per render call to avoid conflicts with any stale DOM
   // elements that Mermaid may have left behind after a previous failed render.
-  const renderId = `mermaid-${crypto.randomUUID().replace(/-/g, "")}`;
+  const rawId =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  const renderId = `mermaid-${rawId.replace(/-/g, "")}`;
   try {
     const { svg } = await mermaid.render(renderId, code);
     svgHtml.value = svg;
