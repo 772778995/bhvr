@@ -84,6 +84,52 @@ test("writeAuthMeta round-trips persisted auth metadata", async () => {
   });
 });
 
+test("writeAuthMeta round-trips persisted auth metadata reason", async () => {
+  await withTempHome(() => {
+    const writeResult = writeAuthMeta("default", {
+      accountId: "default",
+      status: "reauth_required",
+      error: "No authentication found. Run \"npx notebooklm login\" first.",
+      reason: "storage_state_missing",
+      lastCheckedAt: "2026-04-20T12:00:00.000Z",
+    });
+
+    assert.equal(writeResult.ok, true);
+
+    assert.deepEqual(readAuthMeta("default"), {
+      ok: true,
+      value: {
+        accountId: "default",
+        status: "reauth_required",
+        error: "No authentication found. Run \"npx notebooklm login\" first.",
+        reason: "storage_state_missing",
+        lastCheckedAt: "2026-04-20T12:00:00.000Z",
+      },
+    });
+  });
+});
+
+test("writeAuthMeta round-trips credentials_cleared reason", async () => {
+  await withTempHome(() => {
+    const writeResult = writeAuthMeta("default", {
+      accountId: "default",
+      status: "missing",
+      reason: "credentials_cleared",
+    });
+
+    assert.equal(writeResult.ok, true);
+
+    assert.deepEqual(readAuthMeta("default"), {
+      ok: true,
+      value: {
+        accountId: "default",
+        status: "missing",
+        reason: "credentials_cleared",
+      },
+    });
+  });
+});
+
 test("readAuthMeta rejects malformed metadata with explicit error state", async () => {
   await withTempHome(() => {
     const paths = getProfilePaths("default");

@@ -66,3 +66,32 @@ test("GET /health includes queue paused field", async () => {
     assert.ok("paused" in queue, "queue field should have 'paused'");
   });
 });
+
+test("GET /health normalizes auth status when custom storage-state path is missing", async () => {
+  await withTempHome(async (homeDir) => {
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = join(homeDir, "app", "data", "storage-state.json");
+
+    const profileDir = join(homeDir, ".notebooklm", "profiles", "default");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(join(profileDir, "auth-meta.json"), JSON.stringify({
+      accountId: "default",
+      status: "ready",
+      lastCheckedAt: "2026-01-01T00:00:00.000Z",
+    }));
+
+    try {
+      const response = await health.request("http://localhost/", { method: "GET" });
+      assert.equal(response.status, 200);
+      const body = await response.json() as { auth: { status: string; error?: string } };
+      assert.equal(body.auth.status, "reauth_required");
+      assert.match(body.auth.error ?? "", /No authentication found/i);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});

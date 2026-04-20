@@ -125,3 +125,34 @@ test("enqueueIfNotPresent respects auth gate", async () => {
   assert.deepEqual(executed, []);
   assert.equal(queue.length, 1);
 });
+
+test("queue resets running state when async auth gate throws", async () => {
+  let shouldThrow = true;
+  const gate: AuthGate = {
+    isReauthRequired: async () => {
+      if (shouldThrow) {
+        throw new Error("gate failed");
+      }
+      return false;
+    },
+  };
+  const queue = new TaskQueue(gate);
+  const executed: string[] = [];
+
+  queue.enqueue("t1", async () => {
+    executed.push("t1");
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(queue.isRunning, false);
+  assert.equal(queue.length, 1);
+  assert.deepEqual(executed, []);
+
+  shouldThrow = false;
+  queue.resume();
+
+  await waitForIdle(queue);
+  assert.deepEqual(executed, ["t1"]);
+});

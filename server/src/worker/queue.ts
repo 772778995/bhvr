@@ -13,7 +13,7 @@ interface QueueItem {
 }
 
 export interface AuthGate {
-  isReauthRequired(): boolean;
+  isReauthRequired(): boolean | Promise<boolean>;
 }
 
 export class TaskQueue {
@@ -68,24 +68,33 @@ export class TaskQueue {
     if (this.running) return;
     this.running = true;
 
-    while (this.queue.length > 0) {
-      // Auth gate: check before dequeuing
-      if (this.authGate.isReauthRequired()) {
-        this.paused = true;
-        this.running = false;
-        return;
-      }
+    try {
+      while (this.queue.length > 0) {
+        let reauthRequired: boolean;
+        try {
+          // Auth gate: check before dequeuing
+          reauthRequired = await this.authGate.isReauthRequired();
+        } catch (err) {
+          logger.error({ err }, "Auth gate check failed");
+          return;
+        }
 
-      this.paused = false;
-      const item = this.queue.shift()!;
-      try {
-        await item.fn();
-      } catch (err) {
-        logger.error({ taskId: item.id, err }, "Task failed");
+        if (reauthRequired) {
+          this.paused = true;
+          return;
+        }
+
+        this.paused = false;
+        const item = this.queue.shift()!;
+        try {
+          await item.fn();
+        } catch (err) {
+          logger.error({ taskId: item.id, err }, "Task failed");
+        }
       }
+    } finally {
+      this.running = false;
     }
-
-    this.running = false;
   }
 }
 

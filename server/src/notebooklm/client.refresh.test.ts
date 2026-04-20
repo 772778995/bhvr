@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getLegacyStorageStatePath, getProfilePaths, readStorageState } from "./auth-profile.js";
+import { getLegacyStorageStatePath, getProfilePaths, readAuthMeta, readStorageState } from "./auth-profile.js";
 
 type TestPlaywrightImporter = typeof import("./client.js").__testOnly.importPlaywright;
 
@@ -240,6 +240,219 @@ test("getAuthStatus with both PATH and B64 set writes to custom path and reads f
         delete process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64;
       } else {
         process.env.NOTEBOOKLM_STORAGE_STATE_JSON_B64 = originalB64;
+      }
+    }
+  });
+});
+
+test("getAuthStatus treats a missing custom storage-state path as reauth_required instead of leaking ENOENT", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const profile = getProfilePaths("default");
+    mkdirSync(profile.baseDir, { recursive: true });
+    writeFileSync(profile.authMetaPath, JSON.stringify({
+      accountId: "default",
+      status: "ready",
+      lastCheckedAt: "2026-04-20T10:00:00.000Z",
+    }));
+
+    writeFileSync(
+      getLegacyStorageStatePath(),
+      JSON.stringify({
+        cookies: [{ name: "SAPISID", value: "legacy-cookie", domain: ".google.com" }],
+      })
+    );
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const status = await clientModule.getAuthStatus();
+
+      assert.equal(status.status, "reauth_required");
+      assert.match(status.error ?? "", /No authentication found/i);
+      assert.equal(existsSync(customPath), false);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});
+
+test("getAuthStatus treats a fresh deploy missing custom storage-state path as reauth_required", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const status = await clientModule.getAuthStatus();
+
+      assert.equal(status.status, "reauth_required");
+      assert.match(status.error ?? "", /No authentication found/i);
+      assert.equal("reason" in status, false);
+      assert.equal(existsSync(customPath), false);
+
+      assert.deepEqual(readAuthMeta("default"), {
+        ok: true,
+        value: {
+          accountId: "default",
+          status: "reauth_required",
+          error: 'No authentication found. Run "npx notebooklm login" first.',
+          reason: "storage_state_missing",
+        },
+      });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});
+
+test("getAuthStatus preserves explicit missing state after credentials are cleared on custom storage path", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const profile = getProfilePaths("default");
+    mkdirSync(profile.baseDir, { recursive: true });
+    writeFileSync(profile.authMetaPath, JSON.stringify({
+      accountId: "default",
+      status: "missing",
+      lastCheckedAt: "2026-04-20T10:00:00.000Z",
+    }));
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const status = await clientModule.getAuthStatus();
+
+      assert.equal(status.status, "missing");
+      assert.equal(status.error, undefined);
+      assert.equal("reason" in status, false);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});
+
+test("getAuthStatus clears missing-file reauth_required once custom storage-state reappears", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const profile = getProfilePaths("default");
+    mkdirSync(profile.baseDir, { recursive: true });
+    writeFileSync(profile.authMetaPath, JSON.stringify({
+      accountId: "default",
+      status: "ready",
+      lastCheckedAt: "2026-04-20T10:00:00.000Z",
+    }));
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const missingStatus = await clientModule.getAuthStatus();
+      assert.equal(missingStatus.status, "reauth_required");
+      assert.match(missingStatus.error ?? "", /No authentication found/i);
+
+      mkdirSync(join(homeDir, "app", "data"), { recursive: true });
+      writeFileSync(customPath, JSON.stringify({
+        cookies: [{ name: "SAPISID", value: "restored-cookie", domain: ".google.com" }],
+      }));
+
+      const restoredStatus = await clientModule.getAuthStatus();
+      assert.equal(restoredStatus.status, "expired");
+      assert.equal(restoredStatus.error, "Stored credentials require validation");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});
+
+test("getAuthStatus clears temporary missing-file reauth_required using internal reason, not error copy", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const profile = getProfilePaths("default");
+    mkdirSync(profile.baseDir, { recursive: true });
+    writeFileSync(profile.authMetaPath, JSON.stringify({
+      accountId: "default",
+      status: "reauth_required",
+      reason: "storage_state_missing",
+      error: "custom text that should not control recovery",
+      lastCheckedAt: "2026-04-20T10:00:00.000Z",
+    }));
+
+    mkdirSync(join(homeDir, "app", "data"), { recursive: true });
+    writeFileSync(customPath, JSON.stringify({
+      cookies: [{ name: "SAPISID", value: "restored-cookie", domain: ".google.com" }],
+    }));
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const status = await clientModule.getAuthStatus();
+      assert.equal(status.status, "expired");
+      assert.equal(status.error, "Stored credentials require validation");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
+      }
+    }
+  });
+});
+
+test("getAuthStatus does not collapse unrelated error state when custom storage-state path is missing", async () => {
+  await withTempHome(async (homeDir) => {
+    const customPath = join(homeDir, "app", "data", "storage-state.json");
+    const originalPath = process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+    process.env.NOTEBOOKLM_STORAGE_STATE_PATH = customPath;
+
+    const profile = getProfilePaths("default");
+    mkdirSync(profile.baseDir, { recursive: true });
+    writeFileSync(profile.authMetaPath, JSON.stringify({
+      accountId: "default",
+      status: "error",
+      error: "Invalid auth metadata",
+      lastCheckedAt: "2026-04-20T10:00:00.000Z",
+    }));
+
+    const clientModule = await import("./client.js");
+
+    try {
+      const status = await clientModule.getAuthStatus();
+      assert.equal(status.status, "error");
+      assert.equal(status.error, "Invalid auth metadata");
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.NOTEBOOKLM_STORAGE_STATE_PATH;
+      } else {
+        process.env.NOTEBOOKLM_STORAGE_STATE_PATH = originalPath;
       }
     }
   });

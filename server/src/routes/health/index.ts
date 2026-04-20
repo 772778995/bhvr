@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { taskQueue } from "../../worker/queue.js";
 import { getQuotaStatus } from "../../lib/quota.js";
-import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
+import { getAuthStatus } from "../../notebooklm/index.js";
 
 const health = new Hono();
 
 health.get("/", async (c) => {
-  const authMeta = await authManager.getAuthProfileStatus(DEFAULT_ACCOUNT_ID);
+  const authMeta = await getAuthStatus();
   return c.json({
     status: "ok",
     timestamp: new Date().toISOString(),

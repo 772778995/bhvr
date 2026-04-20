@@ -18,7 +18,9 @@ export async function loginAccount(accountId: string): Promise<{ accountId: stri
   try {
     context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
       headless: false,
-      channel: "chrome",
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
       args: ["--disable-blink-features=AutomationControlled"],
       ignoreDefaultArgs: ["--enable-automation"],
     });

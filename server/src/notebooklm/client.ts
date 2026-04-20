@@ -45,6 +45,7 @@ import {
   writeAuthMeta,
   writeStorageState,
   type AuthMeta,
+  type AuthReason,
   type AuthState,
 } from "./auth-profile.js";
 
@@ -184,6 +185,33 @@ const ALLOWED_DOMAINS = [
 ];
 
 const NOTEBOOKLM_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+const NO_AUTHENTICATION_FOUND_ERROR = 'No authentication found. Run "npx notebooklm login" first.';
+const STORAGE_STATE_MISSING_REASON: AuthReason = "storage_state_missing";
+
+function canTransitionToMissingStorageStateReauth(meta: AuthMeta): boolean {
+  return meta.status === "ready"
+    || meta.status === "refreshing"
+    || meta.status === "expired"
+    || meta.status === "reauth_required";
+}
+
+function isImplicitMissingAuthMeta(meta: AuthMeta): boolean {
+  return meta.status === "missing"
+    && meta.lastCheckedAt === undefined
+    && meta.lastRefreshedAt === undefined
+    && meta.error === undefined
+    && meta.reason === undefined;
+}
+
+function toPublicAuthStatus(meta: AuthMeta): AuthStatus {
+  return {
+    accountId: meta.accountId,
+    status: meta.status,
+    ...(meta.lastCheckedAt ? { lastCheckedAt: meta.lastCheckedAt } : {}),
+    ...(meta.lastRefreshedAt ? { lastRefreshedAt: meta.lastRefreshedAt } : {}),
+    ...(meta.error ? { error: meta.error } : {}),
+  };
+}
 
 function extractAuthTokenFromHtml(html: string): string | null {
   const tokenMatch = html.match(/"SNlM0e":"([^"]+)"/);
@@ -195,7 +223,7 @@ const testHooks = {
   canAttemptSilentRefresh: null as ((accountId: string) => boolean) | null,
 };
 
-export type AuthStatus = AuthMeta;
+export type AuthStatus = Omit<AuthMeta, "reason">;
 
 export interface AskResult {
   success: boolean;
@@ -377,12 +405,22 @@ function canAttemptSilentRefresh(accountId: string): boolean {
 }
 
 async function fetchAuthToken(cookieHeader: string): Promise<string> {
+  logger.debug({ cookieCount: cookieHeader.split(';').length }, 'fetchAuthToken: sending cookies');
   const resp = await fetch("https://notebooklm.google.com/", {
     headers: {
       Cookie: cookieHeader,
       "User-Agent": NOTEBOOKLM_BROWSER_USER_AGENT,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Upgrade-Insecure-Requests": "1",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Sec-Fetch-User": "?1",
+      "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="135", "Google Chrome";v="135"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
     },
     redirect: "manual",
   });
@@ -412,7 +450,9 @@ async function extractAuthTokenFromPersistentBrowser(accountId: string): Promise
   const paths = getProfilePaths(accountId);
   const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
     headless: true,
-    channel: "chrome",
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
   });
 
   try {
@@ -468,19 +508,20 @@ async function ensureDefaultProfileInitialized(): Promise<void> {
   ensureProfileDirectories(DEFAULT_ACCOUNT_ID);
   const profile = getProfilePaths(DEFAULT_ACCOUNT_ID);
   const legacyStorageStatePath = getLegacyStorageStatePath();
+  const usesCustomStorageStatePath = Boolean(process.env.NOTEBOOKLM_STORAGE_STATE_PATH);
   const legacyExists = existsSync(legacyStorageStatePath);
   const profileExists = existsSync(profile.storageStatePath);
 
-  if (!profileExists && legacyExists) {
-    mkdirSync(profile.baseDir, { recursive: true });
-    copyFileSync(legacyStorageStatePath, profile.storageStatePath);
-  }
+   if (!usesCustomStorageStatePath && !profileExists && legacyExists) {
+     mkdirSync(profile.baseDir, { recursive: true });
+     copyFileSync(legacyStorageStatePath, profile.storageStatePath);
+   }
 
-  if (profileExists && legacyExists) {
-    const legacyMtime = statSync(legacyStorageStatePath).mtimeMs;
-    const profileMtime = statSync(profile.storageStatePath).mtimeMs;
-    if (legacyMtime > profileMtime) {
-      copyFileSync(legacyStorageStatePath, profile.storageStatePath);
+   if (!usesCustomStorageStatePath && profileExists && legacyExists) {
+     const legacyMtime = statSync(legacyStorageStatePath).mtimeMs;
+     const profileMtime = statSync(profile.storageStatePath).mtimeMs;
+     if (legacyMtime > profileMtime) {
+       copyFileSync(legacyStorageStatePath, profile.storageStatePath);
 
       const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
       if (meta.ok && meta.value.status === "reauth_required") {
@@ -491,14 +532,50 @@ async function ensureDefaultProfileInitialized(): Promise<void> {
         });
       }
     }
-  }
+   }
 
-  const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
-  if (meta.ok && meta.value.status === "missing" && existsSync(profile.storageStatePath)) {
-    writeAuthMeta(DEFAULT_ACCOUNT_ID, {
-      accountId: DEFAULT_ACCOUNT_ID,
-      status: "expired",
-      error: "Stored credentials require validation",
+   const meta = readAuthMeta(DEFAULT_ACCOUNT_ID);
+   const storageStateExists = existsSync(profile.storageStatePath);
+
+   if (meta.ok && usesCustomStorageStatePath && !storageStateExists && isImplicitMissingAuthMeta(meta.value)) {
+     writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+       accountId: DEFAULT_ACCOUNT_ID,
+       status: "reauth_required",
+       error: NO_AUTHENTICATION_FOUND_ERROR,
+       reason: STORAGE_STATE_MISSING_REASON,
+      });
+      return;
+    }
+
+   if (meta.ok && usesCustomStorageStatePath && !storageStateExists && canTransitionToMissingStorageStateReauth(meta.value)) {
+     writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+       accountId: DEFAULT_ACCOUNT_ID,
+       status: "reauth_required",
+       error: NO_AUTHENTICATION_FOUND_ERROR,
+       reason: STORAGE_STATE_MISSING_REASON,
+      });
+      return;
+    }
+
+   if (
+     meta.ok
+     && storageStateExists
+     && meta.value.status === "reauth_required"
+     && meta.value.reason === STORAGE_STATE_MISSING_REASON
+   ) {
+     writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+       accountId: DEFAULT_ACCOUNT_ID,
+       status: "expired",
+        error: "Stored credentials require validation",
+     });
+     return;
+   }
+
+   if (meta.ok && meta.value.status === "missing" && storageStateExists) {
+     writeAuthMeta(DEFAULT_ACCOUNT_ID, {
+       accountId: DEFAULT_ACCOUNT_ID,
+       status: "expired",
+       error: "Stored credentials require validation",
     });
   }
 }
@@ -508,7 +585,7 @@ async function createRuntimeClient(accountId: string): Promise<RuntimeClientLike
 
   let cookieData = loadCookiesFromProfile(accountId);
   if (!cookieData) {
-    throw new AuthRequiredError('No authentication found. Run "npx notebooklm login" first.');
+    throw new AuthRequiredError(NO_AUTHENTICATION_FOUND_ERROR);
   }
 
   let authToken: string;
@@ -539,11 +616,11 @@ async function createRuntimeClient(accountId: string): Promise<RuntimeClientLike
   return client;
 }
 
-async function validateProfile(accountId: string): Promise<{ status: Extract<AuthState, "ready" | "expired" | "reauth_required" | "error">; error?: string }> {
+export async function validateProfile(accountId: string): Promise<{ status: Extract<AuthState, "ready" | "expired" | "reauth_required" | "error">; error?: string }> {
   try {
     const cookieData = loadCookiesFromProfile(accountId);
     if (!cookieData) {
-      return { status: "reauth_required", error: 'No authentication found. Run "npx notebooklm login" first.' };
+      return { status: "reauth_required", error: NO_AUTHENTICATION_FOUND_ERROR };
     }
 
     await fetchAuthToken(cookieData.cookieHeader);
@@ -747,7 +824,7 @@ export const __testOnly = {
 
 export async function getAuthStatus(): Promise<AuthStatus> {
   await ensureDefaultProfileInitialized();
-  return await authManager.getAuthProfileStatus(DEFAULT_ACCOUNT_ID);
+  return toPublicAuthStatus(await authManager.getAuthProfileStatus(DEFAULT_ACCOUNT_ID));
 }
 
 async function getClient(): Promise<NotebookLMClient> {
@@ -967,7 +1044,9 @@ async function listNotebooksFromPersistentBrowser(accountId: string): Promise<No
   const paths = getProfilePaths(accountId);
   const context = await chromium.launchPersistentContext(paths.browserUserDataDir, {
     headless: true,
-    channel: "chrome",
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
   });
 
   try {

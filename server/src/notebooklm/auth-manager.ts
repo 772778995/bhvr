@@ -43,6 +43,8 @@ export interface AuthManager {
   invalidateAuthClient(accountId: string): Promise<void>;
   getAuthenticatedSdkClient(accountId: string): Promise<RuntimeClientLike>;
   startAuthHealthMonitor(accountId: string): { stop(): void };
+  /** Reset the failure counter so the next refreshAuthProfile is not short-circuited. */
+  resetFailureCount(accountId: string): void;
 }
 
 interface RuntimeState {
@@ -233,6 +235,10 @@ export function createAuthManager(deps: AuthManagerDependencies, alertSink?: Ale
       }
 
       return client;
+    },
+
+    resetFailureCount(accountId) {
+      getRuntimeState(accountId).failureCount = 0;
     },
 
     startAuthHealthMonitor(accountId) {

@@ -3,7 +3,7 @@
 
 services:
   app:
-    build: .
+    image: hocho5i996/rj-readbook:latest
     container_name: bhvr
     ports:
       - "3450:3450"
@@ -12,9 +12,9 @@ services:
       - ./data:/app/data
     environment:
       # ── OpenAI 兼容 API（可选，用于书籍查找功能）──────────────────────
-      OPENAI_BASE_URL: ""
-      OPENAI_TOKEN: ""
-      OPENAI_MODEL: ""
+      OPENAI_BASE_URL: "https://uniapi.ruijie.com.cn/v1"
+      OPENAI_TOKEN: "52TvGRm6xZSod3tMkNt82QLTmw2BFZX5sRsUyiN8cXxoWOxr"
+      OPENAI_MODEL: "DeepSeek-V3.1"
 
       # ── 书籍元数据桥接（可选）────────────────────────────────────────
       BOOK_METADATA_BASE_URL: ""
@@ -34,8 +34,3 @@ services:
       # 认证失效时发送 webhook 通知（可选）
       REAUTH_WEBHOOK_URL: ""
 
-# 快速启动:
-#   1. 将 storage-state.json 放到 ./data/ 目录（运行 npx notebooklm login 后获取）
-#   2. 按需修改上方 environment 中的环境变量
-#   3. docker compose up -d
-#   4. 访问 http://localhost:3450

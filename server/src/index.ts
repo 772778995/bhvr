@@ -5,19 +5,15 @@ import { fileURLToPath } from "node:url";
 import logger from "./lib/logger.js";
 import { createApp } from "./app.js";
 import { recoverInterruptedTasks } from "./worker/recovery.js";
-import { authManager, DEFAULT_ACCOUNT_ID, readAuthMeta } from "./notebooklm/index.js";
+import { authManager, DEFAULT_ACCOUNT_ID } from "./notebooklm/index.js";
+import { createQueueAuthGate } from "./queue-auth-gate.js";
 import { setQueueAuthGate } from "./worker/queue.js";
 
 // Ensure DB is initialized on import
 import "./db/index.js";
 
 // Wire auth gate into the task queue so it pauses when reauth is needed
-setQueueAuthGate({
-  isReauthRequired: () => {
-    const result = readAuthMeta(DEFAULT_ACCOUNT_ID);
-    return result.ok ? result.value.status === "reauth_required" : false;
-  },
-});
+setQueueAuthGate(createQueueAuthGate());
 
 // Resolve client/dist relative to this file at runtime.
 // In production (Docker): server/dist/index.js → /app/server/dist/index.js
@@ -38,21 +34,25 @@ const app = createApp({ staticDir });
 // via the reserved port range. Override with PORT env var if needed.
 const port = parseInt(process.env.PORT || "3450", 10);
 
-serve({ fetch: app.fetch, port }, () => {
-  logger.info({ port }, "Server running");
-  const authMonitor = authManager.startAuthHealthMonitor(DEFAULT_ACCOUNT_ID);
+export function startServer(): void {
+  serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, () => {
+    logger.info({ port }, "Server running");
+    const authMonitor = authManager.startAuthHealthMonitor(DEFAULT_ACCOUNT_ID);
 
-  process.once("SIGINT", () => {
-    authMonitor.stop();
-  });
+    process.once("SIGINT", () => {
+      authMonitor.stop();
+    });
 
-  process.once("SIGTERM", () => {
-    authMonitor.stop();
-  });
+    process.once("SIGTERM", () => {
+      authMonitor.stop();
+    });
 
-  recoverInterruptedTasks().catch((err) => {
-    logger.error({ err }, "Failed to recover interrupted tasks");
+    recoverInterruptedTasks().catch((err) => {
+      logger.error({ err }, "Failed to recover interrupted tasks");
+    });
   });
-});
+}
+
+startServer();
 
 export default app;

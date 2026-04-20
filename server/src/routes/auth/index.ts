@@ -2,7 +2,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { Hono } from "hono";
 import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.js";
 import { getLegacyStorageStatePath, getProfilePaths, writeAuthMeta, writeStorageState } from "../../notebooklm/auth-profile.js";
-import { getAuthStatus, loginAccount } from "../../notebooklm/index.js";
+import { getAuthStatus, loginAccount, validateProfile } from "../../notebooklm/index.js";
 import { taskQueue } from "../../worker/queue.js";
 import logger from "../../lib/logger.js";
 
@@ -17,16 +17,18 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isInteractiveLoginAvailable(): boolean {
-  // Docker containers create /.dockerenv (Linux/macOS Docker)
-  try {
-    if (existsSync("/.dockerenv")) return false;
-  } catch {
-    // ignore stat errors
+function isHeadlessDeploymentLoginDisabled(): boolean {
+  if (process.env.NOTEBOOKLM_DISABLE_INTERACTIVE_LOGIN === "1") {
+    return true;
   }
-  // Headless Linux without a display server
-  if (process.platform === "linux" && !process.env.DISPLAY) return false;
-  return true;
+
+  if (process.env.NOTEBOOKLM_DISABLE_INTERACTIVE_LOGIN === "0") {
+    return false;
+  }
+
+  return process.platform !== "win32"
+    && !process.env.DISPLAY
+    && !process.env.WAYLAND_DISPLAY;
 }
 
 // GET /api/auth/status — check if Google auth is valid
@@ -47,14 +49,10 @@ auth.post("/accounts/:accountId/login", async (c) => {
     return c.json({ error: "账号不存在" }, 404);
   }
 
-  if (!isInteractiveLoginAvailable()) {
-    return c.json(
-      {
-        error:
-          "当前环境不支持交互式登录（无桌面浏览器 / Docker 容器）。请在账号管理页面使用「上传凭据」功能代替。",
-      },
-      503,
-    );
+  if (isHeadlessDeploymentLoginDisabled()) {
+    return c.json({
+      error: "当前部署环境不支持交互式浏览器登录，请通过 storage-state 再授权流程恢复认证。",
+    }, 503);
   }
 
   if (loginInProgress.has(accountId)) {
@@ -113,6 +111,7 @@ auth.delete("/accounts/:accountId", async (c) => {
   writeAuthMeta(accountId, {
     accountId,
     status: "missing",
+    reason: "credentials_cleared",
   });
   // 静默处理缓存失效失败，凭证文件已清除，失效失败不影响响应
   await authManager.invalidateAuthClient(accountId).catch(() => undefined);
@@ -120,96 +119,17 @@ auth.delete("/accounts/:accountId", async (c) => {
   return c.json({ message: "账号凭证已清除" });
 });
 
-// POST /api/auth/accounts/:accountId/upload-state — upload raw storage-state JSON string to restore auth
-auth.post("/accounts/:accountId/upload-state", async (c) => {
-  const { accountId } = c.req.param();
-  if (!isSupportedAccount(accountId)) {
-    return c.json({ error: "账号不存在" }, 404);
-  }
-
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "无效的请求体" }, 400);
-  }
-
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !("storageState" in body) ||
-    typeof (body as Record<string, unknown>).storageState !== "string"
-  ) {
-    return c.json({ error: "storageState 字段必填" }, 400);
-  }
-
-  const storageStateStr = (body as { storageState: string }).storageState;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(storageStateStr);
-  } catch {
-    return c.json({ error: "不是有效的 JSON" }, 400);
-  }
-
-  // Validate SAPISID cookie presence
-  const hasCookiesArray =
-    parsed !== null &&
-    typeof parsed === "object" &&
-    "cookies" in parsed &&
-    Array.isArray((parsed as Record<string, unknown>).cookies);
-
-  if (!hasCookiesArray) {
-    return c.json({ error: "缺少必要的 SAPISID cookie，请重新运行 npx notebooklm login" }, 400);
-  }
-
-  type CookieEntry = { name: string; value: string; expires?: number };
-  const cookies = (parsed as { cookies: unknown[] }).cookies;
-  const sapisidCookie = cookies.find(
-    (c): c is CookieEntry =>
-      typeof c === "object" && c !== null && (c as Record<string, unknown>).name === "SAPISID",
-  ) as CookieEntry | undefined;
-
-  if (!sapisidCookie) {
-    return c.json({ error: "缺少必要的 SAPISID cookie，请重新运行 npx notebooklm login" }, 400);
-  }
-
-  if (loginInProgress.has(accountId)) {
-    return c.json({ error: "已有登录流程进行中，请等待完成" }, 409);
-  }
-
-  writeStorageState(accountId, parsed);
-  await authManager.invalidateAuthClient(accountId).catch(() => undefined);
-  writeAuthMeta(accountId, {
-    accountId,
-    status: "ready",
-    lastCheckedAt: new Date().toISOString(),
-  });
-  taskQueue.resume();
-
-  const expiresRaw = sapisidCookie.expires;
-  const expiresAt =
-    typeof expiresRaw === "number" && expiresRaw > 0
-      ? new Date(expiresRaw * 1000).toISOString()
-      : undefined;
-
-  logger.info({ accountId }, "upload-state: credentials written, queue resumed");
-
-  return c.json({ message: "凭据已激活", ...(expiresAt !== undefined ? { expiresAt } : {}) });
-});
-
 // POST /api/auth/reauth — upload new storage-state.json (base64) to restore auth
-// Protected by Authorization: Bearer <ADMIN_SECRET>
+// If ADMIN_SECRET env var is set, requires Authorization: Bearer <ADMIN_SECRET>
+// If ADMIN_SECRET is not set, the endpoint is open (self-hosted deployments)
 auth.post("/reauth", async (c) => {
   const adminSecret = process.env.ADMIN_SECRET;
-  if (!adminSecret) {
-    return c.json({ error: "再授权接口未启用：未配置 ADMIN_SECRET" }, 503);
-  }
-
-  const authHeader = c.req.header("Authorization");
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-  if (!token || token !== adminSecret) {
-    return c.json({ error: "Unauthorized" }, 401);
+  if (adminSecret) {
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    if (!token || token !== adminSecret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
   }
 
   let body: unknown;
@@ -249,23 +169,36 @@ auth.post("/reauth", async (c) => {
   writeStorageState(accountId, parsed);
   await authManager.invalidateAuthClient(accountId).catch(() => undefined);
 
-  // Refresh the auth profile to pick up the new storage state.
-  // Only resume the queue if auth is confirmed ready.
-  let refreshResult;
+  // Reset the failure counter so refreshInternal is not short-circuited by a
+  // prior run of 3+ consecutive failures.
+  authManager.resetFailureCount(accountId);
+
+  // Validate the newly written credentials directly via HTTP (no Playwright).
+  // This bypasses silentRefresh (which uses the persistent browser) and avoids
+  // the failureCount guard inside refreshInternal.
+  let validation: Awaited<ReturnType<typeof validateProfile>>;
   try {
-    refreshResult = await authManager.refreshAuthProfile(accountId, "manual-reauth");
+    validation = await validateProfile(accountId);
   } catch (err) {
-    logger.error({ err }, "reauth: refreshAuthProfile threw after writing new storage state");
+    logger.error({ err }, "reauth: validateProfile threw after writing new storage state");
     return c.json({ error: "再授权验证失败：上游服务不可用" }, 502);
   }
 
-  if (refreshResult.status !== "ready") {
-    logger.warn({ accountId, authStatus: refreshResult.status }, "reauth: storage state written but auth still not ready");
+  if (validation.status !== "ready") {
+    logger.warn({ accountId, authStatus: validation.status }, "reauth: storage state written but auth still not ready");
     return c.json({
       error: "再授权失败：新凭证写入成功但认证状态未恢复为 ready",
-      authStatus: refreshResult.status,
+      authStatus: validation.status,
     }, 422);
   }
+
+  // Persist the ready status so other parts of the system see it immediately.
+  writeAuthMeta(accountId, {
+    accountId,
+    status: "ready",
+    lastCheckedAt: new Date().toISOString(),
+    lastRefreshedAt: new Date().toISOString(),
+  });
 
   // Auth is confirmed ready — wake up the queue
   taskQueue.resume();

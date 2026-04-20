@@ -24,6 +24,7 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.9",
     "notebooklm-kit": "^2.2.0",
+    "playwright": "^1.52.0",
     "pdfjs-dist": "~5.6.205",
     "pino": "^10.3.1",
     "shared": "*",

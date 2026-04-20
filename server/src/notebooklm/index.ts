@@ -4,6 +4,7 @@ export {
   extractNotebookId,
   getAuthStatus,
   disposeClient,
+  validateProfile,
   isNotebookAuthError,
   // New gateway methods
   getNotebookDetail,

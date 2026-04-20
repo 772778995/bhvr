@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---------------------------------------------------------------------------
 # Build stage
 # ---------------------------------------------------------------------------
@@ -30,7 +28,7 @@ RUN npm run build --workspace=shared && \
 # ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS runtime
+FROM mcr.microsoft.com/playwright:v1.52.0-noble AS runtime
 
 WORKDIR /app
 
@@ -41,7 +39,11 @@ COPY package.json package-lock.json ./
 COPY server/package.json ./server/
 COPY shared/package.json ./shared/
 
-RUN npm ci --omit=dev --ignore-scripts
+# Install all deps first (including playwright in server/dependencies)
+RUN npm ci --ignore-scripts
+
+# Prune dev-only deps (playwright stays because it's in server/dependencies)
+RUN npm prune --omit=dev --ignore-scripts
 
 # Copy compiled output
 COPY --from=builder /app/shared/dist ./shared/dist

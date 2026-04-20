@@ -514,10 +514,10 @@ POST /api/auth/accounts/:accountId/upload-state
 
 ### 待办
 
-- [x] 后端新增 `POST /api/auth/accounts/:accountId/upload-state` 接口（MVP）
-- [x] `AccountsView.vue` 新增上传凭据区块（文件上传 + JSON 粘贴两种输入）
-- [x] 上传成功后展示有效期估算（解析 cookie `expires` 字段）
-- [x] 上传接口与 `loginInProgress` 状态互斥协调
+- [ ] 后端新增 `POST /api/auth/accounts/:accountId/upload-state` 接口（MVP）
+- [ ] `AccountsView.vue` 新增上传凭据区块（文件上传 + JSON 粘贴两种输入）
+- [ ] 上传成功后展示有效期估算（解析 cookie `expires` 字段）
+- [ ] 上传接口与 `loginInProgress` 状态互斥协调
 - [ ] （下一阶段）`auth_upload_sessions` 数据表 + 一次性 token 生成接口
 - [ ] （下一阶段）临时上传页面（无需完整 admin auth，只需有效 session token）
 - [ ] （下一阶段）管理员后台 SSE 或轮询实时感知上传完成
@@ -579,4 +579,3 @@ uploadStorageState(accountId: string, storageState: string): Promise<{ message: 
 | 日期 | 变更 |
 |------|------|
 | 2026-04-19 | 新增"远程部署场景下的友好登录方案"设计章节：明确"本机授权，远程接收"立场，说明为何不能照搬 CLIProxyAPI OAuth callback、为何不做 VNC；细化 MVP（管理员上传凭据）和下一阶段（一次性 token 短链）两种方案；补充 UX 细节要求、坑与注意事项、待办清单，以及可直接拆给实施代理的任务 A/B/C。 |
-| 2026-04-19 | 实现 MVP 上传凭据流程：后端新增 `POST /api/auth/accounts/:accountId/upload-state`（接受原始 JSON storageState，校验 SAPISID cookie，写入凭证，恢复队列，返回 expiresAt）；前端 API client 新增 `uploadStorageState` 方法；`AccountsView.vue` 新增上传凭据区块（文件上传 + JSON 粘贴两种互斥输入、验证进度反馈、成功/失败结果展示、FileReader 错误处理）。 |

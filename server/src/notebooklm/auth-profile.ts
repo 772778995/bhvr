@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 export const DEFAULT_ACCOUNT_ID = "default";
 
 export type AuthState = "missing" | "ready" | "refreshing" | "expired" | "reauth_required" | "error";
+export type AuthReason = "storage_state_missing" | "credentials_cleared";
 
 export interface AuthMeta {
   accountId: string;
@@ -12,6 +13,7 @@ export interface AuthMeta {
   lastCheckedAt?: string;
   lastRefreshedAt?: string;
   error?: string;
+  reason?: AuthReason;
 }
 
 export interface ProfilePaths {
@@ -29,6 +31,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+function isAuthReason(value: unknown): value is AuthReason {
+  return value === "storage_state_missing"
+    || value === "credentials_cleared";
+}
+
+function isOptionalAuthReason(value: unknown): value is AuthReason | undefined {
+  return value === undefined || isAuthReason(value);
 }
 
 function isAuthState(value: unknown): value is AuthState {
@@ -53,8 +64,9 @@ function parseAuthMeta(accountId: string, input: unknown): ReadAuthMetaResult {
   const lastCheckedAt = input.lastCheckedAt;
   const lastRefreshedAt = input.lastRefreshedAt;
   const error = input.error;
+  const reason = input.reason;
 
-  if (value !== accountId || !isAuthState(status) || !isOptionalString(lastCheckedAt) || !isOptionalString(lastRefreshedAt) || !isOptionalString(error)) {
+  if (value !== accountId || !isAuthState(status) || !isOptionalString(lastCheckedAt) || !isOptionalString(lastRefreshedAt) || !isOptionalString(error) || !isOptionalAuthReason(reason)) {
     return {
       ok: false,
       error: { accountId, status: "error", error: "Invalid auth metadata" },
@@ -69,6 +81,7 @@ function parseAuthMeta(accountId: string, input: unknown): ReadAuthMetaResult {
       ...(lastCheckedAt ? { lastCheckedAt } : {}),
       ...(lastRefreshedAt ? { lastRefreshedAt } : {}),
       ...(error ? { error } : {}),
+      ...(reason ? { reason } : {}),
     },
   };
 }

@@ -169,8 +169,9 @@ export const api = {
     });
   },
 
-  uploadStorageState(accountId: string, storageState: string) {
-    return request<UploadStateResponse>(`/api/auth/accounts/${accountId}/upload-state`, {
+  reauth(storageStateJson: string) {
+    const storageState = btoa(unescape(encodeURIComponent(storageStateJson)));
+    return request<{ message: string }>("/api/auth/reauth", {
       method: "POST",
       body: JSON.stringify({ storageState }),
     });
@@ -179,9 +180,4 @@ export const api = {
 
 export interface AccountsListResponse {
   accounts: AuthStatus[];
-}
-
-export interface UploadStateResponse {
-  message: string;
-  expiresAt?: string;
 }

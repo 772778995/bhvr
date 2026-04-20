@@ -51,9 +51,3 @@ tmp-audio-download/
 
 .opencode/
 opencode.json
-
-# OpenCode dev server logs
-.opencode-server-dev.*.log
-
-# Misc scratch files
-response.txt
