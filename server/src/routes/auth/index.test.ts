@@ -9,6 +9,23 @@ import { authManager, DEFAULT_ACCOUNT_ID } from "../../notebooklm/auth-manager.j
 import { readAuthMeta } from "../../notebooklm/auth-profile.js";
 import auth from "./index.js";
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+/** Build a minimal valid base64-encoded storageState payload for POST /reauth */
+function makeReauthBody(cookies = [{ name: "SAPISID", value: "test", domain: ".google.com" }]) {
+  const storageState = { cookies };
+  const b64 = Buffer.from(JSON.stringify(storageState)).toString("base64");
+  return JSON.stringify({ storageState: b64 });
+}
+
+/** Standard headers needed to pass ADMIN_SECRET gate */
+function reauthHeaders(secret: string) {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${secret}`,
+  };
+}
+
 function withTempHome<T>(fn: (homeDir: string) => T | Promise<T>) {
   const originalHome = process.env.HOME;
   const originalUserProfile = process.env.USERPROFILE;
@@ -25,6 +42,47 @@ function withTempHome<T>(fn: (homeDir: string) => T | Promise<T>) {
       rmSync(homeDir, { recursive: true, force: true });
     });
 }
+
+test("POST /accounts/:accountId/login calls resetFailureCount after login completes successfully", async () => {
+  await withTempHome(async () => {
+    const originalResetFailureCount = authManager.resetFailureCount;
+    const originalLaunchPersistentContext = chromium.launchPersistentContext;
+    const resetCalledFor: string[] = [];
+
+    authManager.resetFailureCount = (accountId: string) => {
+      resetCalledFor.push(accountId);
+    };
+
+    chromium.launchPersistentContext = (async () => ({
+      pages: () => [],
+      newPage: async () => ({
+        goto: async () => {},
+        waitForURL: async () => {},
+      }),
+      storageState: async () => ({
+        cookies: [{ name: "SAPISID", value: "test-sapisid", domain: ".google.com" }],
+      }),
+      close: async () => {},
+    })) as unknown as typeof chromium.launchPersistentContext;
+
+    try {
+      const response = await auth.request(`http://localhost/accounts/${DEFAULT_ACCOUNT_ID}/login`, {
+        method: "POST",
+      });
+
+      assert.equal(response.status, 202);
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(resetCalledFor.length, 1);
+      assert.equal(resetCalledFor[0], DEFAULT_ACCOUNT_ID);
+    } finally {
+      authManager.resetFailureCount = originalResetFailureCount;
+      chromium.launchPersistentContext = originalLaunchPersistentContext;
+    }
+  });
+});
 
 test("POST /accounts/:accountId/login invalidates cached auth client after login completes", async () => {
   await withTempHome(async () => {

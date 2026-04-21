@@ -75,6 +75,8 @@ auth.post("/accounts/:accountId/login", async (c) => {
     .then(async () => {
       // 静默处理缓存失效失败，不影响登录成功状态
       await authManager.invalidateAuthClient(accountId).catch(() => undefined);
+      // 重置失败计数，防止重新认证后因 failureCount 达阈值而死锁
+      authManager.resetFailureCount(accountId);
     })
     .catch((error) => {
       writeAuthMeta(accountId, {
@@ -169,10 +171,6 @@ auth.post("/reauth", async (c) => {
   writeStorageState(accountId, parsed);
   await authManager.invalidateAuthClient(accountId).catch(() => undefined);
 
-  // Reset the failure counter so refreshInternal is not short-circuited by a
-  // prior run of 3+ consecutive failures.
-  authManager.resetFailureCount(accountId);
-
   // Validate the newly written credentials directly via HTTP (no Playwright).
   // This bypasses silentRefresh (which uses the persistent browser) and avoids
   // the failureCount guard inside refreshInternal.
@@ -191,6 +189,9 @@ auth.post("/reauth", async (c) => {
       authStatus: validation.status,
     }, 422);
   }
+
+  // Reset the failure counter only after confirming auth is ready.
+  authManager.resetFailureCount(accountId);
 
   // Persist the ready status so other parts of the system see it immediately.
   writeAuthMeta(accountId, {
